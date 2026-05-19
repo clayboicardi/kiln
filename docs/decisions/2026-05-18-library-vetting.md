@@ -473,12 +473,158 @@ coil-compose = { module = "io.coil-kt.coil3:coil-compose", version.ref = "coil" 
 
 ---
 
+## Item 3: KMP-compatible Palette/color extractor
+
+> **Plan reference:** Pre-MVP Research §2.1 item 3. **Critical for Kiln Dynamic theming** (spec §5.3). Without this, the album-art-driven palette story collapses and Phase 2a Flight A cannot ship.
+
+### Question
+
+Pick a Compose-MP-compatible library to extract dominant + vibrant + muted swatches from album art, callable from `:ui:theme/commonMain`, suitable for driving Kiln Dynamic theming per spec §5.3 / §5.4. Pin a specific version.
+
+### Method
+
+- Web search for the current KMP palette extraction landscape (current to mid-2026)
+- GitHub Releases API + repo metadata on the two viable candidates (jordond/kmpalette, jordond/MaterialKolor)
+- WebFetch of upstream READMEs for module-level dependency clarity
+- Spec §5.3 / §5.4 re-read to confirm what the extractor actually needs to produce
+
+### Findings
+
+**Spec demands (the bar to clear):**
+
+Per §5.3, the extractor must yield (or enable us to derive) these swatch roles:
+
+| Spec role | Maps to AndroidX Palette concept |
+|---|---|
+| `bg-base` rotated 15-30% toward dominant hue | Dominant swatch + HSL rotation |
+| `bg-surface` rotated 40-60% toward dominant hue | Dominant swatch + HSL rotation |
+| `accent-primary` (vibrant swatch) | Vibrant or LightVibrant |
+| `accent-secondary` (vibrant alternate) | DarkVibrant or LightVibrant |
+| `surface-tint` (muted dark) | DarkMuted |
+| `list-highlight` derived from accent | Computed from accent-primary |
+| `on-accent-text` for WCAG AA | Computed via contrast math |
+
+Per §5.4, the post-processing layer must:
+- WCAG AA contrast-check every extracted color against `text-primary` (#F5EBE0)
+- Darken bright pastels until they're usable as accents
+- Fall back to `accent-soft` on low-saturation art
+- Fall back to idle brand palette on extraction failure
+
+**Candidate 1: jordond/kmpalette (the front-runner)**
+
+- Repo: https://github.com/jordond/kmpalette
+- License: MIT (with `kmpalette-androidx-palette` submodule under Apache 2.0)
+- Stars: 290 — small, but author also maintains MaterialKolor (880 stars), so signal is "active small library by trusted maintainer" not "abandoned"
+- Maintenance: last commit 2026-05-16 (2 days ago at time of writing — actively worked on)
+- Open issues: 18 — manageable
+- **Version state:**
+
+| Version | Date | Status |
+|---|---|---|
+| 4.0.0-beta02 | 2026-03-03 | Beta — current development line |
+| 4.0.0-beta01 | 2026-02-17 | Earlier beta |
+| 3.1.0 | 2024-01-30 | Stable but 2+ years old |
+
+- **Algorithm provenance:** "Compose multiplatform port for AndroidX Palette." Specifically a Kotlin port of `androidx.palette.graphics.Palette` — the same battle-tested median-cut quantization + HSL-based swatch role classification Android has used since 2014. Not a Material Color Utilities seed-tonal-palette generator (different problem).
+- **Platform coverage:** Android, JVM desktop, iOS, macOS, JS, WASM. Covers both Kiln targets cleanly.
+- **Modules:**
+  - `kmpalette-core` — Compose utilities (`rememberPaletteState`, `rememberDominantColorState`)
+  - `kmpalette-androidx-palette` — palette algorithm core, no Compose dependency
+  - `kmpalette-extensions-base64`, `-network` (Ktor), `-file` (FileKit) — optional loaders we don't need
+- **API for our use case:**
+
+```kotlin
+// In :ui:theme/commonMain, given a Compose ImageBitmap from Coil:
+val palette: Palette = Palette.from(imageBitmap).generate()
+
+val vibrant: Color? = palette.vibrantSwatch?.color
+val darkVibrant: Color? = palette.darkVibrantSwatch?.color
+val muted: Color? = palette.mutedSwatch?.color
+val darkMuted: Color? = palette.darkMutedSwatch?.color
+val dominant: Color? = palette.dominantSwatch?.color
+val onAccent: Color? = palette.vibrantSwatch?.onColor  // built-in contrast color
+```
+
+Every spec §5.3 role has a direct kmpalette source. No gaps.
+
+- **Coil integration:** No `coil-loader` module exists. Wire manually:
+
+```kotlin
+// Pseudocode for :ui:theme; actual wiring lives in MVP Phase 2a Flight A
+val request = ImageRequest.Builder(context).data(albumArtPath).allowHardware(false).build()
+val result = imageLoader.execute(request)
+val bitmap: ImageBitmap = (result as SuccessResult).image.toBitmap().asImageBitmap()
+val palette = Palette.from(bitmap).generate()
+```
+
+`allowHardware(false)` is required — Palette needs CPU-readable pixels. (Same constraint AndroidX Palette has had since day one.)
+
+- **Beta-status risk:** kmpalette 4.0.0 has been in beta since 2026-02-17 (~3 months). The stable line is the 2-year-old 3.1.0 (released 2024-01-30, before the recent Compose-MP maturation push). The 4.0.0 beta is on the active Compose-MP path; 3.1.0 is not the version we want.
+
+**Candidate 2: jordond/MaterialKolor (evaluated, NOT a fit)**
+
+- Same author, more popular (880 stars), more polished release cadence (4.1.1 stable Feb 2026, 5.0.0-alpha07 active)
+- License: MIT
+- **What it does:** generates a Material 3 tonal palette (50/100/200/.../900 ramps for primary, secondary, tertiary, neutral, etc.) from a **seed color**
+- **What it does NOT do:** extract a seed color from an image. It assumes you already have one
+- Kiln Dynamic per spec §5.3 is NOT a Material 3 tonal palette system — it's an album-art-driven palette with custom role mapping (`bg-base rotates X% toward dominant hue`, etc.). MaterialKolor's primary/secondary/tertiary tonal ramps are a different design language
+- **Could be combined with kmpalette** (kmpalette → seed color → MaterialKolor → M3 tonal palette), but only if Kiln ever pivots toward Material 3 design language. **Not on the roadmap.** Keep MaterialKolor in the "consider later if M3 ever lands" bin
+
+**Candidate 3: Roll our own pixel-sampling extractor (evaluated, NOT chosen for MVP)**
+
+- ~150-300 lines of Kotlin in `:ui:theme/commonMain`: median-cut quantization → HSL classification → top-N swatch selection
+- Pros: zero external dependency; Bus-Factor-of-One friendly; complete control over the algorithm; aligns with the "fresh re-derivation" project ethos
+- Cons: re-implementing what AndroidX Palette already does correctly (and what kmpalette ports faithfully); swatch-role classification heuristics (Vibrant vs LightVibrant vs DarkVibrant) are non-obvious to get right; would absorb hours that could go to feature work (Architecture-as-Performance-Art pattern)
+- **Verdict:** Reserved as a Phase 2a Flight A fallback if kmpalette 4.0.0 hasn't reached stable by then AND the 4.0.0-beta line shows API instability. Not a default choice.
+
+**Candidate 4: Pal.Js port (mentioned in plan)**
+
+Web search returns no current Kotlin-Multiplatform port of Pal.Js with active maintenance. The plan mention is historical/speculative. **Dismissed** — kmpalette covers the same problem space with active 2026 maintenance.
+
+### Decision
+
+**Adopt kmpalette 4.0.0-betaN as the Palette extractor for Kiln Dynamic theming.** Specifically:
+
+- Pin the latest stable 4.0.0-betaN available at Phase 2a Flight A start time (currently 4.0.0-beta02; expect 4.0.0 stable or later beta by ~6-13 months from now per plan §1)
+- Use only the `kmpalette-core` dependency — none of the loader extensions (we feed it ImageBitmap from Coil directly)
+- Write WCAG AA contrast post-processing in-house in `:ui:theme/commonMain` (~50 lines of Kotlin: relative-luminance + contrast-ratio + iterative darken/lighten). This algorithm is fully deterministic and trivially testable; depending on a library for it would be over-engineering
+- Use kmpalette's `Swatch.onColor` as the starting point for contrast-checked text; verify against our `text-primary` (#F5EBE0) and fall back to our own contrast post-processor if `onColor` doesn't clear WCAG AA
+
+### Soft-lock revisit point
+
+**Before MVP Phase 2a Flight A (Kiln Dynamic theming) starts.** Confirm:
+
+1. Has kmpalette 4.0.0 reached stable? If yes → pin stable.
+2. If still in beta after 6-13 more months, evaluate:
+   - (a) Ship with the latest 4.0.0-betaN (the line has been actively maintained — beta-status alone is not disqualifying)
+   - (b) Pin the 2024 stable 3.1.0 and accept whatever Compose-MP version constraints that imposes (likely incompatible with the Compose-MP we'll be on by then — likely NOT viable)
+   - (c) Roll our own extractor per Candidate 3 (~16-24 hrs in Flight A — would extend Flight A by ~30-40%)
+
+The decision criterion at revisit time is: "Has kmpalette's API moved during the beta cycle?" If the API has stabilized (no breaking changes since 4.0.0-beta01 → 4.0.0-betaN), pin the latest beta and ship. If the API has churned, the library is signaling instability and we should evaluate (c).
+
+### Implementation notes for Phase 2a Flight A
+
+**Module placement:** kmpalette dependency belongs in `:ui:theme/commonMain` — this is the only place in the codebase that should know about Palette extraction. `:ui:components` should consume already-computed `KilnDynamicPalette` data classes, not raw Swatches. Keeps the dependency contained to one module per the Concentric Modules invariant.
+
+**Caching strategy:** Palette extraction on a 500×500 album art image takes ~50-150ms. Cache extracted palettes by track ID (or album ID) in memory. Library views with thousands of visible thumbnails should not re-extract — use a Flow-backed `palette-by-album-id` cache that survives recomposition. Disk-cache extracted palettes as a SQLDelight side-table if memory cache turns out to be insufficient for 39.5k albums (most likely fine — palette is ~50 bytes serialized × 3k albums = ~150KB cold).
+
+**Fallback chain (per spec §5.4):**
+1. Extraction success + WCAG AA clear → use extracted palette
+2. Extraction success + WCAG AA fail (low-saturation art) → fall back to `accent-soft` (#8A4226)
+3. Extraction failure (no art / decode error) → fall back to idle Kiln Warmth palette
+4. Body text primary (`#F5EBE0`) is invariant — never re-tinted by Dynamic
+
+### Status
+
+**DECIDED with soft-lock revisit at Phase 2a Flight A start.** kmpalette is the path; specific version (stable 4.0.0 vs. 4.0.0-betaN vs. roll-our-own) confirmed at that revisit point. Actual adoption is many months away — MVP-1.0 ships with idle Kiln Warmth only (spec §6.1 confirms this).
+
+---
+
 ## Next items in queue
 
-- (Remaining items 3, 5, 6, 7, 9, 10, 12 — to be tackled in subsequent Pre-MVP Research sessions)
+- (Remaining items 5, 6, 7, 9, 10, 12 — to be tackled in subsequent Pre-MVP Research sessions)
 
 Items still to research:
-- Item 3 — KMP-compatible Palette/color extractor (critical for Kiln Dynamic theming)
 - Item 5 — Circuit + Molecule on KMP (now applies to `:ui:components` Now Playing)
 - Item 6 — SQLDelight schema design for 39.5k tracks
 - Item 7 — Compose-MP screenshot testing (Roborazzi maturity)
