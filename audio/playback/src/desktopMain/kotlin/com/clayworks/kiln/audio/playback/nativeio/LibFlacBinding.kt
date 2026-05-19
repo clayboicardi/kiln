@@ -69,6 +69,14 @@ internal interface LibFlacBinding : Library {
     fun FLAC__stream_decoder_process_single(handle: Pointer): Boolean
 
     /**
+     * Seek to absolute sample position [sample] (0-based, per-channel sample
+     * frame count). Valid only in states SEARCH_FOR_FRAME_SYNC and READ_FRAME
+     * (i.e., after process_until_end_of_metadata). Returns true on success;
+     * false if the seek failed (state may flip to SEEK_ERROR).
+     */
+    fun FLAC__stream_decoder_seek_absolute(handle: Pointer, sample: Long): Boolean
+
+    /**
      * Reset the decoder for re-use (close the file, free internal buffers).
      * After finish() the decoder can be re-init'd with another file. Returns
      * true on success.

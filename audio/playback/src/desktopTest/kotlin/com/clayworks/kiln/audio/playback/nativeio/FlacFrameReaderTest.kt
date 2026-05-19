@@ -14,6 +14,7 @@ import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 class FlacFrameReaderTest {
@@ -113,5 +114,76 @@ class FlacFrameReaderTest {
         assertEquals(48000L, totals.totalSampleFrames, "sample frames (0.5s × 96000)")
         assertEquals(288000L, totals.totalBytes, "interleaved bytes (48000 × 2ch × 3B — 24-bit packing)")
         assertTrue(totals.frameCount > 0, "expected ≥1 audio frame, got ${totals.frameCount}")
+    }
+
+    @Test
+    fun `seek_absolute to mid-stream returns true and decoder continues producing frames — H6_7`() {
+        val flac = LibFlacLoader.load()
+        val handle = flac.FLAC__stream_decoder_new() ?: error("decoder_new returned null")
+        val streamInfo = AtomicReference<StreamInfo?>(null)
+        val postSeekSampleNumber = AtomicLong(-1L)
+        val postSeekFrameCount = AtomicLong(0L)
+
+        val write = object : WriteCallback {
+            override fun invoke(decoder: Pointer, frame: Pointer, buffer: Pointer, clientData: Pointer?): Int {
+                if (postSeekFrameCount.get() == 0L) {
+                    // Capture the sample_number of the first post-seek frame.
+                    postSeekSampleNumber.set(
+                        FlacFrameReader.sampleNumber(frame, FlacFrameReader.blocksize(frame)),
+                    )
+                }
+                postSeekFrameCount.incrementAndGet()
+                return WriteCallback.STATUS_CONTINUE
+            }
+        }
+        val metadata = object : MetadataCallback {
+            override fun invoke(decoder: Pointer, metadata: Pointer, clientData: Pointer?) {
+                FlacMetadata.parseStreamInfo(metadata)?.let { streamInfo.compareAndSet(null, it) }
+            }
+        }
+        val error = object : ErrorCallback {
+            override fun invoke(decoder: Pointer, status: Int, clientData: Pointer?) =
+                error("error callback fired: status=$status")
+        }
+
+        try {
+            val status = flac.FLAC__stream_decoder_init_file(
+                handle, fixturePath("sine_440_stereo_16_44.flac"),
+                write, metadata, error, null,
+            )
+            assertEquals(LibFlacBinding.INIT_STATUS_OK, status)
+            assertTrue(flac.FLAC__stream_decoder_process_until_end_of_metadata(handle))
+
+            // Seek to ~half-way (sample 11025 of 22050 in the 16/44 fixture).
+            val targetSample = 11025L
+            val seekOk = flac.FLAC__stream_decoder_seek_absolute(handle, targetSample)
+            assertTrue(
+                seekOk,
+                "FLAC__stream_decoder_seek_absolute($targetSample) should return true; " +
+                    "state=${flac.FLAC__stream_decoder_get_state(handle)}",
+            )
+
+            // Decode one frame post-seek to verify decoder is still functional.
+            val ok = flac.FLAC__stream_decoder_process_single(handle)
+            assertTrue(ok, "process_single should succeed after seek")
+            assertTrue(
+                postSeekFrameCount.get() > 0L,
+                "expected the post-seek write_callback to fire ≥1 time; got ${postSeekFrameCount.get()}",
+            )
+
+            // Sanity check: the captured sample_number should be near the seek target.
+            // libFLAC seeks to the nearest frame boundary, which may be ahead of or
+            // behind the requested sample — accept ±blocksize tolerance.
+            val captured = postSeekSampleNumber.get()
+            val si = assertNotNull(streamInfo.get(), "STREAMINFO should be captured by the metadata callback")
+            val tolerance = si.maxBlocksize.toLong().coerceAtLeast(4096L)
+            assertTrue(
+                kotlin.math.abs(captured - targetSample) <= tolerance,
+                "post-seek frame sample_number $captured should be within ±$tolerance of target $targetSample",
+            )
+        } finally {
+            flac.FLAC__stream_decoder_finish(handle)
+            flac.FLAC__stream_decoder_delete(handle)
+        }
     }
 }
