@@ -148,7 +148,11 @@ internal class JavaSoundPlayerImpl(
         val coercedStart = startIndex.coerceIn(0, resolvedItems.lastIndex)
         _queue.value = _queue.value.copy(items = resolvedItems, currentIndex = coercedStart)
 
-        startPlaybackForCurrentIndex(autoPlay)
+        // Pass the already-resolved Playable for the start item to avoid the
+        // redundant getPlayable round-trip in startPlaybackForCurrentIndex.
+        // Skip-next/prev/skipTo paths still resolve on demand because they
+        // target a different item than the originally-loaded start.
+        startPlaybackForCurrentIndex(autoPlay, preResolved = resolved[coercedStart].second)
     }
 
     override suspend fun play() {
@@ -256,13 +260,26 @@ internal class JavaSoundPlayerImpl(
 
     // ---------- internals ----------
 
-    private suspend fun startPlaybackForCurrentIndex(autoPlay: Boolean) {
+    /**
+     * Open the decoder for the current queue item + launch playback.
+     *
+     * @param preResolved if non-null, used directly instead of calling
+     *   source.getPlayable again — set by loadQueue to skip a redundant DB
+     *   round-trip for the queue's start item (it was already resolved during
+     *   the queue's eager-validation mapNotNull). advanceOnEof / skipToNext /
+     *   skipToPrevious / skipTo leave it null because they target a different
+     *   item than the originally-loaded start.
+     */
+    private suspend fun startPlaybackForCurrentIndex(
+        autoPlay: Boolean,
+        preResolved: Playable? = null,
+    ) {
         val q = _queue.value
         val item = q.currentItem ?: run {
             _state.value = PlayerState.Idle
             return
         }
-        val playable = when (val r = source.getPlayable(item.itemId)) {
+        val playable = preResolved ?: when (val r = source.getPlayable(item.itemId)) {
             is Either.Left -> {
                 log.w { "startPlayback: getPlayable failed for ${item.itemId.value}: ${r.value}" }
                 _state.value = PlayerState.Error(
