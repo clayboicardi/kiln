@@ -307,19 +307,42 @@ internal class JavaSoundPlayerImpl(
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 log.e(e) { "playback loop error" }
+                // CRITICAL: close the line + stream BEFORE flipping state. Otherwise
+                // OS-level resources leak (audio device handle via SourceDataLine,
+                // libFLAC native decoder handle via JvmFlacDecodedStream) until the
+                // next loadQueue / stop / skip*. play() and pause() do NOT call
+                // cancelCurrentPlayback, so if the user reacts to the error state
+                // by hitting play they'd operate on a dead line and the leaked
+                // resources would persist indefinitely.
+                teardownActivePlayback(stopLineFirst = true)
                 _state.value = PlayerState.Error(PlayerError.DecodeFailed(e))
             }
         }
     }
 
+    /**
+     * Idempotent teardown of the active line + stream. Used by the EOF path,
+     * the cancel path, AND the catch-on-error path so all three converge on
+     * identical resource hygiene. Pass `stopLineFirst = true` for paths where
+     * the line might still be RUNNING (cancel + error); the EOF path already
+     * called drain() so a stop() before close() is redundant but harmless.
+     */
+    private fun teardownActivePlayback(stopLineFirst: Boolean) {
+        line?.let { l ->
+            if (stopLineFirst) {
+                runCatching { l.stop() }
+            }
+            runCatching { l.close() }
+        }
+        line = null
+        runCatching { currentStream?.close() }
+        currentStream = null
+    }
+
     private suspend fun advanceOnEof() {
         val q = _queue.value
         val nextIndex = nextIndexOrNull(q)
-        // tear down current stream + line BEFORE starting the next
-        line?.close()
-        line = null
-        currentStream?.close()
-        currentStream = null
+        teardownActivePlayback(stopLineFirst = false)
         if (nextIndex == null) {
             _state.value = PlayerState.Idle
             return
@@ -331,10 +354,7 @@ internal class JavaSoundPlayerImpl(
     private fun cancelCurrentPlayback() {
         playbackJob?.cancel()
         playbackJob = null
-        line?.let { it.stop(); it.close() }
-        line = null
-        currentStream?.close()
-        currentStream = null
+        teardownActivePlayback(stopLineFirst = true)
         pauseRequested = false
     }
 
