@@ -11,6 +11,14 @@ plugins {
 }
 
 dependencies {
+    // Compose-MP common bundle — provides foundation/material3/ui +
+    // ui.window (Window, application, exitApplication for Desktop). Project
+    // deps from :ui:* expose these as implementation (not api).
+    implementation(libs.bundles.compose.mp.common)
+    // Compose Desktop runtime (compose.desktop.currentOs supplies the
+    // platform-specific Skia + window toolkit jars).
+    implementation(compose.desktop.currentOs)
+
     implementation(libs.kotlinInject.runtime)
     ksp(libs.kotlinInject.compiler)
 
