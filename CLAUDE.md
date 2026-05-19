@@ -4,7 +4,7 @@
 
 Kiln by Clayworks is a from-scratch Android + Windows Desktop music player. Personal-use audiophile player + developer portfolio piece. Owner is Clay Haworth (clayboicardi on GitHub) — analytically strong power user who directs AI to build.
 
-**Status as of 2026-05-19:** MVP Session 4 first half complete (vertical-slice contracts + SQLDelight schema + LocalLibrarySource skeleton). Pre-MVP gate cleared earlier this day. Repo public at https://github.com/clayboicardi/kiln; CI green on every push (Ubuntu Android + Windows Desktop). **Next: pick up at [`docs/sessions/2026-05-19-session-7-handoff.md`](docs/sessions/2026-05-19-session-7-handoff.md)** (7 pending items, ~32-46 hrs to end-to-end "play a FLAC" milestone).
+**Status as of 2026-05-19:** MVP Session 4 second half complete + MVP Session 5 scaffold landed (Media3ExoPlayerImpl). Library scanner stack (Android MediaStore + JVM filesystem) fully implemented with 25 unit tests green. Pre-MVP gate cleared earlier this day. Repo public at https://github.com/clayboicardi/kiln; CI green on every push (Ubuntu Android + Windows Desktop). **Next: pick up at [`docs/sessions/2026-05-19-session-8-handoff.md`](docs/sessions/2026-05-19-session-8-handoff.md)** (6 pending items, ~25-37 hrs to end-to-end "play a FLAC" milestone).
 
 ## Quick Navigation
 
@@ -12,7 +12,7 @@ Kiln by Clayworks is a from-scratch Android + Windows Desktop music player. Pers
 
 | If you're being asked to... | Read this first |
 |---|---|
-| Pick up the next session's work | `docs/sessions/2026-05-19-session-7-handoff.md` (7 pending items, recommended order, full file paths, critical gotchas) |
+| Pick up the next session's work | `docs/sessions/2026-05-19-session-8-handoff.md` (6 pending items, recommended order, full file paths, critical gotchas) |
 | Understand the design contract | `docs/superpowers/specs/2026-05-18-kiln-rebuild-design.md` |
 | Plan or sequence work | `docs/superpowers/plans/2026-05-18-kiln-execution-plan.md` |
 | Continue Pre-MVP Research | `docs/decisions/2026-05-18-library-vetting.md` (append-only log) |
@@ -49,7 +49,7 @@ This project replaces JAMZ!!! at `C:\Users\chawo\Projects\JAMZ!!!\`. JAMZ was a 
 - **Don't batch multiple changes into one commit.**
 - **Don't add features beyond the spec's anti-roadmap (§11).** Explicitly cut: Tidal, Spatial Audio, AI/LLM features, cross-device handoff, MIDI controller for EQ, iOS, Linux, macOS, Wear, Tablet-optimized, Auto, Tag editing, Lyrics, Last.fm scrobbling, BT codec readouts, Podcasts.
 
-## Build/Dep Gotchas (discovered MVP Sessions 1-4)
+## Build/Dep Gotchas (discovered MVP Sessions 1-5)
 
 One-liners that would have prevented friction this past session. Skim before scaffold/build work.
 
@@ -66,6 +66,15 @@ One-liners that would have prevented friction this past session. Skim before sca
 - **minSdk = 23** (revised from 21 on 2026-05-19; Compose-MP 1.11 components-resources-android requires ≥23). See vetting log "Item 1 addendum: minSdk hard-lock revisit 21 → 23".
 - `upgradeUuid = "611fd94b-756e-561d-ba94-af658a225268"` is wired in `kiln.desktop.app` convention. **NEVER MODIFY** — future MSI upgrades depend on stability.
 - Clay's music library root is `D:\tiddl` (NOT `%USERPROFILE%\Music`) for any scan-folder default at MVP Session 26-28 Settings UI.
+- SQLDelight `IS NULL` filters on already-nullable columns do NOT type-narrow (unlike `IS NOT NULL` which does). Existing examples: `selectByAlbum`, `selectTracksOfPlaylist`, `selectAllForFtsRebuild` — all return the default `Track` row class even with `WHERE deleted_at_ms IS NULL` clauses.
+- **MediaStore.Audio.Media.DATE_MODIFIED is seconds-since-epoch**, not milliseconds. Multiply by 1000L when persisting to the schema's millisecond `file_mtime_ms` column. (Filesystem `Files.getLastModifiedTime().toMillis()` is already ms.)
+- **MediaStore.Audio.Media.TRACK encodes disc number** when present — values >1000 are typically "1NNN" form (disc 1, track NNN). Modulo 1000 to extract just the track number. Disc number itself is otherwise not directly available via MediaStore.Audio.Media.
+- **MediaStore artist/album use literal `"<unknown>"` (with angle brackets)** as the placeholder for missing metadata. Filter alongside blank-string checks — otherwise an `<unknown>` artist accumulates and wins all sort-name comparisons.
+- **jaudiotagger's `header.bitRateAsNumber` returns `Long`** (not Int). The other format methods (`sampleRateAsNumber`, `bitsPerSample`, `trackLength`) return `Int`. Don't blanket `.toLong()` — it warns on bitRateAsNumber.
+- **`@Suppress` cannot annotate a constructor-call argument label** — `MediaCols(@Suppress("DEPRECATION") data = ..., ...)` parses as "Only expressions are allowed in this context". Hoist the suppress to the enclosing function or class.
+- **ExoPlayer methods are single-thread accessed** via the application looper (default `Looper.getMainLooper()`). All suspend wrappers in `Media3ExoPlayerImpl` use `withContext(Dispatchers.Main.immediate) { ... }`. The constructor itself must be called from the main thread.
+- **ItemId namespace contract:** tracks are bare numeric (`"42"`); albums/artists/playlists prefix with `"album:"/"artist:"/"playlist:"`. `LocalLibrarySource.getPlayable()` returns `SourceError.ItemNotFound` for any non-numeric (container) ItemId — only tracks are directly playable; containers must be browsed via `TracksOfAlbum/TracksOfArtist/TracksOfPlaylist` first.
+- **The scanner does scan-end FTS5 rebuild** (raw `'delete-all'` + bulk INSERT from `selectAllForFtsRebuild`) rather than per-row maintenance during the walk. Avoids the contentless-FTS5 delete-syntax's old-values requirement. Trade-off: during-scan search returns briefly stale results.
 
 ## Workflow
 
