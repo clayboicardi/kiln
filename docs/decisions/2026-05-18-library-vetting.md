@@ -849,12 +849,135 @@ Key decisions:
 
 ---
 
+## Item 7: Compose-MP screenshot testing (Roborazzi)
+
+> **Plan reference:** Pre-MVP Research §2.1 item 7 + §7 test-infrastructure timeline (Phase 2a Flight A). First use case: Kiln Dynamic theming regression tests across diverse album art.
+
+### Question
+
+Verify Roborazzi handles Compose Multiplatform desktop screenshot testing, not just Android-with-Robolectric. Pin a specific version. Confirm there's no better-fit alternative.
+
+### Method
+
+- Context7 query against `/takahirom/roborazzi` (source: High, 310 snippets)
+- GitHub Releases API for cadence and stability
+- Cross-reference Slack's `gradle/libs.versions.toml` pin (`roborazzi = "1.60.0"`)
+- Read Roborazzi's `docs/topics/compose_multiplatform.md` content via Context7 corpus
+
+### Findings
+
+**Compose-MP Desktop support is first-class:**
+
+Roborazzi explicitly supports Compose Multiplatform Desktop AND Compose iOS targets, using the same `captureRoboImage` extension function on top of Compose UI Test's `runDesktopComposeUiTest`. From the docs:
+
+```kotlin
+class NowPlayingScreenshotTest {
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun nowPlaying_renders_correctly() = runDesktopComposeUiTest {
+        setContent {
+            KilnTheme {
+                NowPlayingUi(stateFixture)
+            }
+        }
+        val opts = RoborazziOptions(
+            recordOptions = RoborazziOptions.RecordOptions(resizeScale = 0.5),
+            compareOptions = RoborazziOptions.CompareOptions(changeThreshold = 0F)
+        )
+        onRoot().captureRoboImage(roborazziOptions = opts)
+    }
+}
+```
+
+This pattern works on JVM desktop tests without Android emulator or Robolectric. The reference Compose-MP doc page is `https://github.com/takahirom/roborazzi/blob/main/docs/topics/compose_multiplatform.md`.
+
+**Caveat — `ExperimentalTestApi`:** `runDesktopComposeUiTest` is still annotated `@OptIn(ExperimentalTestApi::class)`. The Compose-MP team has had this API in "Experimental" status across multiple versions; the API surface is stable in practice but Compose-MP reserves the right to break it. Mitigation: explicit `@OptIn` on every screenshot test method; treat as conventional pattern.
+
+**Version state:**
+
+| Version | Date | Status |
+|---|---|---|
+| 1.61.0 | 2026-05-18 | **STABLE — latest; pin this** |
+| 1.60.0 | 2026-04-28 | Slack pins this |
+| 1.59.0 | 2026-02-11 | superseded |
+| 1.58.0 | 2026-02-02 | superseded |
+| 1.57.0 | 2026-01-23 | superseded |
+| 1.56.0 | 2026-01-09 | superseded |
+| 1.55.0 | 2026-01-06 | superseded |
+| 1.54.0 | 2026-01-03 | superseded |
+
+**Cadence is unusually fast** — 8 stable releases in the 4.5 months from 2026-01-03 to 2026-05-18. This means we expect ~1-2 minor versions between our pin time and Phase 2a Flight A (when screenshot tests actually land per plan §7). Plan to revisit at adoption time.
+
+**Maintenance signals:**
+- 945 stars; Apache 2.0; last push hours ago at session time (2026-05-19)
+- 133 open issues (high — but fast-cadence libraries accumulate them; 8 releases in 4.5 months implies they're being resolved at speed too)
+- Active maintainer (takahirom), well-known in the Compose ecosystem
+
+**Architecture — three artifacts:**
+
+```toml
+roborazzi              = { module = "io.github.takahirom.roborazzi:roborazzi",            version.ref = "roborazzi" }
+roborazzi-compose      = { module = "io.github.takahirom.roborazzi:roborazzi-compose",    version.ref = "roborazzi" }
+roborazzi-junit-rule   = { module = "io.github.takahirom.roborazzi:roborazzi-junit-rule", version.ref = "roborazzi" }
+```
+
+For Kiln Compose-MP desktop, we need:
+- `roborazzi` (core)
+- `roborazzi-compose` (Compose UI extension functions: `captureRoboImage` on `SemanticsNodeInteraction`)
+- `roborazzi-junit-rule` only if we want JUnit4 `@get:Rule` integration; otherwise the `runDesktopComposeUiTest` block-scoped DSL is sufficient
+
+Roborazzi's Gradle plugin (`io.github.takahirom.roborazzi`) provides the `recordRoborazziDebug`, `verifyRoborazziDebug`, `compareRoborazziDebug` tasks. Per plan §6 CI matrix, these run in CI.
+
+**Snapshot storage:**
+
+Roborazzi stores PNG snapshots under `src/test/snapshots/` (or whatever the test source set is). For Kiln this means:
+- `:ui:theme/src/jvmTest/snapshots/`
+- `:ui:components/src/jvmTest/snapshots/`
+
+These are checked into git. For Kiln's diverse-album-art theming tests (Phase 2a Flight A primary use case), this could mean dozens of small PNGs (~5-30 KB each), totally manageable.
+
+**Alternative tools considered (and rejected):**
+
+| Tool | Verdict |
+|---|---|
+| Paparazzi (Android-only, layoutlib-based) | Spec already cuts this — no Compose-MP support. Out. |
+| Compose-MP's own `ui-test-junit4` raw artifact | Provides `runDesktopComposeUiTest`/`runComposeUiTest` but no image capture. Roborazzi extends this; you don't choose one OR the other. |
+| Shot (Karumi) | Android-only. Out. |
+| Maestro / Appium | E2E flow testing, not screenshot regression. Different problem; might earn its keep later for Phase 3 measurement-workflow E2E (plan §7) but not Item 7's bucket. |
+
+There is no Roborazzi competitor that does Compose-MP Desktop screenshot regression as a first-class concern. The library has the niche to itself.
+
+### Decision
+
+**Adopt Roborazzi 1.61.0** (latest stable as of session 2 close-out). Pin in `libs.versions.toml` at MVP Session 1-3 scaffold time. Wire up at Phase 2a Flight A when Kiln Dynamic theming earns its keep per plan §7 ("Roborazzi screenshot tests for Kiln Dynamic theming … catches theme regressions across diverse album art").
+
+**Test placement:**
+- `:ui:theme/src/jvmTest/` — palette extraction + WCAG post-processing regression tests (Phase 2a Flight A primary)
+- `:ui:components/src/jvmTest/` — stable composition screenshot tests for individual components (mini-player, EQ slider, Now Playing layout)
+- Snapshots committed to git under `snapshots/` subdirectories
+
+**Conventions to establish at Flight A:**
+- Test fixtures (e.g., synthetic 500×500 album art images representing edge cases — high saturation, low saturation, monochrome, missing art) live in a shared `:ui:test-fixtures` module
+- `RoborazziOptions(changeThreshold = 0F)` for theme tests (any pixel-level difference = regression); slightly looser thresholds for animation/transition tests
+- `RoborazziOptions(resizeScale = 0.5)` to halve snapshot file sizes — sufficient for regression detection, halves the git footprint
+
+### Just-in-time research deferred (before Phase 2a Flight A)
+
+- Re-check Roborazzi version (cadence is ~monthly; expect 1.65.x-1.70.x by Flight A start)
+- Confirm `@OptIn(ExperimentalTestApi::class)` is still required or if Compose-MP stabilized the API by then
+- Decide whether to enable the Roborazzi Gradle plugin per-module or via a `build-logic` convention plugin (likely the latter — `kilnConventionScreenshotTests` plugin)
+
+### Status
+
+**DECIDED.** Roborazzi 1.61.0 pinned for `libs.versions.toml` at MVP Session 1-3 scaffold; actual screenshot-test code lands at Phase 2a Flight A per plan §7 timeline.
+
+---
+
 ## Next items in queue
 
-- (Remaining items 7, 9, 10, 12 — to be tackled in subsequent Pre-MVP Research sessions)
+- (Remaining items 9, 10, 12 — to be tackled in subsequent Pre-MVP Research sessions)
 
 Items still to research:
-- Item 7 — Compose-MP screenshot testing (Roborazzi maturity)
 - Item 9 — Java Sound capability survey on Windows
 - Item 10 — jpackage / Windows distribution
 - Item 12 — Compose MP Desktop LazyColumn 40k stress test (requires actual code spike)
