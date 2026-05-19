@@ -89,8 +89,11 @@ One-liners that would have prevented friction this past session. Skim before sca
 2. **One change at a time** — each commit small enough to test independently
 3. **Build and verify after every change** — when Gradle is set up, run `:app-android:assembleDebug` and `:app-desktop:run` to confirm
 4. **Commit after each working change** with a descriptive message
+4a. **Push at session-close (not mid-session).** CI runs on every push to main (Ubuntu Android + Windows Desktop). Single push per session is the cadence; individual commits land local first.
 5. **Save engram memory entries** for decisions, discoveries, gotchas, convention establishments
 6. **Session end:** update `docs/sessions/YYYY-MM-DD-session-N.md` (create the directory on the first session that warrants it)
+
+**Canonical session-validation build:** `./gradlew :app-android:assembleDebug :app-desktop:assemble :data:library:build :audio:playback:build :data:library:desktopTest` — both apps + load-bearing libs + tests. Run after every logical change set; expect ~5-15s incremental.
 
 ## Named Patterns (vocabulary for decision-making)
 

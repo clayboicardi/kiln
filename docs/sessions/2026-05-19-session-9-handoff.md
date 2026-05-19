@@ -8,12 +8,37 @@ This handoff covers **4 pending items** carried forward from Session 8. Session 
 
 ---
 
+## 🚀 Pre-flight (first 5 minutes of the session)
+
+**Read order (cold-start):**
+
+1. This file (Session 9 handoff) — full read.
+2. `CLAUDE.md` — ~120 lines, project orientation + 27 cumulative gotchas.
+3. `docs/sessions/2026-05-19-session-8.md` — most-recent closeout.
+4. *Optional* `mem_search "kiln session-8"` to warm engram context.
+5. Scaffold prep §4.5–§4.6 + §5.3–§5.4 — `docs/scaffold/2026-05-18-mvp-session-4-vertical-slice-prep.md` lines 566-866. The full reference design for JavaSoundPlayerImpl + JvmFlacDecoderImpl + LibFlacBinding.
+
+**Confirm clean baseline:**
+
+```powershell
+cd C:\Users\chawo\Projects\kiln
+git log --oneline -5           # expect e8c383a at top (Session 8 closeout)
+git status                     # expect clean tree
+./gradlew :app-android:assembleDebug :app-desktop:assemble :data:library:build :audio:playback:build :data:library:desktopTest
+# expect: BUILD SUCCESSFUL in ~5-15s incremental, 25 tests green
+```
+
+If baseline is dirty or build red — STOP, diagnose, surface to Clay. Don't paper over.
+
+---
+
 ## Where we are (current state, 2026-05-19 end-of-session-8)
 
 **Repo:** `https://github.com/clayboicardi/kiln` (public, Apache 2.0)
-**Branch:** `main` at commit `f918c99` (+ Session 8 closeout commit to be added)
+**Branch:** `main` at commit `e8c383a` (Session 8 closeout). Origin = local (pushed).
 **Build:** `./gradlew :app-android:assembleDebug :app-desktop:assemble :data:library:build :audio:playback:build :data:library:desktopTest` → BUILD SUCCESSFUL
 **Tests:** `:data:library:desktopTest` → 25 tests passing in 36ms
+**CI:** Run 26121124795 (Session 8 closeout push) — Ubuntu Android + Windows Desktop; expected green.
 
 **What's done since Session 8 handoff was written:**
 - ✅ H4-finish — Media3ExoPlayerImpl.loadQueue resolves via injected MusicSource (commit `7740e1c`)
@@ -60,6 +85,17 @@ H8 (Pixel install) is Clay's interactive step — runs anytime independently.
 - `audio/playback/src/desktopMain/kotlin/com/clayworks/kiln/audio/playback/JvmFlacDecodedStream.kt` — implements DecodedStream
 
 **Reference design:** `docs/scaffold/2026-05-18-mvp-session-4-vertical-slice-prep.md` §5.3, §5.4. Also: the C reference example at `xiph/flac/examples/c/decode/file/main.c` for the callback dance.
+
+**Suggested sub-steps (commit between each — small, testable increments):**
+
+1. **Vendor the binary.** Download libFLAC 1.5.0 Win-x64 from xiph.org (or build from source). Drop `libFLAC.dll` + `LICENSE-libflac.txt` (Xiph BSD-3) under `audio/playback/src/desktopMain/resources/native/win-x64/`. Verify it's loaded into the test JVM via a one-line smoke (`Native.load("FLAC", ...)`).
+2. **NativeLibraryLoader.** Extracts the DLL from the JAR resource to a temp dir + `System.load()`s it. JNA's `Native.load(name, ...)` can't directly read from a JAR; the extract-to-temp pattern is the standard JNA-on-JVM solution. Cache the extracted location for the JVM lifetime.
+3. **LibFlacBinding (skeleton).** JNA `Library` interface with just `FLAC__stream_decoder_new` + `FLAC__stream_decoder_delete` + state enum. Compile-only smoke — confirms JNA can find the function symbols. Don't wire callbacks yet.
+4. **Callback registration.** Add `FLAC__stream_decoder_init_file` + the 3 callback typedefs (`WriteCallback`, `MetadataCallback`, `ErrorCallback`) as JNA `Callback` interfaces. The write callback is where decoded PCM frames arrive — that's the hot path.
+5. **Metadata read.** Call `process_until_end_of_metadata`, parse the STREAMINFO block, expose `StreamInfo(sampleRateHz, bitDepth, channels, totalSamples)`. Verify against ffprobe output for a known FLAC.
+6. **PCM decode loop.** Wire `process_single` in a Kotlin `flow {}` builder; the write callback feeds an `AudioFrame` channel that the flow reads from. **Watch the 24-bit packing**: libFLAC gives samples as `FLAC__int32` even for 16/24-bit content — pack down to little-endian 3-byte sequences for 24-bit, sign-aware.
+7. **Seek + close.** `seek_absolute(sample)` + `streamDecoderFinish` + `streamDecoderDelete`. Use Kotlin's `AutoCloseable` interface; consumers do `decoder.open(playable).use { ... }`.
+8. **FlacDecodeSmokeTest.** Pick 10 representative FLACs from Clay's `D:\tiddl` library spanning the format matrix (see Empirical FLAC smoke below). Compare PCM output byte-for-byte against ffmpeg reference. CI-exclude (requires Clay's local library); local-only.
 
 **Empirical FLAC smoke (per vetting Item 9 addendum gate):** 10 representative files from Clay's library spanning 16/44 → 24/192 + multichannel + ReplayGain + embedded art. Compare PCM output byte-for-byte against `ffmpeg -i file.flac -f s24le -acodec pcm_s24le`. Per vetting Item 9 addendum + scaffold prep §10. Smoke test file: `audio/playback/src/desktopTest/kotlin/.../FlacDecodeSmokeTest.kt` (CI-excluded; runs locally).
 
@@ -155,6 +191,37 @@ Inherits all 21 gotchas from Session 7 handoff. New this session:
 7. Commit after each working change. Push at logical milestones (CI runs on every push to main).
 
 **Estimated total remaining effort to "play a FLAC" milestone:** ~17-25 hrs across 2 sessions (down from Session 8 handoff's 25-37 hrs after delivering H4-finish + H3).
+
+---
+
+## ✅ Session 9 success criteria (what a green session looks like)
+
+Minimum-viable Session 9 ends with all of these true:
+
+- [ ] `libFLAC.dll` 1.5.0 + `LICENSE-libflac.txt` BSD-3 vendored at `audio/playback/src/desktopMain/resources/native/win-x64/`.
+- [ ] `NativeLibraryLoader` extracts the DLL from the JAR to temp + `System.load`s it without crashing.
+- [ ] `LibFlacBinding` JNA interface compiles + at minimum can call `streamDecoderNew` / `streamDecoderDelete` without segfaulting.
+- [ ] `JvmFlacDecoderImpl` implements the existing `Decoder` interface from `:audio:playback/commonMain`; `JvmFlacDecodedStream` implements `DecodedStream`.
+- [ ] `FlacDecodeSmokeTest` runs locally against ≥1 known FLAC; preferably the full 10-file matrix per scaffold prep §10.
+- [ ] Canonical session-validation build (above) BUILD SUCCESSFUL.
+- [ ] Session 9 closeout doc + Session 10 handoff doc written.
+- [ ] All commits pushed to `origin/main`; CI green.
+
+Stretch (H5 lands too):
+- [ ] `JavaSoundPlayerImpl` exists at `audio/playback/src/desktopMain/...`; smoke-tested with synthetic sine PCM.
+- [ ] `DesktopAppGraph` exposes `abstract val player: PlatformPlayer` with the full Java-Sound provider chain.
+
+After Session 9 lands, **Session 10 is the H7 milestone**: a single button in both apps plays the first track from Clay's library end-to-end. That's when the spec's vertical-slice milestone is officially crossed.
+
+---
+
+## 📋 Copy-paste prompt for the next session
+
+```
+Read docs/sessions/2026-05-19-session-9-handoff.md and execute it as your prompt for this session.
+```
+
+That's it. The handoff's Pre-flight block + Read order + Sub-steps + Success criteria are self-contained.
 
 ---
 
