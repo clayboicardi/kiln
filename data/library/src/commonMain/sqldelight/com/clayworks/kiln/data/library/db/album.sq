@@ -45,6 +45,12 @@ SELECT * FROM album
 WHERE artist_id = ?
 ORDER BY year DESC, name_sort;
 
+-- Scanner upsert: match the UNIQUE INDEX (artist_id, name_sort). Albums by
+-- the same album-artist with the same normalized name are the same row.
+selectByArtistAndName:
+SELECT * FROM album
+WHERE artist_id = ? AND name_sort = ?;
+
 insert:
 INSERT INTO album(
     artist_id, name, name_sort, year, date,

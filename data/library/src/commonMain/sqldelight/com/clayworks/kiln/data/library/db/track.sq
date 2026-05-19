@@ -122,6 +122,74 @@ INSERT INTO track(
 lastInsertRowId:
 SELECT last_insert_rowid();
 
+-- Scanner: rewrite all metadata for a file whose mtime changed. Preserves
+-- user state (play_count, skip_count, last_played_ms, date_added_ms). Clears
+-- deleted_at_ms so reappearing files are reactivated.
+updateForRescan:
+UPDATE track
+SET album_id = ?,
+    artist_id = ?,
+    title = ?,
+    title_sort = ?,
+    duration_ms = ?,
+    track_number = ?,
+    disc_number = ?,
+    year = ?,
+    date = ?,
+    genre = ?,
+    composer = ?,
+    bpm = ?,
+    codec = ?,
+    bitrate_kbps = ?,
+    sample_rate_hz = ?,
+    bit_depth = ?,
+    channels = ?,
+    file_size_bytes = ?,
+    file_mtime_ms = ?,
+    replay_gain_track_db = ?,
+    replay_gain_album_db = ?,
+    replay_gain_track_peak = ?,
+    replay_gain_album_peak = ?,
+    has_embedded_art = ?,
+    art_path = ?,
+    date_modified_ms = :modifiedAtMs,
+    last_scanned_ms = :scannedAtMs,
+    deleted_at_ms = NULL
+WHERE file_path = :filePath;
+
+-- Scanner: minimal touch for an unchanged file (same mtime + size). Only
+-- last_scanned_ms gets bumped so the post-scan soft-delete sweep doesn't
+-- mark this row as missing.
+touchLastScanned:
+UPDATE track
+SET last_scanned_ms = :scannedAtMs
+WHERE file_path = :filePath;
+
+-- Scanner: soft-delete rows that weren't seen during this scan pass. Caller
+-- passes the scan-start timestamp; any live row whose last_scanned_ms is
+-- older was missing from the filesystem.
+softDeleteUnscanned:
+UPDATE track
+SET deleted_at_ms = :deletedAtMs
+WHERE last_scanned_ms < :scanStartedMs
+  AND deleted_at_ms IS NULL;
+
+-- Scanner FTS5 rebuild: returns all live tracks with the JOIN-resolved
+-- display strings for the FTS5 index. COALESCE(_, '') normalizes nullable
+-- LEFT JOIN columns to non-null strings (no SQLDelight type-narrowing).
+selectAllForFtsRebuild:
+SELECT
+    track.id              AS track_id,
+    track.title           AS title,
+    COALESCE(album.name, '')        AS album_name,
+    artist.name           AS artist_name,
+    COALESCE(album_artist.name, '') AS album_artist_name
+FROM track
+LEFT JOIN album       ON track.album_id      = album.id
+INNER JOIN artist     ON track.artist_id     = artist.id
+LEFT JOIN artist AS album_artist ON album.artist_id = album_artist.id
+WHERE track.deleted_at_ms IS NULL;
+
 markPlayed:
 UPDATE track
 SET play_count = play_count + 1,
