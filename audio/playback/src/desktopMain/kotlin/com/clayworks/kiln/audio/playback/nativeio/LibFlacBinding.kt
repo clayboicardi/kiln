@@ -36,6 +36,37 @@ internal interface LibFlacBinding : Library {
      */
     fun FLAC__stream_decoder_get_state(handle: Pointer): Int
 
+    /**
+     * Initialize the decoder for a FLAC file at [filename]. Callers must hold
+     * strong references to the three callbacks for the decoder's lifetime —
+     * libFLAC stores them as raw function pointers; GC of the callback objects
+     * while a callback is in flight will crash the JVM.
+     *
+     * Returns one of the INIT_STATUS_* constants. 0 = OK; non-zero = init failure.
+     */
+    fun FLAC__stream_decoder_init_file(
+        handle: Pointer,
+        filename: String,
+        writeCallback: WriteCallback,
+        metadataCallback: MetadataCallback,
+        errorCallback: ErrorCallback,
+        clientData: Pointer?,
+    ): Int
+
+    /**
+     * Process all metadata blocks (firing the metadata callback for STREAMINFO
+     * + any other configured types) until the first audio frame. Returns true
+     * on success; false if the decoder aborted.
+     */
+    fun FLAC__stream_decoder_process_until_end_of_metadata(handle: Pointer): Boolean
+
+    /**
+     * Reset the decoder for re-use (close the file, free internal buffers).
+     * After finish() the decoder can be re-init'd with another file. Returns
+     * true on success.
+     */
+    fun FLAC__stream_decoder_finish(handle: Pointer): Boolean
+
     companion object {
         // FLAC__StreamDecoderState enum from include/FLAC/stream_decoder.h.
         // libFLAC 1.5.0 (Feb 2025) — values stable across the 1.x series.
@@ -49,5 +80,13 @@ internal interface LibFlacBinding : Library {
         const val STATE_ABORTED = 7
         const val STATE_MEMORY_ALLOCATION_ERROR = 8
         const val STATE_UNINITIALIZED = 9
+
+        // FLAC__StreamDecoderInitStatus enum from stream_decoder.h.
+        const val INIT_STATUS_OK = 0
+        const val INIT_STATUS_UNSUPPORTED_CONTAINER = 1
+        const val INIT_STATUS_INVALID_CALLBACKS = 2
+        const val INIT_STATUS_MEMORY_ALLOCATION_ERROR = 3
+        const val INIT_STATUS_ERROR_OPENING_FILE = 4
+        const val INIT_STATUS_ALREADY_INITIALIZED = 5
     }
 }
