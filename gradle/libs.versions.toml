@@ -1,0 +1,221 @@
+[versions]
+# === Language / build core (verified 2026-05-19 via gh api releases) ===
+kotlin = "2.3.21"                       # latest stable; 2.4.0 still RC as of 2026-05-13
+kotlinx-coroutines = "1.11.0"           # latest stable 2026-05-08
+kotlinx-serialization = "1.9.0"         # matches Slack circuit pin (1.11.0 stable exists but Slack hasn't bumped; safer to track Slack)
+agp = "9.2.1"                           # matches Slack circuit
+ksp = "2.3.8"                           # latest stable 2026-05-13; aligned with Kotlin 2.3.21
+android-compileSdk = "36"               # spec §2 hard lock
+android-minSdk = "21"                   # spec §2 hard lock; verify Coil 3.4.0 still supports at MVP Session 4
+android-targetSdk = "36"
+jvmTarget = "21"                        # CLAUDE.md JDK 21 (Temurin verified 2026-05-19)
+
+# === Compose Multiplatform (Item 1 — verified 2026-05-19) ===
+jb-compose = "1.11.0"                   # latest stable 2026-05-13; matches Slack
+jb-compose-material3 = "1.9.0"          # matches Slack
+jb-compose-material-icons-core = "1.7.3"
+compose-runtime = "1.11.1"              # keep in sync with the androidx version used by jb-compose
+jb-lifecycle = "2.11.0-beta01"          # KMP lifecycle artifacts; matches Slack circuit
+
+# === Image loading (Item 2 — Pre-MVP locked) ===
+coil = "3.4.0"
+
+# === Palette / Dynamic theming (Item 3 — Pre-MVP locked; revisit at Phase 2a Flight A) ===
+kmpalette = "4.0.0-beta02"
+
+# === Navigation (Item 4 — Pre-MVP confirmed; beta line, hasn't moved in ~9 months) ===
+voyager = "1.1.0-beta03"
+
+# === Presenter / state (Item 5 — Pre-MVP locked; finalize at MVP Session 12-15) ===
+circuit = "0.33.1"
+molecule = "2.2.0"
+
+# === Data layer (Item 6 — Pre-MVP locked) ===
+sqldelight = "2.3.2"
+
+# === DI ===
+kotlinInject = "0.9.0"                  # matches Slack circuit
+
+# === Functional / showcase ===
+arrow = "2.2.2.1"                       # latest stable 2026-03-18; :audio:dsp Arrow Either showcase per spec
+
+# === Testing ===
+kotest = "6.1.11"                       # latest stable 2026-04-04; major bump from prep-doc-listed 5.9.1
+turbine = "1.2.1"                       # matches Slack circuit (Flow testing)
+mokkery = "3.3.0"                       # latest stable 2026-03-18; KMP-friendly mocking
+roborazzi = "1.61.0"                    # Pre-MVP-pinned; one tick newer than Slack's 1.60.0
+
+# === Audio (Item 9 — Pre-MVP locked) ===
+jna = "5.14.0"                          # JVM ↔ libFLAC bridge; pinned per Item 9 addendum
+# Native libFLAC 1.5.0 vendored under :audio:playback/src/jvmMain/resources/native/win-x64/ (lands at MVP Session 4-7)
+
+# === Android Media3 (Item 11 + Item 13 PlatformPlayer Android adapter) ===
+androidx-media3 = "1.10.1"              # latest stable 2026-05-12 (prep doc had hallucinated 1.10.6)
+
+# === Android Activity (for :app-android setContent integration) ===
+androidx-activity = "1.13.0"            # matches Slack circuit
+
+# === Tag reader (desktop FLAC metadata) ===
+jaudiotagger = "3.0.1"                  # net.jthink:jaudiotagger; verify via Maven Central at first build
+
+# === Logging ===
+kermit = "2.1.0"                        # latest stable 2026-03-02
+
+# === Utility ===
+appdirs = "1.5.0"                       # Slack-aligned; Desktop user-data-dir resolution
+
+[libraries]
+# === Kotlin core ===
+kotlin-test = { module = "org.jetbrains.kotlin:kotlin-test", version.ref = "kotlin" }
+kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinx-coroutines" }
+kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "kotlinx-coroutines" }
+kotlinx-coroutines-swing = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-swing", version.ref = "kotlinx-coroutines" }
+kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "kotlinx-coroutines" }
+kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinx-serialization" }
+
+# === Compose Multiplatform ===
+compose-runtime = { module = "androidx.compose.runtime:runtime", version.ref = "compose-runtime" }
+compose-runtime-saveable = { module = "org.jetbrains.compose.runtime:runtime-saveable", version.ref = "jb-compose" }
+compose-foundation = { module = "org.jetbrains.compose.foundation:foundation", version.ref = "jb-compose" }
+compose-material3 = { module = "org.jetbrains.compose.material3:material3", version.ref = "jb-compose-material3" }
+compose-material-icons = { module = "org.jetbrains.compose.material:material-icons-core", version.ref = "jb-compose-material-icons-core" }
+compose-ui = { module = "org.jetbrains.compose.ui:ui", version.ref = "jb-compose" }
+compose-ui-tooling = { module = "org.jetbrains.compose.ui:ui-tooling", version.ref = "jb-compose" }
+compose-ui-tooling-preview = { module = "org.jetbrains.compose.ui:ui-tooling-preview", version.ref = "jb-compose" }
+compose-ui-test-junit4 = { module = "org.jetbrains.compose.ui:ui-test-junit4", version.ref = "jb-compose" }
+compose-resources = { module = "org.jetbrains.compose.components:components-resources", version.ref = "jb-compose" }
+compose-lifecycle-runtime = { module = "org.jetbrains.androidx.lifecycle:lifecycle-runtime-compose", version.ref = "jb-lifecycle" }
+compose-lifecycle-viewmodel = { module = "org.jetbrains.androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "jb-lifecycle" }
+
+# === Coil (Item 2) ===
+coil = { module = "io.coil-kt.coil3:coil", version.ref = "coil" }
+coil-compose = { module = "io.coil-kt.coil3:coil-compose", version.ref = "coil" }
+# coil-network-ktor3 — add ONLY if a remote source ever lands; not at MVP
+
+# === kmpalette (Item 3) ===
+kmpalette-core = { module = "dev.jordond.kmpalette:kmpalette-core", version.ref = "kmpalette" }
+
+# === Voyager (Item 4) ===
+voyager-navigator = { module = "cafe.adriel.voyager:voyager-navigator", version.ref = "voyager" }
+voyager-tab-navigator = { module = "cafe.adriel.voyager:voyager-tab-navigator", version.ref = "voyager" }
+voyager-transitions = { module = "cafe.adriel.voyager:voyager-transitions", version.ref = "voyager" }
+voyager-screenmodel = { module = "cafe.adriel.voyager:voyager-screenmodel", version.ref = "voyager" }
+
+# === Circuit + Molecule (Item 5) ===
+circuit-foundation = { module = "com.slack.circuit:circuit-foundation", version.ref = "circuit" }
+circuit-runtime = { module = "com.slack.circuit:circuit-runtime", version.ref = "circuit" }
+circuit-codegen-annotations = { module = "com.slack.circuit:circuit-codegen-annotations", version.ref = "circuit" }
+# circuit-codegen — KSP processor; add ONLY when codegen earns its keep (multi-presenter convergence at Session 12-15)
+molecule-runtime = { module = "app.cash.molecule:molecule-runtime", version.ref = "molecule" }
+
+# === SQLDelight (Item 6) ===
+sqldelight-coroutines-extensions = { module = "app.cash.sqldelight:coroutines-extensions", version.ref = "sqldelight" }
+sqldelight-primitive-adapters = { module = "app.cash.sqldelight:primitive-adapters", version.ref = "sqldelight" }
+sqldelight-android-driver = { module = "app.cash.sqldelight:android-driver", version.ref = "sqldelight" }
+sqldelight-sqlite-driver = { module = "app.cash.sqldelight:sqlite-driver", version.ref = "sqldelight" }   # JVM Desktop
+
+# === DI (kotlin-inject) ===
+kotlinInject-compiler = { module = "me.tatarka.inject:kotlin-inject-compiler-ksp", version.ref = "kotlinInject" }
+kotlinInject-runtime = { module = "me.tatarka.inject:kotlin-inject-runtime", version.ref = "kotlinInject" }
+
+# === Arrow showcase (audio:dsp Either spine) ===
+arrow-core = { module = "io.arrow-kt:arrow-core", version.ref = "arrow" }
+
+# === Testing ===
+kotest-runner-junit5 = { module = "io.kotest:kotest-runner-junit5", version.ref = "kotest" }
+kotest-assertions-core = { module = "io.kotest:kotest-assertions-core", version.ref = "kotest" }
+kotest-property = { module = "io.kotest:kotest-property", version.ref = "kotest" }
+turbine = { module = "app.cash.turbine:turbine", version.ref = "turbine" }
+mokkery-runtime = { module = "dev.mokkery:mokkery-runtime", version.ref = "mokkery" }
+
+# === Roborazzi (Item 7) ===
+roborazzi = { module = "io.github.takahirom.roborazzi:roborazzi", version.ref = "roborazzi" }
+roborazzi-compose = { module = "io.github.takahirom.roborazzi:roborazzi-compose", version.ref = "roborazzi" }
+roborazzi-junit-rule = { module = "io.github.takahirom.roborazzi:roborazzi-junit-rule", version.ref = "roborazzi" }
+
+# === Native FLAC bridge (Item 9 addendum) ===
+jna = { module = "net.java.dev.jna:jna", version.ref = "jna" }
+jna-platform = { module = "net.java.dev.jna:jna-platform", version.ref = "jna" }
+
+# === Android Media3 (Item 11 + Item 13 PlatformPlayer Android adapter) ===
+androidx-media3-exoplayer = { module = "androidx.media3:media3-exoplayer", version.ref = "androidx-media3" }
+androidx-media3-session = { module = "androidx.media3:media3-session", version.ref = "androidx-media3" }
+androidx-media3-common = { module = "androidx.media3:media3-common", version.ref = "androidx-media3" }
+androidx-media3-decoder = { module = "androidx.media3:media3-decoder", version.ref = "androidx-media3" }
+androidx-media3-datasource = { module = "androidx.media3:media3-datasource", version.ref = "androidx-media3" }
+
+# === Android Activity (for :app-android setContent) ===
+androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "androidx-activity" }
+
+# === Tag reader (desktop FLAC metadata) ===
+jaudiotagger = { module = "net.jthink:jaudiotagger", version.ref = "jaudiotagger" }
+
+# === Logging ===
+kermit = { module = "co.touchlab:kermit", version.ref = "kermit" }
+
+# === Desktop utility ===
+appdirs = { module = "net.harawata:appdirs", version.ref = "appdirs" }
+
+[bundles]
+compose-mp-common = [
+    "compose-foundation",
+    "compose-material3",
+    "compose-material-icons",
+    "compose-ui",
+    "compose-resources",
+    "compose-lifecycle-runtime",
+    "compose-lifecycle-viewmodel",
+    "compose-runtime-saveable",
+]
+voyager = [
+    "voyager-navigator",
+    "voyager-tab-navigator",
+    "voyager-transitions",
+    "voyager-screenmodel",
+]
+circuit = [
+    "circuit-foundation",
+    "circuit-runtime",
+    "circuit-codegen-annotations",
+]
+sqldelight-common = [
+    "sqldelight-coroutines-extensions",
+    "sqldelight-primitive-adapters",
+]
+kotest = [
+    "kotest-runner-junit5",
+    "kotest-assertions-core",
+    "kotest-property",
+]
+roborazzi = [
+    "roborazzi",
+    "roborazzi-compose",
+    "roborazzi-junit-rule",
+]
+android-media3 = [
+    "androidx-media3-exoplayer",
+    "androidx-media3-session",
+    "androidx-media3-common",
+    "androidx-media3-decoder",
+    "androidx-media3-datasource",
+]
+jna = [
+    "jna",
+    "jna-platform",
+]
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+android-library = { id = "com.android.library", version.ref = "agp" }
+android-kmp = { id = "com.android.kotlin.multiplatform.library", version.ref = "agp" }
+kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
+kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+kotlin-plugin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+kotlin-plugin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
+kotlin-plugin-parcelize = { id = "org.jetbrains.kotlin.plugin.parcelize", version.ref = "kotlin" }
+jb-compose = { id = "org.jetbrains.compose", version.ref = "jb-compose" }
+ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
+sqldelight = { id = "app.cash.sqldelight", version.ref = "sqldelight" }
+roborazzi = { id = "io.github.takahirom.roborazzi", version.ref = "roborazzi" }
+mokkery = { id = "dev.mokkery", version.ref = "mokkery" }
