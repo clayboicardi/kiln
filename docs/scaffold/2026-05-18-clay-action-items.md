@@ -71,6 +71,8 @@ If JBR is currently active, install Temurin 21 from adoptium.net and update `JAV
 
 ### 2c. Android SDK alignment
 
+> **CORRECTION (2026-05-19):** This section was inaccurate. `platforms/android-21` is **NOT** a build prerequisite. `minSdk = 21` is manifest metadata declared at install time; it does not require the android-21 SDK platform to be installed. Only the `compileSdk` platform (`android-36`) is required to build the project. Skip the android-21 install — it would only be needed for spinning up an Android 5.0 emulator for compatibility testing (not part of MVP scope). Clay's `Platform\` directory at `C:\Users\chawo\AppData\Local\Android\Sdk\Platform\` already has `android-35`, `android-36`, `android-36.1` + `build-tools/36.1.0` — sufficient for `compileSdk = 36` builds. Original §2c content preserved below for audit trail.
+
 CLAUDE.md notes Android SDK at `C:\Users\chawo\AppData\Local\Android\Sdk`. Verify the SDK has:
 - `platforms/android-36` (Kiln's compileSdk; spec §2)
 - `platforms/android-21` (Kiln's minSdk; spec §2)
@@ -183,3 +185,42 @@ Estimated calendar time for Session 1-3 at 4-8 hrs each: **1-3 sittings.**
 ---
 
 End of pre-MVP action items.
+
+---
+
+## 7. Status Log — Gate Cleared 2026-05-19
+
+Pre-MVP gate per plan §2.2 is **CLEARED** as of 2026-05-19. Clay's review session (Session 3) resolved all blocking decisions in §1. Tooling install state captured below.
+
+### Decisions (§1)
+
+| Item | Status | Detail |
+|---|---|---|
+| §1a Repo name | ✅ Decided | `clayboicardi/kiln`, **public** day-one (Software-as-Self-Portrait pattern, plan §3.1) |
+| §1b + §4 Pre-MVP acknowledgment | ✅ Explicit ack | Clay acknowledged all 12 review prompts in §4 with no push-back |
+
+### Tooling install (§2) — verified status
+
+| Item | Status | Detail |
+|---|---|---|
+| §2a WiX Toolset | 🔲 Install pending | Required before **MVP Session 3** (packageMsi smoke test); ~2 sessions of buffer. Chocolatey not on Clay's PATH; alternative install paths: (a) `winget install WiXToolset.WiXToolset` (Windows 11 default, recommended), (b) install Chocolatey then `choco install wixtoolset`, (c) manual download from https://wixtoolset.org/releases/. **WiX 3.x specifically** — 4.x is not jpackage-compatible. |
+| §2b JDK 21 Temurin | ✅ Verified | `java -version` reports `OpenJDK Runtime Environment Temurin-21.0.10+7 (build 21.0.10+7-LTS)`. NOT JBR — confirmed safe per CLAUDE.md anchor. Zero install needed. |
+| §2c Android SDK | ✅ Verified | Clay's `C:\Users\chawo\AppData\Local\Android\Sdk\Platform\` has `android-35`, `android-36`, `android-36.1`; `build-tools/36.1.0` present. Sufficient for `compileSdk = 36`. android-21 NOT required (see §2c correction callout). |
+| §2d `gh` CLI auth | ✅ Verified | `gh auth status` green. Logged in as `clayboicardi` (keyring). Token scopes include `repo`, `admin:org`, `delete_repo`, `workflow`. Ready for MVP Session 1 Step 1 repo creation. |
+
+### Deferred decisions (§3)
+
+| Item | Status | Detail |
+|---|---|---|
+| §3a `upgradeUuid` constant | ✅ Computed early | UUIDv5 = `611fd94b-756e-561d-ba94-af658a225268`. Derivation: `uuid5(uuid5(NAMESPACE_DNS, 'clayworks.com'), 'kiln-msi-upgrade')`. Computed via pure PowerShell .NET SHA-1 (Clay's Python was mid-version-mismatch-resolution). Lands at MVP Session 1 Step 13 as `const val UPGRADE_UUID = "611fd94b-756e-561d-ba94-af658a225268"` in `:app-desktop`. **NEVER MODIFY** once committed — future MSI upgrades depend on stability. |
+| §3b App icon | 🔲 Deferred | Clay's explicit defer to MVP Session 26-28 polish. |
+| §3c Music library root | ✅ Decided | `D:\tiddl` (not `%USERPROFILE%\Music`). Surfaces as scan-folder default in `${user.home}/.kiln/settings.json` once Settings UI ships at MVP Session 26-28. |
+
+### Next action
+
+MVP Session 1 can start as soon as Clay opens a fresh Claude session in `C:\Users\chawo\Projects\kiln\` and points it at:
+1. `CLAUDE.md`
+2. `docs/sessions/2026-05-19-session-3.md` (Session 3 closeout)
+3. `docs/scaffold/2026-05-18-mvp-session-1-prep.md` §12 (16-step scaffold sequence)
+
+WiX install can happen anytime before MVP Session 3 — not blocking for Sessions 1-2.
