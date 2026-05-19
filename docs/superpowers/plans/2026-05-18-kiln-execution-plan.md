@@ -76,16 +76,54 @@ Before scaffolding any module, Claude needs to do library research that Clay sho
 
 ### 2.2 Pre-MVP exit criteria
 
-- ✅ Decision log committed at `docs/decisions/2026-MM-DD-library-vetting.md`
+- ✅ Decision log committed at [`docs/decisions/2026-05-18-library-vetting.md`](../../decisions/2026-05-18-library-vetting.md)
 - ✅ Specific library versions identified for all 12 active items (item 8 Termux is closed-out; revised count = 12 active items)
-- ✅ Any soft-lock revisits flagged with rationale (Voyager swap, audio-backend architecture commit, etc.)
-- ✅ Schema sketch committed at `docs/decisions/2026-MM-DD-sqldelight-schema-sketch.md`
-- ✅ Audio backend architecture decision (item 13) explicitly recorded — does Phase 2b Flights I+J stay in scope, or do we commit to ExoPlayer/Java Sound permanently?
-- ✅ Clay reviews + acknowledges decisions before scaffolding starts
+- ✅ Any soft-lock revisits flagged with rationale (Voyager confirmed unchanged; audio-backend abstraction; kmpalette beta-vs-stable; LazyColumn paged-loading default)
+- ✅ Schema sketch committed at [`docs/decisions/2026-05-18-sqldelight-schema-sketch.md`](../../decisions/2026-05-18-sqldelight-schema-sketch.md)
+- ✅ Audio backend architecture decision (item 13) explicitly recorded — engine-swap boundary planned in MVP; Phase 2b Flights H+I downgraded to "may build, soft-lock revisit at end of Phase 2a"
+- 🔲 **Clay's review + acknowledgment before scaffolding starts** — this is the next gate
+
+### 2.3 Pre-MVP outcomes (added 2026-05-18 post-completion)
+
+**Status:** Pre-MVP Research complete across 2 sessions on 2026-05-18. All 12 active items fully decided. Schema sketch delivered. FLAC decoder addendum closed the one PARTIALLY-DECIDED item.
+
+**Effort tally:**
+
+| Phase | Plan estimate | Actual |
+|---|---|---|
+| Session 1 (Items 13, 1, 4, 11) | ~9-13 hrs | ~8 hrs |
+| Session 2 (Items 2, 3, 5, 6, 7, 9, 10, 12 + schema sketch + FLAC decoder addendum) | ~13-19 hrs | ~6 hrs |
+| **Total Pre-MVP** | **22-32 hrs** | **~14 hrs** |
+
+Came in 8-18 hrs under plan. Context7 + GitHub API automation was the multiplier — replaced what would have been hours of manual doc-site reading with structured library-resolution queries.
+
+**Key library pins (vetting log Items 2-7, 10):**
+
+| Item | Library | Version | License |
+|---|---|---|---|
+| 1 | Compose Multiplatform | Stable at scaffold time (verify JB Compose 1.10.x or current) | Apache 2.0 |
+| 2 | Coil | `io.coil-kt.coil3:coil-compose` `3.4.0` | Apache 2.0 |
+| 3 | kmpalette | `dev.jordond.kmpalette:kmpalette-core` `4.0.0-beta02` (revisit at Phase 2a Flight A) | MIT |
+| 4 | Voyager | confirmed (specific version at scaffold time) | MIT |
+| 5 | Circuit | `com.slack.circuit:circuit-foundation` `0.33.1` (pin finalized at MVP Session 12-15) | Apache 2.0 |
+| 5 | Molecule | `app.cash.molecule:molecule-runtime` `2.2.0` (opt-in companion) | Apache 2.0 |
+| 6 | SQLDelight | `app.cash.sqldelight:*` `2.3.2` | Apache 2.0 |
+| 7 | Roborazzi | `io.github.takahirom.roborazzi:*` `1.61.0` | Apache 2.0 |
+| 9 | JNA (for libFLAC bridge) | `net.java.dev.jna:jna` `5.14.0` | Apache 2.0 |
+| 9 | Xiph libFLAC (vendored native) | `1.5.0` Win-x64 DLL from xiph/flac release | BSD-3-Clause |
+
+**Soft-lock revisit calendar carried into MVP:**
+- **Before MVP Session 4** — confirm Coil 3.4.0 still supports `minSdk = 21`; verify Pixel 10 Pro XL SQLite has FTS5; probe Clay's Windows hardware for Java Sound format support
+- **MVP Session 4-7** — JNA + libFLAC bridge integration with empirical test against ≥10 of Clay's tracks across 16/44, 24/96, 24/192 rates
+- **MVP Session 23** — Windows SMTC binding decision (jsign / native lib / community KMP wrapper)
+- **Phase 2a Flight A** — kmpalette 4.0.0 stability story; Compose-MP `ExperimentalTestApi` status for Roborazzi
+- **End of Phase 2a** — AAudio MMAP / WASAPI commitment (Phase 2b Flights H+I) per Item 13
+
+**Pre-MVP-spawned scaffold prep doc:** [`docs/scaffold/2026-05-18-mvp-session-1-prep.md`](../../scaffold/2026-05-18-mvp-session-1-prep.md) — consolidates all Pre-MVP decisions into an MVP Session 1-3 actionable artifact (`libs.versions.toml` skeleton, per-module dependency assignments, JIT-check matrix, risk register, step-by-step scaffold sequence).
 
 ---
 
-## 3. MVP-1.0 Foundation (~305-435 hrs)
+## 3. MVP-1.0 Foundation (~315-450 hrs)
 
 The goal of MVP-1.0 is a working music player on both platforms with all phase-2 architectural seams wired in (even when stubbed). Per spec §6.1.
 
@@ -136,16 +174,18 @@ Sessions are 4-8 hours each. The sequence below front-loads "something runs on b
 - **First-build milestone: "Hello Kiln" runs on Pixel + Windows**
 - Initial CI: GitHub Actions builds both platforms on every push (`pull_request` + `main` push)
 
-#### Sessions 4-7: Library + playback vertical slice (~20-30 hrs)
+#### Sessions 4-7: Library + playback vertical slice (~30-45 hrs, revised 2026-05-18 post-Pre-MVP)
 - `MusicSource` interface in `:data:library` `commonMain` — designed first per spec invariant
 - `LocalLibrarySource` implementation:
   - Android adapter: MediaStore scanner
   - Desktop adapter: filesystem walker + tag-reader library (e.g., jaudiotagger via JVM)
 - `PlatformPlayer` interface in `:audio:playback` `commonMain`
-- Android adapter: Media3 ExoPlayer
+- Android adapter: Media3 ExoPlayer (Media3 handles FLAC decode natively on Android)
 - Desktop adapter: Java Sound (`SourceDataLine`)
+- **FLAC decoder for desktop (Pre-MVP Research §2.3 Item 9 addendum)**: JNA bridge to vendored Xiph libFLAC 1.5.0 BSD-3 Win-x64 DLL. `JvmFlacDecoderImpl` per spec §13 audio-backend abstraction. Native binary extracted from JAR to temp at startup. ~10-15 hrs added to the original 20-30 hr estimate; revised range is 30-45 hrs.
 - Wire it up: tap "play" on any track in the library → it plays on both platforms
 - **Vertical-slice milestone: play a FLAC from your library on both platforms**
+- **Empirical FLAC smoke test:** decode ≥10 of Clay's tracks across 16/44, 24/96, 24/192 rates; verify byte-equivalent PCM output against `ffmpeg -i file.flac -f f32le -` reference
 
 #### Sessions 8-11: Library UI (~16-24 hrs)
 - `:ui:theme` setup with Kiln Warmth idle palette (Dynamic comes in phase 2a)
@@ -377,7 +417,7 @@ CI scaffolding (per spec §8.3) lands in MVP Session 1-3. Matrix expansion (Andr
 ## 9. Risk-management checkpoints
 
 ### Soft-lock revisitations
-- **End of Pre-MVP Research:** confirm tech stack soft lock (spec item 4). Did vetting reveal issues with Voyager/Circuit/Kotlin-Inject?
+- ✅ **End of Pre-MVP Research:** tech stack soft lock (spec item 4) **confirmed unchanged**. Vetting did NOT reveal issues with Voyager (Item 4 — confirmed) / Circuit (Item 5 — Slack's own libs.versions.toml mirrors Kiln's plan exactly) / Kotlin-Inject (Slack uses the same). Three new soft-lock revisit *points* added downstream: kmpalette 4.0.0 stability at Phase 2a Flight A; AAudio/WASAPI at end of Phase 2a; LazyColumn mitigation at MVP Session 1-3 spike. See vetting log §2.3 for full outcome tally.
 - **End of MVP-1.0:** confirm test strategy soft lock (spec item 7). Are tests adding value or absorbing time disproportionately?
 - **End of Phase 2b:** confirm differentiator soft lock (spec item 2). Still want room correction, or has a different priority surfaced?
 
@@ -395,6 +435,18 @@ A literal session-start checklist item:
 - Effort overrun on a flight (>50% over estimate) — flag and discuss adjusting scope
 - A new variable arrives that affects scope (new Tidal API change, Android version policy, Compose-MP regression, etc.)
 - Anything that would change a hard lock (renames, target additions, license changes, MVP scope changes)
+
+### Tracked risks from Pre-MVP Research (added 2026-05-18)
+
+| Risk | Source | Mitigation | Revisit |
+|---|---|---|---|
+| FLAC desktop decoder requires vendored native libFLAC.dll bundling — first native-dep in the project; build-system + license-attribution friction | Vetting log Item 9 + addendum | JNA + extract-from-JAR pattern; THIRD_PARTY_LICENSES.md ships BSD-3 attribution per Compose-MP `nativeDistributions` | MVP Session 4-7 (build), MVP Session 26-28 (jpackage packaging verification) |
+| kmpalette 4.0.0 still in beta at adoption time (Phase 2a Flight A) | Vetting log Item 3 | Pin latest betaN; if API churns during the beta cycle, fall back to roll-our-own (Candidate 3, ~16-24 hrs in Flight A) | Before Phase 2a Flight A |
+| Coil 3 may have raised `minSdk` from 21 to 23 in 3.4.x | Vetting log Item 2 JIT | Probe before MVP Session 4 scaffold; if 23-only, raise the question with Clay before adopting | MVP Session 4 |
+| Compose-MP LazyColumn perf at 40k unverified | Vetting log Item 12 | Paged loading via SQLDelight `LIMIT/OFFSET` is the architectural default regardless of spike result; sectioned grouping is Mitigation B if needed | MVP Session 1-3 spike |
+| Phase 2b Flights H+I (AAudio MMAP, WASAPI) may not earn their keep | Vetting log Item 13 + spec item 4 soft-lock | Engine-swap abstraction landed in MVP costs only ~10-15 hrs; cut Flights H+I entirely at end of Phase 2a if ExoPlayer/Java Sound proves "good enough" by Clay's ear | End of Phase 2a |
+| Windows SMTC binding still TBD (no community Kotlin/JVM lib pinned) | Vetting log Item 11 | JIT research before MVP Session 23; jsign + JNA + native SMTC API direct, OR a community lib if one emerges | Before MVP Session 23 |
+| Windows SmartScreen warning on unsigned MSI/EXE | Vetting log Item 10 | Acceptable for MVP dogfooding scope; revisit code signing if adoption beyond Clay materializes | Phase 2a Flight E ship or whenever first non-Clay downloader appears |
 
 ---
 

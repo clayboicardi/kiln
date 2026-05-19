@@ -2,7 +2,7 @@
 
 **Date:** 2026-05-18
 **Author:** Clay Haworth (clayboicardi) with Claude Opus 4.7 (1M context)
-**Status:** Design phase — pre-implementation
+**Status:** Design phase — pre-implementation. Pre-MVP Research **complete** (2 sessions, 2026-05-18): all 12 vetting items decided, library versions pinned, schema sketched. See [vetting log](../../decisions/2026-05-18-library-vetting.md) and [scaffold prep](../../scaffold/2026-05-18-mvp-session-1-prep.md). Next gate: Clay's review before MVP Session 1 scaffold starts.
 **Predecessor:** JAMZ!!! (at `C:\Users\chawo\Projects\JAMZ!!!` on branch `tidal-download`), preserved as artifact and reference
 **Next step:** `/superpowers:writing-plans` to turn this spec into a per-phase execution plan
 
