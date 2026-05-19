@@ -28,7 +28,7 @@ Kiln by Clayworks is a from-scratch Android + Windows Desktop music player. Pers
 
 - **Project name:** Kiln by Clayworks (Clay's broader brand: Clayworks)
 - **License:** Apache 2.0 across all modules
-- **Targets:** Android (min SDK 21, compile SDK 36) + Windows Desktop (JVM 21). Mac/Linux/iOS not blocked architecturally but not planned.
+- **Targets:** Android (min SDK 23, compile SDK 36) + Windows Desktop (JVM 21). Mac/Linux/iOS not blocked architecturally but not planned. (minSdk revised 21 → 23 on 2026-05-19; see vetting log Item 1 addendum.)
 - **Language:** Kotlin 100% via Kotlin Multiplatform (KMP)
 - **UI:** Compose Multiplatform
 - **GitHub:** TBD — repo not yet created; planned name `clayboicardi/kiln` (or similar — Clay's call when scaffolded). For now: local-only git.

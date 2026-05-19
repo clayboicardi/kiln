@@ -6,7 +6,7 @@ kotlinx-serialization = "1.9.0"         # matches Slack circuit pin (1.11.0 stab
 agp = "9.2.1"                           # matches Slack circuit
 ksp = "2.3.8"                           # latest stable 2026-05-13; aligned with Kotlin 2.3.21
 android-compileSdk = "36"               # spec §2 hard lock
-android-minSdk = "21"                   # spec §2 hard lock; verify Coil 3.4.0 still supports at MVP Session 4
+android-minSdk = "23"                   # spec §2 hard lock; bumped 21→23 on 2026-05-19 (Compose-MP 1.11 components-resources requires ≥23; vetting log Item 1 addendum)
 android-targetSdk = "36"
 jvmTarget = "21"                        # CLAUDE.md JDK 21 (Temurin verified 2026-05-19)
 

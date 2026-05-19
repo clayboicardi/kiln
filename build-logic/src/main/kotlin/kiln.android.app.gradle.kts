@@ -17,7 +17,7 @@ android {
     compileSdk = 36
     defaultConfig {
         applicationId = "com.clayworks.kiln"
-        minSdk = 21
+        minSdk = 23   // revised 21 → 23 on 2026-05-19; vetting log Item 1 addendum
         targetSdk = 36
         versionCode = 1
         versionName = "0.1.0-scaffold"

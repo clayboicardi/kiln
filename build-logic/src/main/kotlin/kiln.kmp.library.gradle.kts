@@ -5,7 +5,8 @@
 // paired with org.jetbrains.kotlin.multiplatform — com.android.library
 // plugin is no longer compatible per AGP 9.0 breaking change).
 //
-// Spec §2 hard locks: compileSdk = 36, minSdk = 21, JVM target = 21.
+// Spec §2 hard locks: compileSdk = 36, minSdk = 23, JVM target = 21.
+// (minSdk revised 21 → 23 on 2026-05-19; vetting log Item 1 addendum.)
 // Namespace derived from project.path (e.g., :audio:dsp → com.clayworks.kiln.audio.dsp).
 
 plugins {
@@ -18,7 +19,7 @@ kotlin {
 
     androidLibrary {
         compileSdk = 36
-        minSdk = 21
+        minSdk = 23
         namespace = "com.clayworks.kiln${project.path.replace(":", ".")}"
     }
     jvm("desktop")

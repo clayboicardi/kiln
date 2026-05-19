@@ -1595,4 +1595,64 @@ Should be added to Pre-MVP Research's standard methodology. Captured in engram u
 
 Discovery surfaced 2026-05-19 during MVP Session 1 Task #8 smoke check. Build commit fixing the symptom: `0e02112 scaffold(gradle): jvmMain→desktopMain rename + defer kmpalette dep`. Vetting log addendum committed as part of MVP Session 1 close-out.
 
+---
+
+## Item 1 addendum: minSdk hard-lock revisit 21 → 23 (MVP Session 2 trigger)
+
+**Date:** 2026-05-19 (during MVP Session 2 Task #9 `./gradlew :app-android:assembleDebug` first attempt)
+**Trigger:** Compose Multiplatform 1.11.0 `components-resources-android` library requires minSdk ≥ 23
+
+### Question
+
+Can Kiln's `:app-android` module preserve spec §2 Item 1's `minSdk = 21` hard lock given the Compose Multiplatform 1.11.0 dependency stack?
+
+### Method
+
+First real `./gradlew :app-android:assembleDebug` run after writing `MainActivity.kt` + `AndroidManifest.xml`. Manifest merger failed:
+
+```
+uses-sdk:minSdkVersion 21 cannot be smaller than version 23 declared in library
+[org.jetbrains.compose.components:components-resources-android:1.11.0]
+```
+
+The library `org.jetbrains.compose.components:components-resources-android` is pulled transitively from `bundles.compose-mp-common` (used by `:ui:theme` and `:ui:components` per build-logic/kiln.kmp.compose convention).
+
+### Findings
+
+1. **Compose Multiplatform 1.11.0's components-resources-android requires minSdk ≥ 23** as a hard requirement, not a SDK target compromise. The library uses APIs unavailable on 21-22.
+2. Risk-playbook R4 anticipated this class of trigger (originally framed as a Coil 3.x risk). The trigger fired earlier than expected, via a different Compose-MP library (not Coil).
+3. **Compose Multiplatform's floor has moved** as of 2026. Other CMP libraries may follow. Staying on 21 would require dropping Compose-MP usage entirely — a fundamental architecture violation per spec §2 Item 1 ("Compose Multiplatform" as the UI stack hard-lock).
+
+### Decision
+
+**Bump spec §2 Item 1 platform target minSdk from 21 to 23. Approved by Clay 2026-05-19.**
+
+- Was: `android-minSdk = "21"`, "Min SDK Android: 21 (Lollipop)"
+- Now: `android-minSdk = "23"`, "Min SDK Android: 23 (Marshmallow)"
+- Addressable Android market loss: ~0.5% (API 21-22 = Android 5.0/5.1; covers <0.5% of active devices in 2026)
+- Clay's primary device (Pixel 10 Pro XL) is Android 16+, trivially satisfied
+- Item 1 ("Compose Multiplatform + Android+JVM+iOS+JS targets") otherwise unchanged
+
+### Ripple (files updated as part of this hard-lock revisit)
+
+- `docs/superpowers/specs/2026-05-18-kiln-rebuild-design.md` §2 Item 1 (Min SDK Android 21 → 23) + §8 CI matrix (API 21 dropped)
+- `CLAUDE.md` Identity section (min SDK 21 → 23)
+- `gradle/libs.versions.toml` (`android-minSdk = "23"`; updated comment)
+- `build-logic/src/main/kotlin/kiln.kmp.library.gradle.kts` (minSdk = 23 + header comment)
+- `build-logic/src/main/kotlin/kiln.android.app.gradle.kts` (defaultConfig.minSdk = 23)
+- This vetting log addendum (Item 1 §)
+
+### JIT items resolved
+
+- ~~"Confirm Coil 3.4.0 still supports minSdk = 21"~~ (MVP Session 4 JIT) — **RESOLVED.** Bump means Coil's own minSdk floor is no longer relevant for our app.
+- Risk-playbook R4 "Coil 3.x raises minSdk above 21" — **RESOLVED.** Trigger fired (via compose-resources, not Coil); resolution is this addendum.
+
+### Updated status
+
+**Item 1 status: DECIDED with revised minSdk floor.** Compose-MP stable line + Android+JVM Desktop+iOS+JS targets remain. Only the minSdk number amended (21 → 23). No other Item 1 details change.
+
+### Engram + commit cross-reference
+
+Spec amendment commit lands during MVP Session 2 work. Engram entry under `kiln/library-vetting/item-1-minsdk-23-revisit-2026-05-19`. Risk-playbook R4 implicitly resolved by this addendum (no separate R4 update needed; future maintenance can prune R4 when the playbook is refreshed).
+
 

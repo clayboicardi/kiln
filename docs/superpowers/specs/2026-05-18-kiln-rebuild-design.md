@@ -119,7 +119,7 @@ interface MusicSource {
 | FP utilities | Arrow (only in `:audio:dsp`) | Showcase typed errors in DSP module |
 | Reactive state | Molecule + Circuit (only in `:ui:components` Now Playing screen) | Showcase MVI presenter pattern on the screen with the most complex state (playback states, queue context, playback position, EQ-applied state) |
 
-**Min SDK Android:** 21 (Lollipop)
+**Min SDK Android:** 23 (Marshmallow). Revised 2026-05-19 from 21 — see vetting log "Item 1 addendum: minSdk hard-lock revisit 21 → 23". Compose Multiplatform 1.11's components-resources-android requires ≥23; ~0.5% Android market loss (API 21-22 = Android 5.0/5.1).
 **Compile SDK Android:** 36
 **JDK target:** 21 (Temurin)
 **Build system:** Gradle Kotlin DSL with the Kotlin Multiplatform plugin
@@ -343,7 +343,7 @@ The path, latency-tagged buffer types, and capture abstraction are built at MVP.
 
 ### 8.3 CI strategy
 
-- GitHub Actions matrix: Android (API 21, 28, 33, 36) × JVM (17, 21)
+- GitHub Actions matrix: Android (API 23, 28, 33, 36) × JVM (17, 21) — API 21 dropped per Item 1 minSdk revisit 2026-05-19
 - Inner-module tests run on JVM only — fast feedback per PR
 - Outer-module tests gated to PR runs
 - Screenshot updates require explicit human review
