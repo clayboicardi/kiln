@@ -22,6 +22,11 @@ selectAll:
 SELECT * FROM artist
 ORDER BY name_sort;
 
+selectAllPaged:
+SELECT * FROM artist
+ORDER BY name_sort
+LIMIT :pageSize OFFSET :pageOffset;
+
 selectById:
 SELECT * FROM artist
 WHERE id = ?;

@@ -6,13 +6,11 @@ package com.clayworks.kiln.library.source
 
 import app.cash.sqldelight.coroutines.asFlow
 import app.cash.sqldelight.coroutines.mapToList
-import app.cash.sqldelight.coroutines.mapToOneOrNull
 import arrow.core.Either
 import com.clayworks.kiln.data.library.db.KilnDatabase
 import com.clayworks.kiln.library.source.internal.sanitizeFtsQuery
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.transform
 
 class LocalLibrarySource(
@@ -33,8 +31,28 @@ class LocalLibrarySource(
     }
 
     override suspend fun browse(scope: BrowseScope): Flow<MediaItem> = when (scope) {
+        // NB: TrackSort / AlbumSort on AllTracks / AllAlbums is ignored at MVP — only
+        // the default ordering path is wired. Full sort matrix is follow-up work.
         is BrowseScope.AllTracks -> db.trackQueries
             .selectAll(scope.pageSize.toLong(), scope.pageOffset.toLong())
+            .asFlow()
+            .mapToList(ioDispatcher)
+            .transform { rows -> rows.forEach { emit(it.toMediaItem()) } }
+
+        is BrowseScope.AllAlbums -> db.albumQueries
+            .selectAllOrderedByArtistThenAlbum(scope.pageSize.toLong(), scope.pageOffset.toLong())
+            .asFlow()
+            .mapToList(ioDispatcher)
+            .transform { rows -> rows.forEach { emit(it.toMediaItem()) } }
+
+        is BrowseScope.AllArtists -> db.artistQueries
+            .selectAllPaged(scope.pageSize.toLong(), scope.pageOffset.toLong())
+            .asFlow()
+            .mapToList(ioDispatcher)
+            .transform { rows -> rows.forEach { emit(it.toMediaItem()) } }
+
+        is BrowseScope.AllPlaylists -> db.playlistQueries
+            .selectAll()
             .asFlow()
             .mapToList(ioDispatcher)
             .transform { rows -> rows.forEach { emit(it.toMediaItem()) } }
@@ -47,6 +65,18 @@ class LocalLibrarySource(
 
         is BrowseScope.TracksOfArtist -> db.trackQueries
             .selectByArtist(scope.artistId.value, scope.pageSize.toLong(), scope.pageOffset.toLong())
+            .asFlow()
+            .mapToList(ioDispatcher)
+            .transform { rows -> rows.forEach { emit(it.toMediaItem()) } }
+
+        is BrowseScope.AlbumsOfArtist -> db.albumQueries
+            .selectByArtist(scope.artistId.value)
+            .asFlow()
+            .mapToList(ioDispatcher)
+            .transform { rows -> rows.forEach { emit(it.toMediaItem()) } }
+
+        is BrowseScope.TracksOfPlaylist -> db.playlist_trackQueries
+            .selectTracksOfPlaylist(scope.playlistId.value)
             .asFlow()
             .mapToList(ioDispatcher)
             .transform { rows -> rows.forEach { emit(it.toMediaItem()) } }
@@ -68,20 +98,14 @@ class LocalLibrarySource(
             .asFlow()
             .mapToList(ioDispatcher)
             .transform { rows -> rows.forEach { emit(it.toMediaItem()) } }
-
-        // TODO MVP Session 4-7 follow-up: AllAlbums (needs Album → MediaItem mapper),
-        // AllArtists (needs Artist → MediaItem mapper), AllPlaylists, AlbumsOfArtist,
-        // TracksOfPlaylist. For now return empty flows so the BrowseScope sealed
-        // interface is exhaustively matched (compile-time checked).
-        is BrowseScope.AllAlbums,
-        is BrowseScope.AllArtists,
-        is BrowseScope.AllPlaylists,
-        is BrowseScope.AlbumsOfArtist,
-        is BrowseScope.TracksOfPlaylist -> emptyFlow()
     }
 
     override suspend fun getPlayable(itemId: ItemId): Either<SourceError, Playable> =
         Either.catch {
+            // Namespace contract (per LocalLibrarySourceMappers): tracks use bare
+            // numeric ItemIds; albums/artists/playlists use "album:"/"artist:"/
+            // "playlist:" prefixes. Only tracks are playables — non-numeric IDs
+            // (i.e., container kinds) yield ItemNotFound.
             val trackId = itemId.value.toLongOrNull()
                 ?: return Either.Left(SourceError.ItemNotFound(itemId))
             val track = db.trackQueries.selectById(trackId).executeAsOneOrNull()
