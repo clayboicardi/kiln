@@ -1,9 +1,10 @@
 // :audio:playback — PlatformPlayer + Decoder interfaces (commonMain) +
 // platform adapters: Media3 ExoPlayer (androidMain), Java Sound + JNA
-// libFLAC bridge (jvmMain). Engine-swap-shaped boundary per Item 13.
+// libFLAC bridge (desktopMain). Engine-swap-shaped boundary per Item 13.
 //
-// Native libFLAC.dll vendored under src/jvmMain/resources/native/win-x64/
-// — lands at MVP Session 4-7 (currently absent).
+// Native libFLAC 1.5.0 vendored under src/desktopMain/resources/native/win-x64/
+// (BSD-3, sourced from xiph/flac GitHub release 1.5.0; see README.md there
+// for provenance + SHA256).
 
 plugins {
     id("kiln.kmp.library")
