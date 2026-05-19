@@ -9,6 +9,12 @@ plugins {
 }
 
 dependencies {
+    // Compose-MP common bundle — provides foundation/material3/ui on Android
+    // target (compiles to androidx.compose.* artifacts). Project deps from
+    // :ui:* expose these as implementation (not api), so :app-android adds
+    // them directly.
+    implementation(libs.bundles.compose.mp.common)
+
     implementation(libs.androidx.activity.compose)
     implementation(libs.kotlinInject.runtime)
     ksp(libs.kotlinInject.compiler)
