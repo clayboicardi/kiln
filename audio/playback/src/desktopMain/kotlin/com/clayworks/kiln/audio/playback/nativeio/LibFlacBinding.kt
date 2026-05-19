@@ -61,6 +61,14 @@ internal interface LibFlacBinding : Library {
     fun FLAC__stream_decoder_process_until_end_of_metadata(handle: Pointer): Boolean
 
     /**
+     * Process one metadata block OR one audio frame. Returns true on success;
+     * false on error. Use the get_state value afterward to detect EOS. The
+     * write/metadata/error callbacks fire from inside this call on the calling
+     * thread — single-thread invariant.
+     */
+    fun FLAC__stream_decoder_process_single(handle: Pointer): Boolean
+
+    /**
      * Reset the decoder for re-use (close the file, free internal buffers).
      * After finish() the decoder can be re-init'd with another file. Returns
      * true on success.
