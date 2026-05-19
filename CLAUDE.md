@@ -4,7 +4,7 @@
 
 Kiln by Clayworks is a from-scratch Android + Windows Desktop music player. Personal-use audiophile player + developer portfolio piece. Owner is Clay Haworth (clayboicardi on GitHub) — analytically strong power user who directs AI to build.
 
-**Status as of 2026-05-18:** Pre-MVP Research phase. 4 of 12 library-vetting items decided in session 1. Repo scaffolded as docs-only; no Gradle setup yet. MVP Sessions 1-3 (when ready) will set up the Gradle KMP scaffold and produce a "Hello Kiln" running on both Pixel + Windows.
+**Status as of 2026-05-18:** Pre-MVP Research **COMPLETE** (12 of 12 vetting items decided across 2 sessions). Plan §2.3 has the outcome tally. Repo scaffolded as docs-only; no Gradle setup yet. **Next gate: Clay's review + acknowledgment per plan §2.2 before MVP Session 1 scaffold starts.** MVP Sessions 1-3 (when ready) will set up the Gradle KMP scaffold and produce a "Hello Kiln" running on both Pixel + Windows.
 
 ## Quick Navigation
 
@@ -15,6 +15,12 @@ Kiln by Clayworks is a from-scratch Android + Windows Desktop music player. Pers
 | Understand the design contract | `docs/superpowers/specs/2026-05-18-kiln-rebuild-design.md` |
 | Plan or sequence work | `docs/superpowers/plans/2026-05-18-kiln-execution-plan.md` |
 | Continue Pre-MVP Research | `docs/decisions/2026-05-18-library-vetting.md` (append-only log) |
+| Execute MVP Session 1-3 scaffold | `docs/scaffold/2026-05-18-mvp-session-1-prep.md` |
+| Execute MVP Session 4-7 vertical slice | `docs/scaffold/2026-05-18-mvp-session-4-vertical-slice-prep.md` |
+| Look up a Named Pattern definition | `docs/reference/2026-05-18-named-patterns-glossary.md` |
+| Respond to a tracked risk | `docs/reference/2026-05-18-risk-playbook.md` |
+| Pick a test pattern | `docs/reference/2026-05-18-test-infrastructure-cookbook.md` |
+| Check perf/Either/logging conventions | `docs/reference/` (performance-budgets, error-handling-patterns, logging-conventions) |
 | Understand the pivot context | Engram memory topic keys `strategy/rebuild-pivot`, `architecture/four-pillars`, `patterns/named-forces`, `kiln/design-spec-locked`, `kiln/plan-revised-2026-05-18` |
 | Find JAMZ legacy code (the predecessor) | `C:\Users\chawo\Projects\JAMZ!!!\` |
 
@@ -36,6 +42,7 @@ This project replaces JAMZ!!! at `C:\Users\chawo\Projects\JAMZ!!!\`. JAMZ was a 
 - **Don't add `androidx.*` imports to `commonMain` of `:audio:dsp` or `:audio:visualizer`** — Concentric Modules invariant from spec §3.4. Adapters in `androidMain` only.
 - **Don't write `if (source is XxxSource)` branches anywhere** — Source Protocol invariant from spec §3.3. If you find yourself wanting to, the interface is wrong; fix the interface.
 - **Don't carry over GPL-licensed code from Gramophone** — Apache 2.0 fresh re-derivation only.
+- **Don't propose `jflac`, `JustFLAC`, or `nayuki/FLAC-library-Java` for desktop FLAC decode** — Item 9 addendum committed to JNA + vendored Xiph libFLAC 1.5.0 (BSD-3). nayuki is GPL-3.0; jflac is unmaintained + no 24-bit; JustFLAC has no LICENSE file.
 - **Don't change soft locks (spec items 2, 4, 7) without explicit "this is a soft-lock revisit because [new variable]" conversation with Clay.**
 - **Don't change hard locks (spec items 1, 3, 5, 6, 8, 9)** without strong reason — they ripple through other decisions.
 - **Don't batch multiple changes into one commit.**
@@ -44,6 +51,7 @@ This project replaces JAMZ!!! at `C:\Users\chawo\Projects\JAMZ!!!\`. JAMZ was a 
 ## Workflow
 
 1. **Session start:** Read this CLAUDE.md, then the plan §11 session-start checklist
+1a. **Pre-scaffold gate (until passed):** Pre-MVP Research is complete. Before any `gradle/`, `build-logic/`, or module code work — verify Clay has reviewed + acknowledged Pre-MVP decisions per plan §2.2. See `docs/scaffold/2026-05-18-clay-action-items.md`. If unsure: ask.
 2. **One change at a time** — each commit small enough to test independently
 3. **Build and verify after every change** — when Gradle is set up, run `:app-android:assembleDebug` and `:app-desktop:run` to confirm
 4. **Commit after each working change** with a descriptive message
@@ -63,13 +71,18 @@ Use these labels by name when you observe their force in play. They are debuggin
 - **Concentric Modules** — inner core (`:audio:dsp`, `:audio:visualizer`) is platform-free Kotlin; outer rings add platform deps. Strict invariant on inner modules.
 - **The Source Protocol** — `MusicSource` interface + capability flags; no source-specific branching in the codebase
 - **Mastering Engineer's Apartment** — aesthetic frame: clinical instruments arranged with care, not sterile lab
+- **Engine-Swap-Shaped Boundary** — `PlatformPlayer` is shaped so MVP's Media3/Java Sound can swap to Phase 2b's AAudio/WASAPI without consumer churn (vetting Item 13)
+- **Capability Flags** — `SourceCapabilities` struct replaces type-discrimination (`if (source is XxxSource)`) for source-feature dispatch
+- **Append-only Decision Log** — vetting log + decision docs are append-only; addendums for status updates (Item 9 addendum is the canonical example)
 
 ## Tool Usage Priorities
 
 1. **API/library lookups:** Context7 first (e.g., `/jetbrains/compose-multiplatform`, `/androidx/media`, `/adrielcafe/voyager`, `/arkivanov/decompose`), then web search
-2. **Complex architectural calls:** Use `/octo:debate` or Gemini second-opinion (`~/.claude/scripts/ask-gemini.sh`) for cross-LLM verification on high-stakes decisions
-3. **Pre-MVP Research items:** Update the decision log in append-only style — don't edit prior entries; add new ones below
-4. **Avoid reading Gramophone GPL source** — re-derive from specs/first principles. Gramophone reference is for behavior matching only, never code copying.
+2. **Library version + maintenance verification:** `gh api repos/<org>/<repo>/releases?per_page=5` + `gh api repos/<org>/<repo>` for authoritative dates + license + last-push (faster than WebFetch on GitHub UI; WebFetch can hallucinate dates)
+3. **Complex architectural calls:** Use `/octo:debate` or Gemini second-opinion (`~/.claude/scripts/ask-gemini.sh`) for cross-LLM verification on high-stakes decisions
+4. **Cross-validate library stack against `slackhq/circuit` libs.versions.toml** — Slack's KMP/Compose-MP stack mirrors Kiln's planned stack; quick sanity check via `gh api repos/slackhq/circuit/contents/gradle/libs.versions.toml`
+5. **Append-only decision discipline:** Update the decision log in append-only style — don't edit prior entries; add new ones below or as addendums (see Item 9 addendum for the canonical pattern)
+6. **Avoid reading Gramophone GPL source** — re-derive from specs/first principles. Gramophone reference is for behavior matching only, never code copying.
 
 ## Hardware reference
 
