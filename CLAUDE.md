@@ -4,7 +4,7 @@
 
 Kiln by Clayworks is a from-scratch Android + Windows Desktop music player. Personal-use audiophile player + developer portfolio piece. Owner is Clay Haworth (clayboicardi on GitHub) — analytically strong power user who directs AI to build.
 
-**Status as of 2026-05-19:** MVP Session 4 second half complete + MVP Session 5 scaffold landed (Media3ExoPlayerImpl). Library scanner stack (Android MediaStore + JVM filesystem) fully implemented with 25 unit tests green. Pre-MVP gate cleared earlier this day. Repo public at https://github.com/clayboicardi/kiln; CI green on every push (Ubuntu Android + Windows Desktop). **Next: pick up at [`docs/sessions/2026-05-19-session-8-handoff.md`](docs/sessions/2026-05-19-session-8-handoff.md)** (6 pending items, ~25-37 hrs to end-to-end "play a FLAC" milestone).
+**Status as of 2026-05-19:** MVP Session 5 wrap (Media3ExoPlayerImpl.loadQueue resolves via MusicSource) + MVP Session 6 partial (AndroidAppGraph fully wired; DesktopAppGraph wired sans PlatformPlayer which awaits H5/JavaSoundPlayerImpl). Library scanner stack (Android MediaStore + JVM filesystem) fully implemented with 25 unit tests green. Pre-MVP gate cleared earlier this day. Repo public at https://github.com/clayboicardi/kiln; CI green on every push (Ubuntu Android + Windows Desktop). **Next: pick up at [`docs/sessions/2026-05-19-session-9-handoff.md`](docs/sessions/2026-05-19-session-9-handoff.md)** (4 pending items, ~17-25 hrs to end-to-end "play a FLAC" milestone).
 
 ## Quick Navigation
 
@@ -12,7 +12,7 @@ Kiln by Clayworks is a from-scratch Android + Windows Desktop music player. Pers
 
 | If you're being asked to... | Read this first |
 |---|---|
-| Pick up the next session's work | `docs/sessions/2026-05-19-session-8-handoff.md` (6 pending items, recommended order, full file paths, critical gotchas) |
+| Pick up the next session's work | `docs/sessions/2026-05-19-session-9-handoff.md` (4 pending items, recommended order, full file paths, critical gotchas) |
 | Understand the design contract | `docs/superpowers/specs/2026-05-18-kiln-rebuild-design.md` |
 | Plan or sequence work | `docs/superpowers/plans/2026-05-18-kiln-execution-plan.md` |
 | Continue Pre-MVP Research | `docs/decisions/2026-05-18-library-vetting.md` (append-only log) |
@@ -49,7 +49,7 @@ This project replaces JAMZ!!! at `C:\Users\chawo\Projects\JAMZ!!!\`. JAMZ was a 
 - **Don't batch multiple changes into one commit.**
 - **Don't add features beyond the spec's anti-roadmap (§11).** Explicitly cut: Tidal, Spatial Audio, AI/LLM features, cross-device handoff, MIDI controller for EQ, iOS, Linux, macOS, Wear, Tablet-optimized, Auto, Tag editing, Lyrics, Last.fm scrobbling, BT codec readouts, Podcasts.
 
-## Build/Dep Gotchas (discovered MVP Sessions 1-5)
+## Build/Dep Gotchas (discovered MVP Sessions 1-6)
 
 One-liners that would have prevented friction this past session. Skim before scaffold/build work.
 
@@ -75,6 +75,12 @@ One-liners that would have prevented friction this past session. Skim before sca
 - **ExoPlayer methods are single-thread accessed** via the application looper (default `Looper.getMainLooper()`). All suspend wrappers in `Media3ExoPlayerImpl` use `withContext(Dispatchers.Main.immediate) { ... }`. The constructor itself must be called from the main thread.
 - **ItemId namespace contract:** tracks are bare numeric (`"42"`); albums/artists/playlists prefix with `"album:"/"artist:"/"playlist:"`. `LocalLibrarySource.getPlayable()` returns `SourceError.ItemNotFound` for any non-numeric (container) ItemId — only tracks are directly playable; containers must be browsed via `TracksOfAlbum/TracksOfArtist/TracksOfPlaylist` first.
 - **The scanner does scan-end FTS5 rebuild** (raw `'delete-all'` + bulk INSERT from `selectAllForFtsRebuild`) rather than per-row maintenance during the walk. Avoids the contentless-FTS5 delete-syntax's old-values requirement. Trade-off: during-scan search returns briefly stale results.
+- **kotlin-inject `@Scope` annotation needs `@Target(CLASS, FUNCTION, PROPERTY_GETTER)`.** Without all three, scoping a `@get:Provides` constructor param fails KSP validation. Both `app-android/.../di/Singleton.kt` and `app-desktop/.../di/Singleton.kt` follow this convention; copy when adding new scopes.
+- **JdbcSqliteDriver(schema = KilnDatabase.Schema)** auto-creates/migrates the schema via PRAGMA user_version on every connect. No need for the `if (!dbFile.exists()) Schema.create(driver)` first-run guard — SQLDelight 2.x handles it. The schema param is the right idiom for persistent JDBC SQLite.
+- **AndroidSqliteDriver.Callback.onOpen runs on every connection open, not just first-time creation.** Putting `PRAGMA foreign_keys = ON` here ensures FKs stay enforced after process restarts. The Callback extends `androidx.sqlite.db.SupportSQLiteOpenHelper.Callback`; SupportSQLiteDatabase is from `androidx.sqlite.db`.
+- **Value-class type-tags `@JvmInline value class UserDataDir(val path: Path)` distinguish ambiguous JVM-type DI bindings.** When two `@get:Provides` constructor params would both be `Path`, kotlin-inject can't tell them apart. Wrap each in a distinct `@JvmInline value class` — zero runtime cost, compile-time disambiguation. See `app-desktop/.../desktop/di/DesktopAppGraph.kt`.
+- **`abstract val` on a kotlin-inject @Component must have a complete provider chain at KSP time.** Adding an abstract member without a provider chain reachable from constructor params + `@Provides` functions fails KSP. Intentionally omit the abstract member until the impl exists (DesktopAppGraph omits `player` until H5 lands).
+- **`Application.onCreate` is main-thread by Android contract** → safe place for `AndroidAppGraph::class.create(applicationContext)` since the Media3ExoPlayerImpl provider eventually runs on main thread (ExoPlayer single-thread-access rule). `KilnApplication` registers via `android:name=".KilnApplication"` in AndroidManifest.
 
 ## Workflow
 
