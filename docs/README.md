@@ -38,9 +38,12 @@ docs/
 │   ├── 2026-05-18-mvp-session-4-vertical-slice-prep.md  Sessions 4-7 interface sketches
 │   └── 2026-05-18-phase-2b-flight-g-library-extraction-roadmap.md  Library publishing roadmap
 └── reference/
-    ├── 2026-05-18-named-patterns-glossary.md      9 named patterns: definitions + actions
+    ├── 2026-05-18-named-patterns-glossary.md      12 named patterns: definitions + actions
     ├── 2026-05-18-risk-playbook.md                14 risk-trigger response procedures
-    └── 2026-05-18-test-infrastructure-cookbook.md Test tooling: when + how per tool
+    ├── 2026-05-18-test-infrastructure-cookbook.md Test tooling: when + how per tool
+    ├── 2026-05-18-performance-budgets.md          Concrete numeric perf targets per phase
+    ├── 2026-05-18-error-handling-patterns.md      Arrow Either patterns + anti-patterns
+    └── 2026-05-18-logging-conventions.md          kermit wiring + level discipline
 ```
 
 ---
@@ -83,6 +86,9 @@ Current files:
 - **2026-05-18-named-patterns-glossary.md** — Canonical definitions for the 9 Named Patterns (Software-as-Self-Portrait, Personal OS for Listening, Mastering Engineer's Apartment, Concentric Modules, The Source Protocol, Engine-Swap-Shaped Boundary, Capability Flags, Bus-Factor-of-One, Architecture as Performance Art, Curator's Trap, Termux Tax historical, Append-only Decision Log). Each pattern: Definition / In play when / Action / Examples / Cross-refs.
 - **2026-05-18-risk-playbook.md** — Operational playbook for 14 tracked risks. Per risk: Detection signals / Triage severity / Response steps / Recovery / Document conventions. Aligned with Compliance-First Architect + Algorithmic Operational Discipline traits.
 - **2026-05-18-test-infrastructure-cookbook.md** — Expansion of plan §7 timeline with concrete patterns: kotlin.test, kotlinx-coroutines-test, SQLDelight in-memory, Mokkery, Turbine, Kotest property-based, JMH benchmarks, Roborazzi screenshot, Compose UI test, JNA-libFLAC empirical smoke, mutation testing, accessibility audits. Code snippets per pattern.
+- **2026-05-18-performance-budgets.md** — Concrete numeric perf targets per phase: library scan, FTS5 latency, LazyColumn frame budget, palette extraction, EQ throughput, FLAC decode, memory ceilings, distribution artifact sizes. Includes target/stretch/fail thresholds and measurement patterns. Updated as empirical data lands.
+- **2026-05-18-error-handling-patterns.md** — When to use Arrow `Either<Error, Success>` vs throw, how to compose Either chains, error-type design (sealed hierarchies vs string messages), surfacing errors to UI, anti-patterns to reject in review. Module-by-module guidance for `:audio:dsp`, `:audio:playback`, `:data:library`, `:ui:theme`, `:ui:components`.
+- **2026-05-18-logging-conventions.md** — kermit wiring, per-level discipline (Verbose/Debug/Info/Warn/Error/Assert), what to log where per module, tag conventions, lazy-eval forms, hot-path discipline, surfacing debug telemetry to the Hardware Spec Sheet via StateFlows vs logs.
 
 ### Future files (not yet created)
 
