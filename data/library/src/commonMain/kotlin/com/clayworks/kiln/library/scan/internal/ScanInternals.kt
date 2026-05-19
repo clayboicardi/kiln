@@ -4,6 +4,7 @@
 
 package com.clayworks.kiln.library.scan.internal
 
+import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlDriver
 import com.clayworks.kiln.data.library.db.KilnDatabase
 
@@ -62,29 +63,51 @@ internal fun String.parseReplayGainDb(): Double? =
  * rebuild window, and a process kill mid-rebuild rolls back to the pre-scan
  * state instead of leaving FTS permanently empty.
  *
+ * Memory: O(1). Rows are iterated via the SqlCursor returned by
+ * [SelectAllForFtsRebuildQuery.execute] so we never materialize the whole
+ * library in memory at once. (Prior `.executeAsList()` allocated ~40 MB for
+ * Clay's 39.5k library — safe in absolute terms but unbounded as library
+ * grows; cursor iteration keeps the cost flat regardless.)
+ *
  * The 'delete-all' control command is invoked via raw [SqlDriver.execute] —
  * SQLDelight's .sq parser doesn't accept FTS5 control syntax (Session 6
  * discovery #2). SQLDelight's sticky-connection transaction model means the
  * raw `driver.execute` participates in the enclosing `db.transaction { }`.
  *
- * Performance: 40k rows ~ a few hundred ms on SQLite for the bulk insert pass.
+ * SQLite supports concurrent SELECT + INSERT on the same connection when the
+ * tables differ; here the cursor reads from `track` (+ joined `album`,
+ * `artist`, `album_artist`) and the INSERTs target `track_search` — different
+ * tables, no conflict.
+ *
+ * Column-index discipline: cursor accesses bind to the column ORDER in the
+ * `selectAllForFtsRebuild` .sq query. If that query's SELECT list ever
+ * changes order, this function must change too. The query lives at
+ * `data/library/src/commonMain/sqldelight/.../track.sq:188`.
  */
 internal fun rebuildFtsIndex(db: KilnDatabase, driver: SqlDriver) {
-    val rows = db.trackQueries.selectAllForFtsRebuild().executeAsList()
     db.transaction {
         driver.execute(
             identifier = null,
             sql = "INSERT INTO track_search(track_search) VALUES('delete-all')",
             parameters = 0,
         )
-        rows.forEach { row ->
-            db.track_searchQueries.insertSearchIndex(
-                rowid = row.track_id,
-                title = row.title,
-                album_name = row.album_name,
-                artist_name = row.artist_name,
-                album_artist_name = row.album_artist_name,
-            )
+        db.trackQueries.selectAllForFtsRebuild().execute { cursor ->
+            while (cursor.next().value) {
+                val trackId = cursor.getLong(0)
+                    ?: error("FTS rebuild: track_id (column 0) was null — query schema drift?")
+                val title = cursor.getString(1) ?: ""
+                val albumName = cursor.getString(2) ?: ""
+                val artistName = cursor.getString(3) ?: ""
+                val albumArtistName = cursor.getString(4) ?: ""
+                db.track_searchQueries.insertSearchIndex(
+                    rowid = trackId,
+                    title = title,
+                    album_name = albumName,
+                    artist_name = artistName,
+                    album_artist_name = albumArtistName,
+                )
+            }
+            QueryResult.Unit
         }
     }
 }
