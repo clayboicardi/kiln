@@ -22,7 +22,7 @@ kotlin {
         androidMain.dependencies {
             implementation(libs.bundles.android.media3)
         }
-        jvmMain.dependencies {
+        desktopMain.dependencies {
             implementation(libs.bundles.jna)
             implementation(libs.jaudiotagger)
             implementation(libs.kotlinx.coroutines.swing)

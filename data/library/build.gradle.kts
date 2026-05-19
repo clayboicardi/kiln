@@ -33,7 +33,7 @@ kotlin {
         androidMain.dependencies {
             implementation(libs.sqldelight.android.driver)
         }
-        jvmMain.dependencies {
+        desktopMain.dependencies {
             implementation(libs.sqldelight.sqlite.driver)
             implementation(libs.jaudiotagger)
             implementation(libs.appdirs)
