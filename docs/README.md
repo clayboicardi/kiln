@@ -32,10 +32,15 @@ docs/
 ├── decisions/
 │   ├── 2026-05-18-library-vetting.md              Pre-MVP Research — 12 vetting items
 │   └── 2026-05-18-sqldelight-schema-sketch.md     6-table schema + FTS5 strategy
-└── scaffold/
-    ├── 2026-05-18-clay-action-items.md            Pre-scaffold checklist (Clay-only TODOs)
-    ├── 2026-05-18-mvp-session-1-prep.md           Sessions 1-3 actionable scaffold doc
-    └── 2026-05-18-mvp-session-4-vertical-slice-prep.md   Sessions 4-7 interface sketches
+├── scaffold/
+│   ├── 2026-05-18-clay-action-items.md            Pre-scaffold checklist (Clay-only TODOs)
+│   ├── 2026-05-18-mvp-session-1-prep.md           Sessions 1-3 actionable scaffold doc
+│   ├── 2026-05-18-mvp-session-4-vertical-slice-prep.md  Sessions 4-7 interface sketches
+│   └── 2026-05-18-phase-2b-flight-g-library-extraction-roadmap.md  Library publishing roadmap
+└── reference/
+    ├── 2026-05-18-named-patterns-glossary.md      9 named patterns: definitions + actions
+    ├── 2026-05-18-risk-playbook.md                14 risk-trigger response procedures
+    └── 2026-05-18-test-infrastructure-cookbook.md Test tooling: when + how per tool
 ```
 
 ---
@@ -68,6 +73,16 @@ Current files:
 - **2026-05-18-clay-action-items.md** — Clay's pre-scaffold TODO list (repo name, WiX install, JDK confirmation, etc.).
 - **2026-05-18-mvp-session-1-prep.md** — Full `gradle/libs.versions.toml` skeleton + per-module dependency assignments + 16-step scaffold sequence for MVP Session 1-3.
 - **2026-05-18-mvp-session-4-vertical-slice-prep.md** — Interface sketches for `MusicSource`, `PlatformPlayer`, `Decoder`, supporting types, threading model, FLAC decoder JNA bridge, FTS5 application-managed population pattern.
+- **2026-05-18-phase-2b-flight-g-library-extraction-roadmap.md** — Forward-looking roadmap for extracting `:audio:dsp` and `:audio:visualizer` to JitPack/Maven Central per plan §5 Flight G. Pre-positions module-prep checklists, Maven coordinates strategy, Vanniktech publishing setup, semver discipline, README/CHANGELOG/CONTRIBUTING templates, multi-LLM API review process.
+
+### `reference/` — living reference (multi-session updated)
+
+Reference material that isn't a one-shot decision document. Multiple sessions append/refine these as patterns mature.
+
+Current files:
+- **2026-05-18-named-patterns-glossary.md** — Canonical definitions for the 9 Named Patterns (Software-as-Self-Portrait, Personal OS for Listening, Mastering Engineer's Apartment, Concentric Modules, The Source Protocol, Engine-Swap-Shaped Boundary, Capability Flags, Bus-Factor-of-One, Architecture as Performance Art, Curator's Trap, Termux Tax historical, Append-only Decision Log). Each pattern: Definition / In play when / Action / Examples / Cross-refs.
+- **2026-05-18-risk-playbook.md** — Operational playbook for 14 tracked risks. Per risk: Detection signals / Triage severity / Response steps / Recovery / Document conventions. Aligned with Compliance-First Architect + Algorithmic Operational Discipline traits.
+- **2026-05-18-test-infrastructure-cookbook.md** — Expansion of plan §7 timeline with concrete patterns: kotlin.test, kotlinx-coroutines-test, SQLDelight in-memory, Mokkery, Turbine, Kotest property-based, JMH benchmarks, Roborazzi screenshot, Compose UI test, JNA-libFLAC empirical smoke, mutation testing, accessibility audits. Code snippets per pattern.
 
 ### Future files (not yet created)
 
