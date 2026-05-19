@@ -358,12 +358,126 @@ No equivalent to Media3's all-in-one integration. Approach is multi-pronged:
 
 ---
 
+## Item 2: KMP-compatible image loader (Coil 3)
+
+> **Plan reference:** Pre-MVP Research §2.1 item 2. Image loading is foundational — album art surfaces appear in library lists, Now Playing, mini-player, and feed the Palette extractor (Item 3).
+
+### Question
+
+Verify Coil 3's Compose Multiplatform support, specifically: (a) does the disk cache work correctly on JVM desktop, (b) does Coil bundle Palette extraction or does it require a separate library, (c) what specific stable version to pin?
+
+### Method
+
+- Context7 query against `/coil-kt/coil` (source: High, 291 snippets, benchmark 83.55)
+- GitHub Releases API for authoritative release dates and stable-vs-beta status
+- WebFetch of the upstream CHANGELOG for the 3.x breaking-change picture
+
+### Findings
+
+**Multiplatform coverage (confirmed):**
+
+Coil 3.0.0 introduced full Compose Multiplatform support. Coil 3 builds for Android, iOS, JVM desktop, macOS, JavaScript, and WebAssembly. This covers both Kiln targets (Android + Windows Desktop via JVM) without per-platform image-loading code.
+
+**Singleton-loader pattern is Compose-MP-friendly:**
+
+```kotlin
+setSingletonImageLoaderFactory { context ->
+    ImageLoader.Builder(context)
+        .crossfade(true)
+        .build()
+}
+```
+
+This wiring lives in `:app-android` and `:app-desktop` entry points; the `:ui:components` Compose code calls `AsyncImage(...)` against the singleton with no per-platform branching. Source Protocol pattern stays clean — `AsyncImage` consumes a model (URL, file path, ByteArray, etc.) and Coil routes to the right fetcher.
+
+**Disk cache works on desktop:**
+
+```kotlin
+.diskCache {
+    DiskCache.Builder()
+        .directory(context.cacheDir.resolve("image_cache"))
+        .maxSizePercent(0.02)
+        .build()
+}
+```
+
+`context.cacheDir` resolves to platform-appropriate temp directories — `${app.cacheDir}` on Android, `${user.home}/.cache/<app>` on JVM desktop. The desktop `PlatformContext` provides this without app code. **Important behavioral note flagged in Coil 3 upgrade docs:** Coil 3 manages its own disk cache (it does NOT delegate to OkHttp's cache as Coil 2 did). Do not configure OkHttp `Cache` alongside Coil's `DiskCache` — they will both try to cache and waste disk space.
+
+**Palette extraction is NOT bundled — Coil's recipe references androidx.palette:**
+
+Coil's official Palette recipe (in `docs/recipes.md`):
+
+```kotlin
+Palette.Builder(result.image.toBitmap()).generate { palette -> ... }
+```
+
+This is `androidx.palette.graphics.Palette` — Android-only, breaks the `:ui:theme` Concentric Modules invariant if used in `commonMain`. **Coil does not solve Item 3 — Palette extraction needs its own library decision (see Item 3 in the next session entry).**
+
+The integration path is straightforward: Coil decodes the image to a `coil3.Image`, which can be converted to a Compose `ImageBitmap`; that ImageBitmap is what we'll hand to the chosen Palette library at Phase 2a Flight A.
+
+**Version state:**
+
+| Version | Date | Status |
+|---|---|---|
+| 3.4.0 | 2026-02-24 | **STABLE — pin this** |
+| 3.5.0-beta01 | 2026-05-04 | beta — avoid |
+| 3.3.0 | 2025-07-22 | superseded |
+| 3.2.0 | 2025-05-13 | superseded |
+| 3.1.0 | 2025-02-04 | superseded |
+
+Release cadence ~3-4 months between stable releases. Active and well-maintained.
+
+**Coil 3.x breaking-change inventory (relevant to Kiln):**
+
+- Package namespace changed `coil` → `coil3` (clean fresh-derivation context for Kiln; not migration pain)
+- Artifact rename: `coil-base` → `coil-core`, `coil-compose-base` → `coil-compose-core`
+- Minimum Android API raised to 21 (Kiln's `minSdk = 21` matches exactly per spec §2)
+- Min Android API later raised to 23 in some 3.x releases — **verify Coil 3.4.0 still supports API 21** at MVP Session 4 scaffold time; if API 23+ now, that's a spec §2 hard-lock revisit (would force Kiln's minSdk up to 23)
+- Coil 3 owns its disk cache (do not pair with OkHttp `Cache`)
+
+**Dependency choice for the networking layer:**
+
+Coil 3 lets you pick a network library: OkHttp (Android-default), Ktor (KMP-friendly), or no-network (local-files-only). **For Kiln's MVP, local-files-only is the right choice** — there are no remote image loads in MVP (album art is embedded in files or sits as `folder.jpg` next to the FLAC). If Phase 3 or future Subsonic-style sources arrive, swap to Ktor.
+
+MVP `libs.versions.toml` additions (sketch):
+```toml
+coil = "3.4.0"
+
+coil-compose = { module = "io.coil-kt.coil3:coil-compose", version.ref = "coil" }
+# No network engine at MVP — add coil-network-ktor only when a remote source appears
+```
+
+### Decision
+
+**Adopt Coil 3.4.0 as Kiln's image loader.** Pin in `gradle/libs.versions.toml` at MVP Session 1-3.
+
+- Use `coil-compose` only at MVP (local-files-only image loading, no networking dependency)
+- Configure `DiskCache` with `context.cacheDir.resolve("image_cache")` for cross-platform disk caching
+- Set `crossfade(true)` at the singleton-loader level (touches every `AsyncImage` call)
+- Do NOT pair with OkHttp `Cache` — Coil owns the disk cache
+- Plan for `coil-network-ktor` if/when Phase 3 or any remote source ever lands; not before
+
+### Just-in-time research deferred (before MVP Session 4)
+
+- Confirm Coil 3.4.0 still supports `minSdk = 21` (or whether 3.4.x has bumped to 23). If 23, raise the question with Clay before adopting — it's a spec §2 hard-lock implication.
+- Verify Coil 3.4.0 + Compose Multiplatform 1.7.x or 1.8.x stable on the version actually pinned at scaffold time (Compose-MP version comes from Item 1's just-in-time check at scaffold).
+
+### Soft-lock revisit triggers
+
+- Coil 3.4.0 reveals desktop disk-cache bugs during MVP Session 8+ (library views with thousands of album-art tiles) — fall back to 3.3.0 or evaluate Compose-MP's own image loading
+- Coil drops Android API 21 support and Kiln needs to keep it — fork-or-pin scenario
+
+### Status
+
+**DECIDED.** Coil 3.4.0 confirmed as image loader. Wire-up lands in MVP Session 1-3 (DI graph) and MVP Session 8 (first library views with album art).
+
+---
+
 ## Next items in queue
 
-- (Remaining items 2, 3, 5, 6, 7, 9, 10, 12 — to be tackled in subsequent Pre-MVP Research sessions)
+- (Remaining items 3, 5, 6, 7, 9, 10, 12 — to be tackled in subsequent Pre-MVP Research sessions)
 
 Items still to research:
-- Item 2 — KMP-compatible image loader (Coil 3 verification)
 - Item 3 — KMP-compatible Palette/color extractor (critical for Kiln Dynamic theming)
 - Item 5 — Circuit + Molecule on KMP (now applies to `:ui:components` Now Playing)
 - Item 6 — SQLDelight schema design for 39.5k tracks
