@@ -1,0 +1,427 @@
+// AndroidMediaStoreScanner — Android LibraryScanner implementation. Queries
+// MediaStore.Audio.Media for all IS_MUSIC entries, upserts into the SQLDelight
+// tables. Per scaffold prep §6.2 + Session 7 handoff H2.
+//
+// MediaStore gives us the basics (title/artist/album/duration/bitrate/path/
+// mtime/size/mime) for free across all Android versions. It does NOT give us
+// sample rate / bit depth / channel count / ReplayGain — those default to
+// placeholder values at scan time (44.1kHz / null / 2). The player reads true
+// format on file open; a per-file MediaMetadataRetriever pass to refine these
+// values is Phase 2a polish work.
+//
+// API 30+ additions (ALBUM_ARTIST, GENRE) read conditionally — missing on
+// older devices, we degrade gracefully to ARTIST + null.
+
+package com.clayworks.kiln.library.scan
+
+import android.content.Context
+import android.database.Cursor
+import android.os.Build
+import android.provider.MediaStore
+import app.cash.sqldelight.db.SqlDriver
+import arrow.core.Either
+import co.touchlab.kermit.Logger
+import com.clayworks.kiln.data.library.db.KilnDatabase
+import com.clayworks.kiln.library.scan.internal.rebuildFtsIndex
+import com.clayworks.kiln.library.scan.internal.toSortName
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.withContext
+
+private val log = Logger.withTag("AndroidMediaStoreScanner")
+
+private const val DEFAULT_SAMPLE_RATE_HZ = 44100L
+private const val DEFAULT_CHANNELS = 2L
+
+private const val UNKNOWN_PLACEHOLDER = "<unknown>"  // MediaStore literal
+
+class AndroidMediaStoreScanner(
+    private val context: Context,
+    private val db: KilnDatabase,
+    private val driver: SqlDriver,
+    private val ioDispatcher: CoroutineDispatcher,
+) : LibraryScanner {
+
+    override suspend fun scanIncremental(): Either<ScanError, ScanResult> =
+        withContext(ioDispatcher) { runScan(forceFullRescan = false) }
+
+    override suspend fun scanFull(): Either<ScanError, ScanResult> =
+        withContext(ioDispatcher) { runScan(forceFullRescan = true) }
+
+    private fun runScan(forceFullRescan: Boolean): Either<ScanError, ScanResult> =
+        Either.catch {
+            val scanStartedMs = System.currentTimeMillis()
+            var added = 0
+            var updated = 0
+            var unchanged = 0
+            var parseErrors = 0
+
+            if (forceFullRescan) {
+                driver.execute(
+                    identifier = null,
+                    sql = "UPDATE track SET last_scanned_ms = 0",
+                    parameters = 0,
+                )
+            }
+
+            val cursor = queryAudioMediaCursor()
+                ?: throw IllegalStateException("MediaStore.Audio.Media query returned null cursor")
+
+            cursor.use { c ->
+                val cols = MediaCols.from(c)
+                while (c.moveToNext()) {
+                    when (val outcome = scanOneTrack(c, cols, scanStartedMs)) {
+                        Outcome.Added -> added++
+                        Outcome.Updated -> updated++
+                        Outcome.Unchanged -> unchanged++
+                        is Outcome.ParseFailed -> {
+                            parseErrors++
+                            log.w(outcome.error) { "skipped media id ${outcome.mediaId}: ${outcome.error.message}" }
+                        }
+                    }
+                }
+            }
+
+            val softDeleteCount = db.trackQueries.countUnscanned(scanStartedMs)
+                .executeAsOne().toInt()
+            if (softDeleteCount > 0) {
+                db.trackQueries.softDeleteUnscanned(
+                    deletedAtMs = scanStartedMs,
+                    scanStartedMs = scanStartedMs,
+                )
+            }
+
+            rebuildFtsIndex(db, driver)
+
+            val durationMs = System.currentTimeMillis() - scanStartedMs
+            ScanResult(
+                tracksAdded = added,
+                tracksUpdated = updated,
+                tracksSoftDeleted = softDeleteCount,
+                tracksUnchanged = unchanged,
+                durationMs = durationMs,
+            ).also {
+                log.i {
+                    "scan complete: +$added ~$updated -$softDeleteCount ·$unchanged " +
+                        "($parseErrors parse errors) in ${durationMs}ms"
+                }
+            }
+        }.mapLeft(::classifyScanFailure)
+
+    private fun classifyScanFailure(e: Throwable): ScanError = when (e) {
+        is SecurityException -> ScanError.PermissionDenied(
+            e.message ?: "READ_MEDIA_AUDIO (or READ_EXTERNAL_STORAGE) not granted",
+        )
+        else -> ScanError.IoError(e)
+    }
+
+    private fun queryAudioMediaCursor(): Cursor? = context.contentResolver.query(
+        MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
+        MediaCols.projection(),
+        "${MediaStore.Audio.Media.IS_MUSIC} != 0",
+        /* selectionArgs = */ null,
+        /* sortOrder = */ null,
+    )
+
+    private fun scanOneTrack(cursor: Cursor, cols: MediaCols, scanStartedMs: Long): Outcome {
+        val mediaId = cursor.getLong(cols.id)
+        val data = if (cols.data >= 0) cursor.getStringOrNull(cols.data) else null
+        val filePath = data?.takeIf { it.isNotBlank() }
+            ?: "content://media/external/audio/media/$mediaId"
+
+        // MediaStore reports DATE_MODIFIED in seconds-since-epoch; convert to ms.
+        val mtimeSeconds = if (cols.dateModified >= 0) cursor.getLong(cols.dateModified) else 0L
+        val mtime = if (mtimeSeconds > 0) mtimeSeconds * 1000L else scanStartedMs
+        val size = if (cols.size >= 0) cursor.getLong(cols.size).coerceAtLeast(0L) else 0L
+
+        val existing = db.trackQueries.selectByFilePath(filePath).executeAsOneOrNull()
+        if (existing != null &&
+            existing.file_mtime_ms == mtime &&
+            existing.file_size_bytes == size &&
+            existing.deleted_at_ms == null
+        ) {
+            db.trackQueries.touchLastScanned(scannedAtMs = scanStartedMs, filePath = filePath)
+            return Outcome.Unchanged
+        }
+
+        val tags = try {
+            readTagsFromCursor(cursor, cols, filePath)
+        } catch (e: Throwable) {
+            return Outcome.ParseFailed(mediaId, e)
+        }
+
+        db.transaction {
+            val artistId = upsertArtist(tags.artist, tags.artistSort, mbid = null)
+            val albumArtistId = tags.albumArtist?.let { albumArtist ->
+                upsertArtist(albumArtist, toSortName(albumArtist), mbid = null)
+            } ?: artistId
+            val albumId = tags.album?.let { albumName ->
+                upsertAlbum(
+                    albumArtistId = albumArtistId,
+                    albumName = albumName,
+                    albumNameSort = toSortName(albumName),
+                    year = tags.year,
+                )
+            }
+
+            if (existing == null) {
+                db.trackQueries.insert(
+                    album_id = albumId,
+                    artist_id = artistId,
+                    title = tags.title,
+                    title_sort = tags.titleSort,
+                    duration_ms = tags.durationMs,
+                    track_number = tags.trackNumber,
+                    disc_number = null,
+                    year = tags.year,
+                    date = null,
+                    genre = tags.genre,
+                    composer = tags.composer,
+                    bpm = null,
+                    codec = tags.codec,
+                    bitrate_kbps = tags.bitrateKbps,
+                    sample_rate_hz = DEFAULT_SAMPLE_RATE_HZ,
+                    bit_depth = null,
+                    channels = DEFAULT_CHANNELS,
+                    file_path = filePath,
+                    file_size_bytes = size,
+                    file_mtime_ms = mtime,
+                    replay_gain_track_db = null,
+                    replay_gain_album_db = null,
+                    replay_gain_track_peak = null,
+                    replay_gain_album_peak = null,
+                    has_embedded_art = 0L,
+                    art_path = null,
+                    source = "local",
+                    date_added_ms = scanStartedMs,
+                    date_modified_ms = scanStartedMs,
+                    last_scanned_ms = scanStartedMs,
+                )
+            } else {
+                db.trackQueries.updateForRescan(
+                    album_id = albumId,
+                    artist_id = artistId,
+                    title = tags.title,
+                    title_sort = tags.titleSort,
+                    duration_ms = tags.durationMs,
+                    track_number = tags.trackNumber,
+                    disc_number = null,
+                    year = tags.year,
+                    date = null,
+                    genre = tags.genre,
+                    composer = tags.composer,
+                    bpm = null,
+                    codec = tags.codec,
+                    bitrate_kbps = tags.bitrateKbps,
+                    sample_rate_hz = DEFAULT_SAMPLE_RATE_HZ,
+                    bit_depth = null,
+                    channels = DEFAULT_CHANNELS,
+                    file_size_bytes = size,
+                    file_mtime_ms = mtime,
+                    replay_gain_track_db = null,
+                    replay_gain_album_db = null,
+                    replay_gain_track_peak = null,
+                    replay_gain_album_peak = null,
+                    has_embedded_art = 0L,
+                    art_path = null,
+                    modifiedAtMs = scanStartedMs,
+                    scannedAtMs = scanStartedMs,
+                    filePath = filePath,
+                )
+            }
+        }
+
+        return if (existing == null) Outcome.Added else Outcome.Updated
+    }
+
+    private fun upsertArtist(name: String, nameSort: String, mbid: String?): Long {
+        val existing = db.artistQueries.selectByName(nameSort, mbid).executeAsOneOrNull()
+        if (existing != null) return existing.id
+        db.artistQueries.insert(name = name, name_sort = nameSort, musicbrainz_artist_id = mbid)
+        return db.artistQueries.lastInsertRowId().executeAsOne()
+    }
+
+    private fun upsertAlbum(
+        albumArtistId: Long,
+        albumName: String,
+        albumNameSort: String,
+        year: Long?,
+    ): Long {
+        val existing = db.albumQueries.selectByArtistAndName(albumArtistId, albumNameSort)
+            .executeAsOneOrNull()
+        if (existing != null) return existing.id
+        db.albumQueries.insert(
+            artist_id = albumArtistId,
+            name = albumName,
+            name_sort = albumNameSort,
+            year = year,
+            date = null,
+            musicbrainz_release_id = null,
+            catalog_number = null,
+            label = null,
+            art_path = null,
+            compilation = 0L,
+        )
+        return db.albumQueries.lastInsertRowId().executeAsOne()
+    }
+
+    private fun readTagsFromCursor(cursor: Cursor, cols: MediaCols, filePath: String): TrackTags {
+        val titleRaw = if (cols.title >= 0) cursor.getStringOrNull(cols.title) else null
+        val title = titleRaw?.takeIf { it.isNotBlank() }
+            ?: filePath.substringAfterLast('/').substringBeforeLast('.')
+
+        val artist = (if (cols.artist >= 0) cursor.getStringOrNull(cols.artist) else null)
+            ?.takeIf { it.isNotBlank() && it != UNKNOWN_PLACEHOLDER }
+            ?: "Unknown Artist"
+
+        val album = (if (cols.album >= 0) cursor.getStringOrNull(cols.album) else null)
+            ?.takeIf { it.isNotBlank() && it != UNKNOWN_PLACEHOLDER }
+
+        val albumArtist = if (cols.albumArtist >= 0) {
+            cursor.getStringOrNull(cols.albumArtist)
+                ?.takeIf { it.isNotBlank() && it != UNKNOWN_PLACEHOLDER }
+        } else null
+
+        val durationMs = if (cols.duration >= 0) cursor.getLong(cols.duration).coerceAtLeast(0L) else 0L
+
+        // MediaStore TRACK encoding: traditionally "1NNN" where 1 = disc number,
+        // NNN = track. We only extract track for MVP; disc is null.
+        val trackRaw = if (cols.track >= 0) cursor.getInt(cols.track) else 0
+        val trackNumber = when {
+            trackRaw <= 0 -> null
+            trackRaw > 1000 -> (trackRaw % 1000).toLong()
+            else -> trackRaw.toLong()
+        }
+
+        val year = (if (cols.year >= 0) cursor.getInt(cols.year) else 0)
+            .takeIf { it > 1000 }
+            ?.toLong()
+
+        val bitrate = if (cols.bitrate >= 0) cursor.getInt(cols.bitrate) else 0
+        val bitrateKbps = if (bitrate > 0) (bitrate / 1000).toLong() else null
+
+        val genre = if (cols.genre >= 0) cursor.getStringOrNull(cols.genre) else null
+        val composer = if (cols.composer >= 0) cursor.getStringOrNull(cols.composer) else null
+
+        val mime = if (cols.mimeType >= 0) cursor.getStringOrNull(cols.mimeType) else null
+        val codec = detectCodecFromMime(mime)
+
+        return TrackTags(
+            title = title,
+            titleSort = toSortName(title),
+            artist = artist,
+            artistSort = toSortName(artist),
+            album = album,
+            albumArtist = albumArtist,
+            durationMs = durationMs,
+            trackNumber = trackNumber,
+            year = year,
+            genre = genre,
+            composer = composer,
+            codec = codec,
+            bitrateKbps = bitrateKbps,
+        )
+    }
+}
+
+// ---------- androidMain-only helpers ----------
+
+internal fun detectCodecFromMime(mime: String?): String = when (mime?.lowercase()) {
+    "audio/flac" -> "FLAC"
+    "audio/mpeg", "audio/mp3" -> "MP3"
+    "audio/x-wav", "audio/wav", "audio/wave" -> "WAV"
+    "audio/aac" -> "AAC"
+    "audio/mp4", "audio/m4a", "audio/x-m4a", "audio/mpeg-4" -> "AAC"
+    "audio/ogg", "audio/vorbis" -> "OGG_VORBIS"
+    "audio/opus" -> "OGG_OPUS"
+    else -> "UNKNOWN"
+}
+
+private fun Cursor.getStringOrNull(index: Int): String? =
+    if (isNull(index)) null else getString(index)
+
+// ---------- internal models ----------
+
+private data class MediaCols(
+    val id: Int,
+    val data: Int,
+    val title: Int,
+    val artist: Int,
+    val album: Int,
+    val albumArtist: Int,
+    val composer: Int,
+    val duration: Int,
+    val track: Int,
+    val year: Int,
+    val bitrate: Int,
+    val size: Int,
+    val dateModified: Int,
+    val genre: Int,
+    val mimeType: Int,
+) {
+    // MediaStore.Audio.Media.DATA (the legacy file-path column) is deprecated
+    // for write access since API 29 but READ access remains supported. Phase 2a
+    // Scoped Storage work will replace this with content:// URI handling end-to-end.
+    @Suppress("DEPRECATION")
+    companion object {
+        fun projection(): Array<String> = buildList {
+            add(MediaStore.Audio.Media._ID)
+            add(MediaStore.Audio.Media.DATA)
+            add(MediaStore.Audio.Media.TITLE)
+            add(MediaStore.Audio.Media.ARTIST)
+            add(MediaStore.Audio.Media.ALBUM)
+            add(MediaStore.Audio.Media.COMPOSER)
+            add(MediaStore.Audio.Media.DURATION)
+            add(MediaStore.Audio.Media.TRACK)
+            add(MediaStore.Audio.Media.YEAR)
+            add(MediaStore.Audio.Media.BITRATE)
+            add(MediaStore.Audio.Media.SIZE)
+            add(MediaStore.Audio.Media.DATE_MODIFIED)
+            add(MediaStore.Audio.Media.MIME_TYPE)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                add(MediaStore.Audio.Media.ALBUM_ARTIST)
+                add(MediaStore.Audio.Media.GENRE)
+            }
+        }.toTypedArray()
+
+        fun from(cursor: Cursor): MediaCols = MediaCols(
+            id = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media._ID),
+            data = cursor.getColumnIndex(MediaStore.Audio.Media.DATA),
+            title = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.TITLE),
+            artist = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ARTIST),
+            album = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM),
+            albumArtist = cursor.getColumnIndex(MediaStore.Audio.Media.ALBUM_ARTIST),
+            composer = cursor.getColumnIndex(MediaStore.Audio.Media.COMPOSER),
+            duration = cursor.getColumnIndex(MediaStore.Audio.Media.DURATION),
+            track = cursor.getColumnIndex(MediaStore.Audio.Media.TRACK),
+            year = cursor.getColumnIndex(MediaStore.Audio.Media.YEAR),
+            bitrate = cursor.getColumnIndex(MediaStore.Audio.Media.BITRATE),
+            size = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.SIZE),
+            dateModified = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DATE_MODIFIED),
+            genre = cursor.getColumnIndex(MediaStore.Audio.Media.GENRE),
+            mimeType = cursor.getColumnIndex(MediaStore.Audio.Media.MIME_TYPE),
+        )
+    }
+}
+
+private data class TrackTags(
+    val title: String,
+    val titleSort: String,
+    val artist: String,
+    val artistSort: String,
+    val album: String?,
+    val albumArtist: String?,
+    val durationMs: Long,
+    val trackNumber: Long?,
+    val year: Long?,
+    val genre: String?,
+    val composer: String?,
+    val codec: String,
+    val bitrateKbps: Long?,
+)
+
+private sealed interface Outcome {
+    data object Added : Outcome
+    data object Updated : Outcome
+    data object Unchanged : Outcome
+    data class ParseFailed(val mediaId: Long, val error: Throwable) : Outcome
+}

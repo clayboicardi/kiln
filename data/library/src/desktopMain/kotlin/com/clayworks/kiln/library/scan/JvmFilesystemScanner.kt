@@ -13,6 +13,11 @@ import app.cash.sqldelight.db.SqlDriver
 import arrow.core.Either
 import co.touchlab.kermit.Logger
 import com.clayworks.kiln.data.library.db.KilnDatabase
+import com.clayworks.kiln.library.scan.internal.parseChannels
+import com.clayworks.kiln.library.scan.internal.parseLeadingLong
+import com.clayworks.kiln.library.scan.internal.parseReplayGainDb
+import com.clayworks.kiln.library.scan.internal.rebuildFtsIndex
+import com.clayworks.kiln.library.scan.internal.toSortName
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
 import org.jaudiotagger.audio.AudioFileIO
@@ -92,7 +97,7 @@ class JvmFilesystemScanner(
                 )
             }
 
-            rebuildFtsIndex()
+            rebuildFtsIndex(db, driver)
 
             val durationMs = System.currentTimeMillis() - scanStartedMs
             ScanResult(
@@ -274,33 +279,6 @@ class JvmFilesystemScanner(
         return db.albumQueries.lastInsertRowId().executeAsOne()
     }
 
-    /**
-     * Bulk-rebuild the FTS5 contentless index from the live track table.
-     * The 'delete-all' control command can't be expressed in .sq files
-     * (SQLDelight's parser rejects it); raw driver.execute is the documented
-     * escape hatch per Session 6 discovery #2.
-     */
-    private fun rebuildFtsIndex() {
-        driver.execute(
-            identifier = null,
-            sql = "INSERT INTO track_search(track_search) VALUES('delete-all')",
-            parameters = 0,
-        )
-        val rows = db.trackQueries.selectAllForFtsRebuild().executeAsList()
-        db.transaction {
-            rows.forEach { row ->
-                db.track_searchQueries.insertSearchIndex(
-                    rowid = row.track_id,
-                    title = row.title,
-                    album_name = row.album_name,
-                    artist_name = row.artist_name,
-                    album_artist_name = row.album_artist_name,
-                )
-            }
-        }
-        log.i { "rebuilt FTS5 index with ${rows.size} row(s)" }
-    }
-
     private fun readTags(path: Path): TrackTags {
         val audioFile = AudioFileIO.read(path.toFile())
         val tag: Tag? = audioFile.tag
@@ -360,19 +338,9 @@ class JvmFilesystemScanner(
     }
 }
 
-// ---------- helpers (file-scope so they're testable without scanner state) ----------
+// ---------- desktopMain-only helpers ----------
 
-internal fun toSortName(name: String): String {
-    val trimmed = name.trim()
-    val withoutArticle = when {
-        trimmed.startsWith("The ", ignoreCase = true) -> trimmed.substring(4)
-        trimmed.startsWith("An ", ignoreCase = true) -> trimmed.substring(3)
-        trimmed.startsWith("A ", ignoreCase = true) -> trimmed.substring(2)
-        else -> trimmed
-    }
-    return withoutArticle.lowercase()
-}
-
+/** Detect codec from file extension (jaudiotagger's format string is less reliable). */
 internal fun detectCodec(path: Path): String = when (path.extension.lowercase()) {
     "flac" -> "FLAC"
     "wav" -> "WAV"
@@ -383,24 +351,6 @@ internal fun detectCodec(path: Path): String = when (path.extension.lowercase())
     "opus" -> "OGG_OPUS"
     else -> "UNKNOWN"
 }
-
-internal fun parseChannels(channels: String?): Long = when {
-    channels == null -> 2L
-    channels.equals("Mono", ignoreCase = true) -> 1L
-    channels.equals("Stereo", ignoreCase = true) -> 2L
-    channels.contains("5.1") -> 6L
-    channels.contains("7.1") -> 8L
-    else -> channels.trim().toLongOrNull() ?: 2L
-}
-
-internal fun String.parseLeadingLong(): Long? =
-    takeIf { it.isNotBlank() }?.substringBefore('/')?.trim()?.toLongOrNull()
-
-internal fun String.parseReplayGainDb(): Double? =
-    takeIf { it.isNotBlank() }
-        ?.replace("dB", "", ignoreCase = true)
-        ?.trim()
-        ?.toDoubleOrNull()
 
 /** Tag.getFirst returning the empty string for absent fields is annoying — normalize to null. */
 private fun Tag.getFirstOrNull(key: FieldKey): String? =
