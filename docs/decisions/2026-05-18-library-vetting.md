@@ -1513,3 +1513,86 @@ This deep-dive follow-up commit supersedes the JustFLAC mention in commit `317e9
 
 **Estimated remaining Pre-MVP Research effort:** ~14-18 hrs across the 8 remaining items (per plan estimates).
 
+---
+
+## Item 3 addendum: kmpalette publication gap (Pre-MVP → MVP boundary)
+
+**Date:** 2026-05-19 (during MVP Session 1 Task #8 `./gradlew build --dry-run` smoke check)
+**Trigger:** Build failure resolving `dev.jordond.kmpalette:kmpalette-core:4.0.0-beta02`
+
+### Question
+
+Is `dev.jordond.kmpalette:kmpalette-core:4.0.0-beta02` actually published to Maven Central (or any public Maven repo Kiln consumes from)?
+
+### Method
+
+Triggered by Gradle `./gradlew build --dry-run` failure during MVP Session 1 Task #8:
+
+```
+Could not find dev.jordond.kmpalette:kmpalette-core:4.0.0-beta02.
+Searched in the following locations:
+  - https://dl.google.com/dl/android/maven2/dev/jordond/kmpalette/...
+  - https://repo.maven.apache.org/maven2/dev/jordond/kmpalette/...
+```
+
+Verified via three independent checks:
+
+```bash
+curl -s -o /dev/null -w "%{http_code}\n" https://repo.maven.apache.org/maven2/dev/jordond/kmpalette/kmpalette-core/4.0.0-beta02/kmpalette-core-4.0.0-beta02.pom
+# → 404
+
+curl -s 'https://search.maven.org/solrsearch/select?q=g:dev.jordond.kmpalette+AND+a:kmpalette-core&core=gav&rows=10&wt=json' | head -50
+# → "numFound":0
+
+gh api 'repos/jordond/kmpalette/releases?per_page=10' --jq '.[]|{tag,prerelease}'
+# → tags 4.0.0-beta01, 4.0.0-beta02 exist as GitHub releases (prerelease: true)
+#   but 3.x stable line ends at 3.1.0 (2024-01-30)
+```
+
+### Findings
+
+1. **GitHub release tag exists** for `4.0.0-beta02` (published 2026-03-03 as prerelease). Source code is reachable on GitHub.
+2. **NO Maven Central publication** for `4.0.0-beta02` OR `4.0.0-beta01`. The Maven Central search returns 0 hits for `g:dev.jordond.kmpalette+AND+a:kmpalette-core`. The canonical Central path returns HTTP 404.
+3. **Earlier stable line (3.x) WAS published** to Maven Central historically (3.1.0 from 2024-01-30 — over a year old). The 4.0.0-betaN line was tagged on GitHub but the publishing pipeline appears to have been broken/abandoned during the 4.0.0 development cycle.
+4. **Sonatype OSS snapshots returned 401** (no public access; not definitive proof of absence, but consistent with "never released").
+
+**Root cause of Item 3 vetting gap:** The original Item 3 vetting (commit `0e2c3fe`) confirmed the GitHub release tag existed but did NOT verify Maven Central artifact resolution. Build-time discovery during MVP Session 1 Task #8 surfaced the gap.
+
+### Decision
+
+**Defer per Item 3's existing soft-lock cascade** (revisit at Phase 2a Flight A). No change to Pre-MVP decision intent — kmpalette adoption was already scheduled for Phase 2a Flight A, not MVP-1.0. The publication-gap discovery doesn't change the timeline, just the resolution paths.
+
+**Three resolution paths at Phase 2a Flight A** (in priority order):
+
+| Path | Effort | Risk |
+|---|---|---|
+| 1. **JitPack via `com.github.jordond.kmpalette:kmpalette-core:4.0.0-beta02`** | ~2 hrs (add JitPack repo to settings.gradle.kts, swap coordinates) | JitPack-built artifact; build reproducibility slightly worse than Maven Central |
+| 2. **File issue with `jordond/kmpalette` asking for Maven Central publish** | ~1 hr Clay's action + indefinite wait | Maintainer responsiveness unknown |
+| 3. **Roll-our-own WCAG-AA palette extractor** (~50-line Kotlin in `:ui:theme/commonMain`) | ~16-24 hrs | Captured complexity; Bus-Factor-of-One friendly |
+
+Phase 2a Flight A start time is when this path is chosen, not now. MVP-1.0 ships without dynamic theming.
+
+### Updated status
+
+**Item 3 status unchanged: DECIDED (with soft-lock revisit at Phase 2a Flight A).** The Pre-MVP decision (kmpalette 4.0.0-beta02 as the intended palette extractor) stands as an *intent*. The *implementation* path is one of the three above, chosen at Phase 2a Flight A time.
+
+For MVP scaffold (now), `libs.kmpalette.core` reference is **commented out in `:ui:theme/build.gradle.kts`** with explanatory note. The `kmpalette = "4.0.0-beta02"` version entry and `kmpalette-core = { ... }` library entry **remain in `gradle/libs.versions.toml`** as documentation of intent. They are not currently consumed.
+
+### Methodology lesson for future vetting
+
+For any library whose Pre-MVP decision pins a beta or pre-release version, add Maven Central artifact resolution check to the vetting checklist:
+
+```bash
+# Verify pom is actually published, not just tagged on GitHub:
+curl -s -o /dev/null -w "%{http_code}\n" \
+  "https://repo.maven.apache.org/maven2/$(echo $GROUP | tr '.' '/')/$ARTIFACT/$VERSION/$ARTIFACT-$VERSION.pom"
+# Expected: 200. If 404, the artifact only lives in GitHub source/release-assets, not in any Maven repo Kiln consumes from.
+```
+
+Should be added to Pre-MVP Research's standard methodology. Captured in engram under `kiln/library-vetting/item-3-kmpalette-publication-gap`.
+
+### Engram + commit cross-reference
+
+Discovery surfaced 2026-05-19 during MVP Session 1 Task #8 smoke check. Build commit fixing the symptom: `0e02112 scaffold(gradle): jvmMain→desktopMain rename + defer kmpalette dep`. Vetting log addendum committed as part of MVP Session 1 close-out.
+
+
