@@ -2,11 +2,10 @@
 // the JNA libFLAC Decoder pipeline.
 //
 // Architecture mirrors Media3ExoPlayerImpl (Android side): 5 MutableStateFlows
-// for state/positionMs/queue/volume/processors; suspend methods marshal through
-// the audioDispatcher; a single playbackJob owns the SourceDataLine + the
-// Decoder's DecodedStream for the duration of one track. loadQueue resolves
-// MediaItems via the injected MusicSource and starts playback by opening the
-// Decoder for the start item; advanceToNext is invoked on EOF to chain tracks.
+// for state/positionMs/queue/volume/processors; the playbackJob owns the
+// SourceDataLine + DecodedStream for the duration of one track; loadQueue
+// resolves MediaItems via the injected MusicSource and starts playback by
+// opening the Decoder for the start item; advanceOnEof chains tracks.
 //
 // MVP scope (H5): loadQueue + autoPlay path is the load-bearing functional
 // requirement (H7 will call it from a single button). play/pause/stop/release
@@ -14,9 +13,24 @@
 // setVolume, setMuted, addAudioProcessor are implemented but only loosely
 // validated; full polish lands in Phase 2a.
 //
-// Threading: all PlatformPlayer methods marshal through withContext(audioDispatcher).
-// javax.sound.sampled lines aren't documented as thread-safe; the single-thread
-// MAX_PRIORITY audio executor (provided by DI) gives us that guarantee.
+// Threading: javax.sound.sampled Line + Control methods are documented as
+// thread-safe ("Implementations of this interface must be safe for use by
+// multiple threads" — Line javadoc). The audioDispatcher (single-thread
+// MAX_PRIORITY executor from DI) is still used as the playback-loop's
+// dispatcher AND for ops that mutate non-line internal state (queue swap,
+// teardown). Flag-only control methods (play/pause/setRepeatMode/
+// setShuffleMode) do NOT marshal through audioDispatcher — they would
+// otherwise queue behind a blocking sourceLine.write() call and stall for
+// up to ~100ms (or indefinitely if write blocks pathologically) per the
+// /ultrareview + Gemini findings at Session 9 close.
+//
+// Pause signaling: `_paused: MutableStateFlow<Boolean>` replaces an earlier
+// `@Volatile pauseRequested` flag + busy-wait `while (pauseRequested) delay(...)`
+// loop. The playback loop now suspends on `_paused.first { !it }`, which is
+// idiomatic Kotlin Flow and consumes zero CPU while paused. play()/pause()
+// just flip the flow value + call line.start()/stop() directly (the latter
+// for instant-pause UX — the loop's flip-based check would otherwise add
+// ~one-frame latency).
 
 package com.clayworks.kiln.audio.playback
 
@@ -35,10 +49,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -91,7 +105,16 @@ internal class JavaSoundPlayerImpl(
     @Volatile private var currentStream: DecodedStream? = null
     @Volatile private var playbackJob: Job? = null
 
-    @Volatile private var pauseRequested: Boolean = false
+    /**
+     * Pause signal observed by the playback loop. `true` = loop should stop the
+     * line + suspend on `.first { !it }`; `false` = loop should start the line
+     * (if not running) and write frames. Flipped by play()/pause() without
+     * marshalling through the audioDispatcher — those control methods MUST
+     * remain non-blocking so they can interrupt the loop even when it's
+     * currently in `sourceLine.write`.
+     */
+    private val _paused = MutableStateFlow(false)
+
     @Volatile private var released: Boolean = false
 
     // ---------- PlatformPlayer ----------
@@ -128,17 +151,24 @@ internal class JavaSoundPlayerImpl(
         startPlaybackForCurrentIndex(autoPlay)
     }
 
-    override suspend fun play() = withContext(audioDispatcher) {
-        if (released) return@withContext
-        val l = line ?: return@withContext
-        pauseRequested = false
-        if (!l.isRunning) l.start()
+    override suspend fun play() {
+        // No withContext(audioDispatcher) — would otherwise stall behind a
+        // blocking sourceLine.write() call in the playback loop. Line.start()
+        // is thread-safe per javax.sound spec; setting _paused.value is
+        // thread-safe via MutableStateFlow.
+        if (released) return
+        _paused.value = false
+        line?.takeUnless { it.isRunning }?.start()
         updateReadyState()
     }
 
-    override suspend fun pause() = withContext(audioDispatcher) {
-        if (released) return@withContext
-        pauseRequested = true
+    override suspend fun pause() {
+        // No withContext(audioDispatcher) — see play() rationale above. The
+        // loop also observes _paused via its `.first { !it }` gate and will
+        // stop the line on its next iteration; calling line.stop() here
+        // additionally is for instant-pause UX. Both are idempotent.
+        if (released) return
+        _paused.value = true
         line?.stop()
         updateReadyState()
     }
@@ -183,13 +213,14 @@ internal class JavaSoundPlayerImpl(
         startPlaybackForCurrentIndex(autoPlay = true)
     }
 
-    override suspend fun setRepeatMode(mode: RepeatMode) = withContext(audioDispatcher) {
+    override suspend fun setRepeatMode(mode: RepeatMode) {
+        // Pure flag-flip on a thread-safe StateFlow — no dispatcher needed.
         _queue.value = _queue.value.copy(repeatMode = mode)
     }
 
-    override suspend fun setShuffleMode(enabled: Boolean) = withContext(audioDispatcher) {
-        // Shuffle order generation is deferred to Phase 2a (vetting Item 12).
-        // This only flips the flag; queue order does not yet shuffle.
+    override suspend fun setShuffleMode(enabled: Boolean) {
+        // Pure flag-flip; shuffle ORDER generation is deferred to Phase 2a
+        // (vetting Item 12). Queue order does not yet actually shuffle.
         _queue.value = _queue.value.copy(shuffleEnabled = enabled)
     }
 
@@ -278,7 +309,7 @@ internal class JavaSoundPlayerImpl(
 
         line = sourceLine
         currentStream = stream
-        pauseRequested = !autoPlay
+        _paused.value = !autoPlay
         applyGain()
         if (autoPlay) sourceLine.start()
 
@@ -300,8 +331,15 @@ internal class JavaSoundPlayerImpl(
                     _processors.value.forEach { processor ->
                         processedFrame = processor.process(processedFrame)
                     }
-                    while (pauseRequested && isActive) {
-                        delay(POSITION_TICK_MS)
+                    // Pause gate. _paused.first { !it } suspends the coroutine
+                    // (zero CPU while paused) until pause() flips the flow to
+                    // false. StateFlow.first(predicate) replays the current
+                    // value first, so this returns immediately if not paused.
+                    if (_paused.value) {
+                        runCatching { sourceLine.stop() }
+                        _paused.first { !it }
+                        if (!isActive) return@collect
+                        runCatching { sourceLine.start() }
                     }
                     if (!isActive) return@collect
                     sourceLine.write(processedFrame.bytes, 0, processedFrame.byteCount)
@@ -365,14 +403,14 @@ internal class JavaSoundPlayerImpl(
         playbackJob?.cancel()
         playbackJob = null
         teardownActivePlayback(stopLineFirst = true)
-        pauseRequested = false
+        _paused.value = false
     }
 
     private fun updateReadyState() {
         val l = line ?: return
         val current = _state.value
         if (current is PlayerState.Ready) {
-            val isPlaying = l.isRunning && !pauseRequested
+            val isPlaying = l.isRunning && !_paused.value
             if (current.isPlaying != isPlaying) {
                 _state.value = PlayerState.Ready(isPlaying)
             }
