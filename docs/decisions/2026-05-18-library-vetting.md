@@ -620,17 +620,73 @@ The decision criterion at revisit time is: "Has kmpalette's API moved during the
 
 ---
 
+## Item 6: SQLDelight schema sketch (pointer)
+
+> **Plan reference:** Pre-MVP Research §2.1 item 6 + §2.2 exit criteria. Schema-sketch deliverable lives in a dedicated document per plan-mandated structure.
+
+### Decision
+
+**Adopt SQLDelight 2.3.2 stable (released 2026-03-16) for the library cache.** Schema sketch delivered in a dedicated document: [`2026-05-18-sqldelight-schema-sketch.md`](./2026-05-18-sqldelight-schema-sketch.md). This vetting-log entry is intentionally short — schema design is a multi-page artifact and belongs in its own file per plan §2.2.
+
+Highlights covered in the schema sketch:
+
+- **Six core tables:** `artist`, `album`, `track`, `playlist`, `playlist_track`, `listening_history`
+- **FTS5 contentless virtual table** (`track_search`) for sub-100ms search across track / album / artist text, with `unicode61 remove_diacritics 2` tokenizer for international content
+- **Application-managed FTS population** (transactions co-update FTS index alongside source rows; rejected SQL-trigger approach as harder to debug)
+- **Partial B-tree indexes** filtered by `WHERE deleted_at_ms IS NULL` so soft-deleted rows don't bloat lookup paths
+- **Soft-delete on `track`** preserves `listening_history` references when files move or disappear during rescan
+- **AUTOINCREMENT PKs everywhere** so IDs never recycle and break historical references
+- **All audiophile metadata stored** (codec, bit_depth, sample_rate_hz, bitrate_kbps, channels) for Phase 2b Hardware Spec Sheet identity move
+- **ReplayGain columns preserved** (track + album, gain + peak) per JAMZ-parity requirement
+- **`source` provenance column** future-proofs for additional `MusicSource` implementations without later migration
+- **Foreign-key enforcement explicitly enabled per platform** (JVM `Properties { put("foreign_keys", "true") }`; Android via `Callback.onOpen` PRAGMA)
+- **WAL journaling + memory temp store + 32 MB page cache** for concurrent read/write during library scan
+
+Performance projection (full details in linked sketch): all hot queries land well under the sub-100ms target; total DB on disk for 39.5k tracks projects to ~35-40 MB.
+
+### Soft-lock revisit triggers
+
+- Pixel 10 Pro XL's bundled SQLite lacks FTS5 (very unlikely on API 21+) — sanity-check at MVP Session 4
+- Xerial `sqlite-jdbc` desktop driver shows FTS5 perf regressions during MVP Session 8+ — fall back to non-FTS LIKE-based search (degraded but functional)
+- Migration verification (`verifySqlDelightMigration`) catches schema drift during MVP Session 4-7
+
+### Status
+
+**DECIDED.** SQLDelight 2.3.2 pinned; schema document is the canonical deliverable; see linked file. Implementation begins at MVP Session 4-7 (Library + playback vertical slice).
+
+---
+
 ## Next items in queue
 
-- (Remaining items 5, 6, 7, 9, 10, 12 — to be tackled in subsequent Pre-MVP Research sessions)
+- (Remaining items 5, 7, 9, 10, 12 — to be tackled in subsequent Pre-MVP Research sessions)
 
 Items still to research:
 - Item 5 — Circuit + Molecule on KMP (now applies to `:ui:components` Now Playing)
-- Item 6 — SQLDelight schema design for 39.5k tracks
 - Item 7 — Compose-MP screenshot testing (Roborazzi maturity)
 - Item 9 — Java Sound capability survey on Windows
 - Item 10 — jpackage / Windows distribution
 - Item 12 — Compose MP Desktop LazyColumn 40k stress test (requires actual code spike)
+
+---
+
+## Session 2 summary
+
+**Date:** 2026-05-18
+**Items completed:** 3 of 12 active (Items 2, 3, 6) → cumulative 7 of 12 with sessions 1+2
+**Items remaining:** 5 (Items 5, 7, 9, 10, 12)
+
+**Soft-lock revisits triggered:** None this session. All three decisions are within their original scopes — Coil 3.4.0 confirmed; kmpalette adopted with a known revisit point at Phase 2a Flight A start (beta-vs-stable confirmation); SQLDelight 2.3.2 pinned with schema sketch delivered.
+
+**Cross-references established:**
+- Coil 3 (Item 2) ↔ kmpalette (Item 3): Coil decodes ImageBitmap, kmpalette consumes it; integration wired manually because no `coil-loader` ships
+- SQLDelight (Item 6) ↔ kmpalette (Item 3): palette cache may use a SQLDelight side-table at Phase 2a Flight A if in-memory cache proves insufficient
+
+**New just-in-time research items deferred:**
+- Confirm Coil 3.4.0 still supports `minSdk = 21` (could trigger spec §2 hard-lock revisit)
+- Confirm kmpalette 4.0.0 stability story before Phase 2a Flight A starts
+- Verify Pixel 10 Pro XL's SQLite has FTS5 at MVP Session 4 (sanity check)
+
+**Estimated remaining Pre-MVP Research effort:** ~7-12 hrs across the 5 remaining items (per plan estimates).
 
 ---
 
