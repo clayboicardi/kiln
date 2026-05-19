@@ -56,19 +56,27 @@ internal fun String.parseReplayGainDb(): Double? =
  * Bulk-rebuild the contentless track_search FTS5 index from the live track
  * table. Called at the tail of every scan pass.
  *
+ * Atomicity: the 'delete-all' + per-row INSERTs all run inside a single
+ * [db.transaction] block. Concurrent readers therefore see EITHER the pre-scan
+ * FTS state OR the post-scan FTS state — never an empty index during the
+ * rebuild window, and a process kill mid-rebuild rolls back to the pre-scan
+ * state instead of leaving FTS permanently empty.
+ *
  * The 'delete-all' control command is invoked via raw [SqlDriver.execute] —
  * SQLDelight's .sq parser doesn't accept FTS5 control syntax (Session 6
- * discovery #2). The subsequent bulk INSERT runs inside a single transaction
- * for speed (40k rows ~ a few hundred ms on SQLite).
+ * discovery #2). SQLDelight's sticky-connection transaction model means the
+ * raw `driver.execute` participates in the enclosing `db.transaction { }`.
+ *
+ * Performance: 40k rows ~ a few hundred ms on SQLite for the bulk insert pass.
  */
 internal fun rebuildFtsIndex(db: KilnDatabase, driver: SqlDriver) {
-    driver.execute(
-        identifier = null,
-        sql = "INSERT INTO track_search(track_search) VALUES('delete-all')",
-        parameters = 0,
-    )
     val rows = db.trackQueries.selectAllForFtsRebuild().executeAsList()
     db.transaction {
+        driver.execute(
+            identifier = null,
+            sql = "INSERT INTO track_search(track_search) VALUES('delete-all')",
+            parameters = 0,
+        )
         rows.forEach { row ->
             db.track_searchQueries.insertSearchIndex(
                 rowid = row.track_id,
