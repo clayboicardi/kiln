@@ -1,0 +1,167 @@
+// Lightweight smoke test for JavaSoundPlayerImpl. Verifies construction,
+// state-flow defaults, and error paths through loadQueue. Does NOT exercise
+// the SourceDataLine output path — that requires audio hardware and is
+// validated at H7 (the end-to-end "play a FLAC" milestone) by Clay manually.
+
+package com.clayworks.kiln.audio.playback
+
+import arrow.core.Either
+import com.clayworks.kiln.library.source.AudioCodec
+import com.clayworks.kiln.library.source.BrowseScope
+import com.clayworks.kiln.library.source.ItemId
+import com.clayworks.kiln.library.source.MediaItem
+import com.clayworks.kiln.library.source.MusicSource
+import com.clayworks.kiln.library.source.Playable
+import com.clayworks.kiln.library.source.SearchResult
+import com.clayworks.kiln.library.source.LocalSourceCapabilities
+import com.clayworks.kiln.library.source.SourceCapabilities
+import com.clayworks.kiln.library.source.SourceError
+import com.clayworks.kiln.library.source.SourceId
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.runBlocking
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
+
+class JavaSoundPlayerImplTest {
+
+    // Stub MusicSource — returns Left for any getPlayable call.
+    private class AlwaysFailingSource(override val id: SourceId = SourceId("test")) : MusicSource {
+        override val displayName: String = "test"
+        override val capabilities: SourceCapabilities = LocalSourceCapabilities
+        override suspend fun search(query: String, limit: Int): Flow<SearchResult> = emptyFlow()
+        override suspend fun browse(scope: BrowseScope): Flow<MediaItem> = emptyFlow()
+        override suspend fun getPlayable(itemId: ItemId): Either<SourceError, Playable> =
+            Either.Left(SourceError.ItemNotFound(itemId))
+    }
+
+    // Stub Decoder — never asked because the source always fails first.
+    private class StubDecoder : Decoder {
+        override fun supports(codec: AudioCodec): Boolean = false
+        override suspend fun open(playable: Playable): Either<DecoderError, DecodedStream> =
+            Either.Left(DecoderError.UnsupportedCodec(playable.codec))
+    }
+
+    private fun newPlayer(source: MusicSource = AlwaysFailingSource(), decoder: Decoder = StubDecoder()) =
+        createJavaSoundPlayer(
+            audioDispatcher = Dispatchers.Unconfined,
+            decoder = decoder,
+            source = source,
+        )
+
+    @Test
+    fun `initial state — Idle, position 0, empty queue, volume 1, no processors`() {
+        val player = newPlayer()
+        assertEquals(PlayerState.Idle, player.state.value)
+        assertEquals(0L, player.positionMs.value)
+        val q = player.queue.value
+        assertEquals(0, q.items.size)
+        assertEquals(-1, q.currentIndex)
+        assertEquals(RepeatMode.Off, q.repeatMode)
+        assertEquals(false, q.shuffleEnabled)
+        assertEquals(1.0f, player.volume.value.linear)
+        assertEquals(false, player.volume.value.muted)
+        assertEquals(0, player.processors.value.size)
+    }
+
+    @Test
+    fun `loadQueue with empty list — stays Idle, queue is empty`() = runBlocking {
+        val player = newPlayer()
+        player.loadQueue(items = emptyList(), startIndex = 0, autoPlay = true)
+        assertEquals(PlayerState.Idle, player.state.value)
+        assertEquals(0, player.queue.value.items.size)
+        assertEquals(-1, player.queue.value.currentIndex)
+    }
+
+    @Test
+    fun `loadQueue with items but source always fails — stays Idle, queue is empty`() = runBlocking {
+        val player = newPlayer(source = AlwaysFailingSource())
+        val items = listOf(makeMediaItem("a"), makeMediaItem("b"))
+        player.loadQueue(items, startIndex = 0, autoPlay = true)
+        // All items skipped by the source → queue ends up empty → state Idle.
+        assertEquals(PlayerState.Idle, player.state.value)
+        assertEquals(0, player.queue.value.items.size)
+    }
+
+    @Test
+    fun `setRepeatMode + setShuffleMode update queue flow without playback`() = runBlocking {
+        val player = newPlayer()
+        player.setRepeatMode(RepeatMode.All)
+        assertEquals(RepeatMode.All, player.queue.value.repeatMode)
+        player.setShuffleMode(true)
+        assertEquals(true, player.queue.value.shuffleEnabled)
+        player.setRepeatMode(RepeatMode.Off)
+        player.setShuffleMode(false)
+        assertEquals(RepeatMode.Off, player.queue.value.repeatMode)
+        assertEquals(false, player.queue.value.shuffleEnabled)
+    }
+
+    @Test
+    fun `setVolume + setMuted update volume flow without playback`() = runBlocking {
+        val player = newPlayer()
+        player.setVolume(0.5f)
+        assertEquals(0.5f, player.volume.value.linear)
+        player.setMuted(true)
+        assertEquals(true, player.volume.value.muted)
+        player.setVolume(1.0f)
+        player.setMuted(false)
+        assertEquals(1.0f, player.volume.value.linear)
+        assertEquals(false, player.volume.value.muted)
+    }
+
+    @Test
+    fun `addAudioProcessor + removeAudioProcessor mutate processors flow`() {
+        val player = newPlayer()
+        val processor = object : AudioProcessor {
+            override val id = "test"
+            override fun onFormatChange(format: DecodedAudioFormat) = Unit
+            override fun process(frame: AudioFrame): AudioFrame = frame
+        }
+        player.addAudioProcessor(processor)
+        assertEquals(1, player.processors.value.size)
+        player.removeAudioProcessor(processor)
+        assertEquals(0, player.processors.value.size)
+    }
+
+    @Test
+    fun `play pause stop are safe to invoke before loadQueue`() = runBlocking {
+        val player = newPlayer()
+        // None of these should crash; the line is null so all are no-ops.
+        player.play()
+        player.pause()
+        player.stop()
+        // State stays Idle.
+        assertEquals(PlayerState.Idle, player.state.value)
+    }
+
+    @Test
+    fun `release marks the player unusable — subsequent ops are no-ops`() = runBlocking {
+        val player = newPlayer()
+        val stateBeforeRelease = player.state.value
+        player.release()
+        // Further suspend calls should be safe no-ops (no crash, no state mutation).
+        player.play()
+        player.pause()
+        player.loadQueue(listOf(makeMediaItem("z")), 0, true)
+        assertEquals(
+            stateBeforeRelease,
+            player.state.value,
+            "post-release state should remain whatever it was at release time",
+        )
+    }
+
+    private fun makeMediaItem(id: String): MediaItem = MediaItem(
+        itemId = ItemId(id),
+        sourceId = SourceId("test"),
+        kind = MediaItem.Kind.Track,
+        title = "Track $id",
+        subtitle = null,
+        durationMs = null,
+        artUri = null,
+        metadata = emptyMap(),
+    )
+}
