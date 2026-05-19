@@ -289,12 +289,22 @@ internal class JavaSoundPlayerImpl(
             var lastTickedMs = 0L
             try {
                 stream.frames.collect { frame ->
-                    _processors.value.forEach { it.process(frame) }
+                    // Apply processors in order. Each may return a new (or
+                    // mutated) AudioFrame; we chain them so the final write
+                    // reflects the cumulative pipeline. Currently
+                    // `_processors.value` is always empty (no concrete
+                    // processors land before :audio:dsp Sessions 16-22), so
+                    // this fold is a no-op — but wiring it now is the
+                    // load-bearing prep for when EQ / ReplayGain / etc. arrive.
+                    var processedFrame = frame
+                    _processors.value.forEach { processor ->
+                        processedFrame = processor.process(processedFrame)
+                    }
                     while (pauseRequested && isActive) {
                         delay(POSITION_TICK_MS)
                     }
                     if (!isActive) return@collect
-                    sourceLine.write(frame.bytes, 0, frame.byteCount)
+                    sourceLine.write(processedFrame.bytes, 0, processedFrame.byteCount)
                     val pos = stream.positionMs
                     if (pos - lastTickedMs >= POSITION_TICK_MS) {
                         _positionMs.value = pos
