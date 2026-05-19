@@ -15,6 +15,7 @@
 package com.clayworks.kiln.audio.playback
 
 import com.clayworks.kiln.audio.playback.nativeio.ErrorCallback
+import com.clayworks.kiln.audio.playback.nativeio.FlacDecodeException
 import com.clayworks.kiln.audio.playback.nativeio.FlacFrameReader
 import com.clayworks.kiln.audio.playback.nativeio.FlacMetadata
 import com.clayworks.kiln.audio.playback.nativeio.LibFlacBinding
@@ -117,16 +118,23 @@ internal class JvmFlacDecodedStream(
         while (!closed) {
             val state = libFlac.FLAC__stream_decoder_get_state(handle)
             when (state) {
-                LibFlacBinding.STATE_END_OF_STREAM,
-                LibFlacBinding.STATE_ABORTED,
-                LibFlacBinding.STATE_OGG_ERROR,
-                LibFlacBinding.STATE_SEEK_ERROR,
-                LibFlacBinding.STATE_MEMORY_ALLOCATION_ERROR,
-                LibFlacBinding.STATE_UNINITIALIZED,
-                -> return@flow
+                LibFlacBinding.STATE_END_OF_STREAM -> return@flow  // normal terminator
+                LibFlacBinding.STATE_ABORTED ->
+                    throw FlacDecodeException("libFLAC decoder ABORTED mid-stream", state)
+                LibFlacBinding.STATE_OGG_ERROR ->
+                    throw FlacDecodeException("libFLAC reported OGG_ERROR", state)
+                LibFlacBinding.STATE_SEEK_ERROR ->
+                    throw FlacDecodeException("libFLAC reported SEEK_ERROR", state)
+                LibFlacBinding.STATE_MEMORY_ALLOCATION_ERROR ->
+                    throw FlacDecodeException("libFLAC reported MEMORY_ALLOCATION_ERROR", state)
+                LibFlacBinding.STATE_UNINITIALIZED ->
+                    throw FlacDecodeException("libFLAC decoder UNINITIALIZED mid-stream (handle reset?)", state)
             }
             val ok = libFlac.FLAC__stream_decoder_process_single(handle)
-            if (!ok) return@flow
+            if (!ok) {
+                val postState = libFlac.FLAC__stream_decoder_get_state(handle)
+                throw FlacDecodeException("FLAC__stream_decoder_process_single returned false", postState)
+            }
             pendingFrame?.let { frame ->
                 pendingFrame = null
                 emit(frame)
