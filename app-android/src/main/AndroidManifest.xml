@@ -2,6 +2,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <application
+        android:name="com.clayworks.kiln.KilnApplication"
         android:label="Kiln"
         android:theme="@android:style/Theme.DeviceDefault.NoActionBar"
         android:allowBackup="true">

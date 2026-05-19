@@ -22,6 +22,9 @@ dependencies {
     implementation(libs.kotlinInject.runtime)
     ksp(libs.kotlinInject.compiler)
 
+    // SQLDelight JVM driver — graph constructs JdbcSqliteDriver directly.
+    implementation(libs.sqldelight.sqlite.driver)
+
     implementation(libs.bundles.jna)
 
     implementation(project(":audio:dsp"))

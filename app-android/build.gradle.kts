@@ -19,6 +19,9 @@ dependencies {
     implementation(libs.kotlinInject.runtime)
     ksp(libs.kotlinInject.compiler)
 
+    // SQLDelight Android driver — graph constructs AndroidSqliteDriver directly.
+    implementation(libs.sqldelight.android.driver)
+
     implementation(libs.bundles.android.media3)
 
     implementation(project(":audio:dsp"))
