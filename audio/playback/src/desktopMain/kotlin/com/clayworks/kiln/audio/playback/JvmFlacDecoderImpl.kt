@@ -7,10 +7,22 @@ package com.clayworks.kiln.audio.playback
 
 import arrow.core.Either
 import com.clayworks.kiln.audio.playback.nativeio.LibFlacBinding
+import com.clayworks.kiln.audio.playback.nativeio.LibFlacLoader
 import com.clayworks.kiln.library.source.AudioCodec
 import com.clayworks.kiln.library.source.Playable
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+
+/**
+ * Construct the Desktop FLAC [Decoder]. Public factory keeps the
+ * [JvmFlacDecoderImpl] class itself internal — consumers receive the
+ * [Decoder] interface from commonMain only. The JNA libFLAC binding is
+ * acquired via [LibFlacLoader.load], which is idempotent across calls.
+ *
+ * Wire into your DI graph as the single source of a `Decoder` capable of
+ * `AudioCodec.FLAC`.
+ */
+fun createJvmFlacDecoder(): Decoder = JvmFlacDecoderImpl(LibFlacLoader.load())
 
 internal class JvmFlacDecoderImpl(
     private val libFlac: LibFlacBinding,
