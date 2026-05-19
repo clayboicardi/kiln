@@ -1,34 +1,25 @@
 // kiln.kmp.library — base KMP library convention.
-// Applied to: :audio:*, :data:library, :ui:* (when not Compose), and base of kiln.kmp.compose.
+// Applied to: :audio:*, :data:library, :ui:* (via kiln.kmp.compose).
 //
-// Establishes:
-// - Kotlin Multiplatform plugin
-// - Android library target with compileSdk=36, minSdk=21 (spec §2 hard locks)
-// - JVM Desktop target with jvmTarget=21
-// - Namespace derived from project path: com.clayworks.kiln${project.path}
+// Uses com.android.kotlin.multiplatform.library (AGP 9.0+ requirement when
+// paired with org.jetbrains.kotlin.multiplatform — com.android.library
+// plugin is no longer compatible per AGP 9.0 breaking change).
+//
+// Spec §2 hard locks: compileSdk = 36, minSdk = 21, JVM target = 21.
+// Namespace derived from project.path (e.g., :audio:dsp → com.clayworks.kiln.audio.dsp).
 
 plugins {
     id("org.jetbrains.kotlin.multiplatform")
-    id("com.android.library")
+    id("com.android.kotlin.multiplatform.library")
 }
 
 kotlin {
     jvmToolchain(21)
 
-    androidTarget()
-    jvm("desktop")
-}
-
-android {
-    compileSdk = 36
-    defaultConfig {
+    androidLibrary {
+        compileSdk = 36
         minSdk = 21
+        namespace = "com.clayworks.kiln${project.path.replace(":", ".")}"
     }
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_21
-        targetCompatibility = JavaVersion.VERSION_21
-    }
-    // project.path = ":audio:dsp" → namespace = com.clayworks.kiln.audio.dsp
-    // project.path = ":data:library" → namespace = com.clayworks.kiln.data.library
-    namespace = "com.clayworks.kiln${project.path.replace(":", ".")}"
+    jvm("desktop")
 }

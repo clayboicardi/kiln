@@ -1,0 +1,23 @@
+// :app-android — Android application module (pure Android, not KMP).
+// Consumes KMP libraries via their androidTarget artifacts.
+//
+// Hello Kiln Android entry point lands at MVP Session 2 (Task #9).
+
+plugins {
+    id("kiln.android.app")
+    alias(libs.plugins.ksp)
+}
+
+dependencies {
+    implementation(libs.androidx.activity.compose)
+    implementation(libs.kotlinInject.runtime)
+    ksp(libs.kotlinInject.compiler)
+
+    implementation(libs.bundles.android.media3)
+
+    implementation(project(":audio:dsp"))
+    implementation(project(":audio:playback"))
+    implementation(project(":data:library"))
+    implementation(project(":ui:components"))
+    implementation(project(":ui:theme"))
+}
