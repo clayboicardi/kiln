@@ -973,12 +973,112 @@ There is no Roborazzi competitor that does Compose-MP Desktop screenshot regress
 
 ---
 
+## Item 9: Java Sound capability survey on Windows
+
+> **Plan reference:** Pre-MVP Research §2.1 item 9. Limits define MVP audio capability before WASAPI phase-2b (Phase 2b Flight I, soft-lock-revisit per Item 13).
+
+### Question
+
+What sample formats, sample rates, channel configurations, and latency profile does Java Sound (`javax.sound.sampled`) expose on Windows under JDK 21? What are the **limits** that define what MVP-1.0 can and cannot do audibly? And what FLAC decoder feeds PCM into the `SourceDataLine`?
+
+### Method
+
+- WebSearch for current JDK 21 Java Sound behavior on Windows
+- WebSearch for FLAC decoder library options in the JVM/Kotlin ecosystem
+- GitHub repo health checks on candidate decoders
+- Cross-reference with spec §13 audio-backend abstraction (already committed to `JflacDecoderImpl` in `:jvmMain`)
+
+### Findings
+
+**Java Sound on Windows is a stable but old story.**
+
+Java Sound is part of the JDK (no external dependency). On Windows, the JDK's audio SPI ultimately routes through the operating system's **MME/WaveOut** API (also known as Windows Multimedia). DirectSound is sometimes available as an alternative. **WASAPI is not used by Java Sound** — that's why Phase 2b Flight I exists.
+
+**Sample-format support (typical Windows JDK 21):**
+
+| Format dimension | Java Sound on Windows | Notes |
+|---|---|---|
+| Sample rates | 8 kHz, 11.025 kHz, 22.05 kHz, 44.1 kHz, 48 kHz, 88.2 kHz, 96 kHz, **possibly** 176.4 / 192 kHz | High-rate support depends on the audio driver. Pixel's USB-C-to-AUX dongle for Clay's desktop reports 96 kHz max per typical USB Audio Class 1.0 spec; check at MVP Session 4 if 192 kHz path is needed |
+| Bit depths | 8-bit PCM unsigned, 16-bit PCM signed (universal), 24-bit PCM signed (usually OK), 32-bit float (driver-dependent) | 24/96 is the safe ceiling. 32-bit float output requires explicit `AudioFormat.Encoding.PCM_FLOAT` and a driver that accepts it |
+| Channels | mono, stereo, multi-channel up to ~8 (5.1, 7.1 if the driver exposes it) | Kiln only needs stereo for FLAC playback |
+| Encoding | PCM (signed/unsigned, big/little endian), A-law, μ-law | We only need PCM signed little-endian for our decoded FLAC bytes |
+
+**Format probing is essential** — application code must use `AudioSystem.isLineSupported(Line.Info)` and iterate `Mixer.getSourceLineInfo()` rather than assume; drivers differ. Spec §13's decoder abstraction is the right shape for handling this — decoder produces a `DecodedStream` with a known `AudioFormat`, and the `PlatformPlayer` opens a `SourceDataLine` matching that format.
+
+**Latency on Windows is high.**
+
+The MME/WaveOut path imposes typical output latency of **30-100ms**, dominated by the OS audio mixer's buffering. This is **acceptable for music playback** (the use case is non-interactive — no live monitoring, no real-time mixing requirements) but **disqualifies** Java Sound for:
+- Phase 3 room correction (sample-accurate mic-to-speaker latency measurement) — though room correction is more about the mic-capture latency
+- Any future live-mixing/instrument plugin direction (out of scope per anti-roadmap)
+- Bit-perfect audiophile output (the OS mixer can resample / down-bit-depth without telling you)
+
+This latency reality is **exactly why** Phase 2b Flight I (WASAPI shared-mode or exclusive-mode) exists in the plan. Soft-lock revisit per Item 13.
+
+**Lifecycle and reliability:**
+
+- `SourceDataLine.start()` / `.write(byteArray, offset, length)` / `.drain()` / `.close()` is the canonical playback flow
+- Buffer underrun on `.write()` causes audible clicks; mitigate by writing in 10-50ms chunks via a dedicated decoder thread that's always 100-200ms ahead of playback
+- Audio device disconnection (USB DAC unplugged) raises a `LineUnavailableException` — must be caught and surfaced via the `PlatformPlayer.state` flow (`PlayerState.Error` or transition to paused; surface a user-visible event)
+- JVM-level audio bug history (mostly resolved by JDK 11+) included occasional missed device-change events; modern JDKs (17+) are stable here
+
+### FLAC decoder candidates (the actual MVP gap)
+
+Java Sound doesn't decode FLAC — it consumes raw PCM. Kiln's `JvmFlacDecoderImpl` per spec §13 needs an actual implementation. **This is the real Pre-MVP Research-9 gap; Java Sound output itself is well-trodden.**
+
+| Candidate | Maintenance | 24-bit / hi-res support | License | Verdict |
+|---|---|---|---|---|
+| `jflac` (`org.jflac:jflac-codec`) | Unmaintained (>10 years) | NO — does not support 24-bit / 192 kHz | LGPL-2.1 (license concern with Apache 2.0 binary linking — likely OK as separable lib, but verify) | **Disqualified**. Clay's hi-res FLAC library would have decoder gaps |
+| `JustFLAC` (drogatkin) | Stale (last commit 2023-05-09; 22 stars; no LICENSE file in repo) | Claims fixes to jflac bugs, but 24-bit support not clearly documented | Unstated — **dealbreaker** for Apache 2.0 fresh-derivation; would need to ask author or fork-with-explicit-license | **Risky**. License unclear blocks adoption |
+| `hipxel/flac-decoder` | Dead (last touch 2021, 4 stars, no LICENSE) | Unknown | Unstated | **Disqualified** |
+| `JAVE2` (FFmpeg wrapper) | Active | Yes (FFmpeg has everything) | LGPL via FFmpeg | Heavy (bundled native binaries, ~50 MB); FFmpeg license complexity. **Heavy hammer** |
+| `VLCJ` (libvlc wrapper) | Active | Yes | LGPL / GPL portions | Requires VLC installed on user's system; not appropriate for a self-contained app. **Disqualified** for Kiln |
+| **JNI to native libflac** (Xiph reference) | Reference implementation; bulletproof | Yes (full FLAC spec) | BSD-style | Requires per-platform native artifacts (libFLAC.dll for Windows). Adds Gradle build complexity. **Strongest correctness option but biggest plumbing cost** |
+| **Pure-Kotlin FLAC decoder, re-derived from spec** | Bus-Factor-of-One friendly; matches "fresh re-derivation" project ethos | Yes (FLAC spec is well-documented) | Apache 2.0 (we own it) | ~1500-3000 lines of Kotlin; real engineering effort | **Out of scope for MVP** but interesting Phase 2b candidate |
+
+**No clean default.** The cleanest paths are:
+
+- **MVP path:** JNI to native libflac via a tiny Kotlin wrapper. The native `libflac.dll` (Windows) and `libflac.so` (Linux, if ever needed) ship inside the JAR (loaded via `System.loadLibrary` after extraction to temp). On Android, Media3 already has FLAC support — no native shim needed in `androidMain`. Effort: ~10-15 hrs for the JNI bridge + Gradle wiring, vs. an indeterminate "stop and fix decoder bugs as Clay encounters them" path with JustFLAC.
+- **Alternative MVP path:** **Pin JustFLAC anyway** for MVP-1.0 with explicit acknowledgment that the licensing is murky and that we'll switch decoders if any of Clay's actual library files fail to decode correctly. Risk: violating license; risk: encountering files JustFLAC mis-decodes. Cheaper start (no JNI).
+
+**Recommendation:** start with **JustFLAC under explicit "MVP-only, license-conditional" pin** to keep MVP scope tight, and plan for **JNI-libflac swap-in at Phase 2a or Phase 2b** when the audiophile-credibility costs of using an unmaintained decoder catch up. Re-evaluate at MVP Session 4-7 with empirical testing against Clay's actual library.
+
+The decoder swap is contained by spec §13's `JvmFlacDecoderImpl` abstraction — only `:audio:playback/src/jvmMain/` knows which decoder is wired in. Everything else consumes `DecodedStream`.
+
+### Decision
+
+**Java Sound is OK for MVP output, with explicit acceptance of:**
+
+1. **30-100ms output latency** — sufficient for music playback; disqualifies Java Sound for sample-accurate-latency Phase 3 room correction (which is why mic-capture path lives in `:audio:playback` with `TargetDataLine` for now, and Phase 2b Flight I exists)
+2. **OS-mixer transparency loss** — Windows MME applies sample-rate conversion + volume mixing before the audio reaches the DAC. Not bit-perfect. Phase 2b Flight I addresses this
+3. **Driver-dependent format ceiling** — high-rate (>96 kHz) and 32-bit float support varies. Probe via `AudioSystem.isLineSupported` at runtime; fall back to 24/96 stereo signed PCM as the universally-safe format
+4. **Audio device-change handling** — `LineUnavailableException` on USB-DAC disconnect; the `PlatformPlayer.state` flow must surface this
+
+**FLAC decoder decision deferred to MVP Session 4-7** with two viable paths (JustFLAC license-conditional vs. JNI-libflac) and a planned-swap soft-lock at Phase 2a / 2b.
+
+### Just-in-time research deferred (before MVP Session 4-7)
+
+- **Empirically probe Clay's Windows desktop** with `AudioSystem.getMixerInfo()` and enumerate supported sample rates + bit depths on his specific hardware (i5-13400F + RTX 4060 + onboard audio + whatever USB DAC) — single hour of code+log work
+- **Empirically probe Pixel 10 Pro XL's USB-C-to-AUX dongle** for its USB Audio Class profile (96 kHz max is typical for UAC 1.0; 192 kHz needs UAC 2.0) — single hour of `adb shell dumpsys media.audio_flinger` work
+- **FLAC decoder spike on Clay's library:** decode 10 random tracks with JustFLAC and verify against reference (e.g., compare PCM output to `ffmpeg -i file.flac -f f32le -`) — 1-2 hrs to confirm or disqualify JustFLAC
+- **Resolve JustFLAC license question:** open a GitHub issue against drogatkin/JustFLAC asking for explicit LICENSE; if no response in 2 weeks, fork-and-relicense or move to JNI-libflac
+
+### Soft-lock revisit triggers
+
+- Any of Clay's hi-res FLAC files fail to decode correctly with JustFLAC at MVP Session 4-7 → switch to JNI-libflac immediately
+- License clarification for JustFLAC is unresolvable → switch to JNI-libflac before Phase 2a Flight E (Library extraction) since `:audio:playback` should not transitively impose murky-license deps on published downstream libraries
+- Phase 2b Flight I decision favors WASAPI rewrite → decoder choice may carry over or change (WASAPI consumes the same `DecodedStream`)
+
+### Status
+
+**PARTIALLY DECIDED.** Java Sound is the MVP output path with known limits documented. **FLAC decoder remains an open question** — clear MVP-Session-4 decision needed between JustFLAC (cheap-start, risk) and JNI-libflac (heavier plumbing, correctness ceiling). Spec §13 `JvmFlacDecoderImpl` abstraction contains the decision.
+
+---
+
 ## Next items in queue
 
-- (Remaining items 9, 10, 12 — to be tackled in subsequent Pre-MVP Research sessions)
+- (Remaining items 10, 12 — to be tackled in subsequent Pre-MVP Research sessions)
 
 Items still to research:
-- Item 9 — Java Sound capability survey on Windows
 - Item 10 — jpackage / Windows distribution
 - Item 12 — Compose MP Desktop LazyColumn 40k stress test (requires actual code spike)
 
