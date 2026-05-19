@@ -656,12 +656,204 @@ Performance projection (full details in linked sketch): all hot queries land wel
 
 ---
 
+## Item 5: Circuit + Molecule on KMP
+
+> **Plan reference:** Pre-MVP Research §2.1 item 5. Circuit is the spec §6.1 / plan §3.2 Session 12-15 showcase library in the `:ui:components` Now Playing screen (relocated from cut `:data:streaming-tidal` module on 2026-05-18). Molecule is its sibling presenter-runtime library.
+
+### Question
+
+Vet Slack's Circuit (Presenter/UI MVI library) and Cash App's Molecule (Compose-to-Flow runtime) for Kiln's Compose Multiplatform stack — specifically the Now Playing screen showcase in `:ui:components`. Confirm KMP/Compose-MP support, gotchas, and pin specific stable versions.
+
+### Method
+
+- Context7 query against `/slackhq/circuit` (source: High, 451 snippets) and `/cashapp/molecule` (source: High, 58 snippets)
+- WebFetch of Circuit's doc site (`slackhq.github.io/circuit/setup/`) for explicit KMP target table
+- **Direct read of Slack's own `gradle/libs.versions.toml` via GitHub API** — most authoritative signal of what Slack actually uses for their own Compose-MP showcase project
+- GitHub Releases API for both repos
+- Sample-directory inventory to confirm Compose-MP samples exist
+
+### Findings
+
+**Compose-MP support — confirmed, both libraries:**
+
+Circuit's doc site (`slackhq.github.io/circuit/setup/`) lists official KMP targets:
+- ✅ Android
+- ✅ JVM (Desktop)
+- ✅ iOS
+- ✅ JS
+
+Cited gotchas:
+- `Saveable` (state persistence helper) is a no-op on non-Android targets. **Affects Kiln's desktop target** — anything we wanted Compose `rememberSaveable` to survive across (e.g., desktop window resize? process restart?) needs explicit state restoration. For Now Playing this is mostly fine: the player itself owns playback state via `PlatformPlayer` (Item 13 decision), so saveable-state on the screen is mostly transient (scroll positions, animation state).
+- JS-specific: `asEventSinkFunction()` required for event sinks. **Not relevant to Kiln** — no JS target.
+
+Circuit's `samples/` directory on `main` confirms Compose-MP coverage: `star` (the canonical KMP demo), `bottom-navigation`, `kotlin-inject`, `interop`, `counter`, `tacos`, `tutorial`. The `star` sample is a multi-platform Wikipedia-style app exercising the full stack.
+
+**Strong signal — Slack's own dependency choices in `gradle/libs.versions.toml`:**
+
+Slack's stack closely mirrors Kiln's plan:
+
+| Dep | Slack's pin | Kiln's plan |
+|---|---|---|
+| Coil | `3.4.0` | `3.4.0` (Item 2 ✓ exact match) |
+| SQLDelight | `2.3.2` | `2.3.2` (Item 6 ✓ exact match) |
+| Molecule | `2.2.0` | `2.2.0` (this Item) |
+| Roborazzi | `1.60.0` | will be Item 7 pin candidate |
+| JB Compose | `1.10.3` | will be Item 1 just-in-time scaffold-time pin |
+| Kotlin | `2.3.21` | will be scaffold-time pin |
+| kotlinx-coroutines | `1.11.0` | scaffold-time pin |
+| kotlin-inject | `0.9.0` | matches spec §4 DI choice |
+| Android compileSdk | `36` | matches spec §2 |
+| JVM target | `11` | Kiln targets `21` (per CLAUDE.md hardware section) — newer, fine |
+
+**This is independent corroboration of the entire Kiln library stack from the project that originates Circuit.** When a library's own author project converges on the exact same companion libraries, that's the strongest possible signal of pattern coherence.
+
+**Version state:**
+
+Circuit:
+| Version | Date | Status |
+|---|---|---|
+| 0.33.1 | 2026-02-20 | **STABLE — pin this** |
+| 0.33.0 | 2026-02-11 | superseded |
+| 0.32.0 | 2026-01-14 | superseded |
+| 0.31.0 | 2025-11-05 | older |
+
+Molecule:
+| Version | Date | Status |
+|---|---|---|
+| 2.2.0 | 2025-09-24 | **STABLE — pin this** |
+| 2.1.0 | 2025-04-12 | older |
+| 2.0.0 | 2024-05-28 | older |
+
+**Maintenance signals:**
+- Circuit: 1,835 stars; Apache 2.0; last push 2026-05-18 (today at session time); 18 open issues; 3 stable releases in last 6 months — actively developed
+- Molecule: 2,191 stars; Apache 2.0; last push 2026-05-16 (2 days ago); 28 open issues; slower release cadence (~3-6 months between minors) but each release is well-considered. 2.2.0 stable since Sept 2025 suggests Molecule has reached API maturity
+
+**License compatibility:** Both Apache 2.0 — clean alignment with Kiln's Apache 2.0 license.
+
+**Sub-1.0 versioning caveat (Circuit specifically):**
+
+Circuit is at `0.33.1`, no `1.0` tag yet despite 3+ years of public release. This means Slack reserves the right to make breaking changes between minor versions. The risk for Kiln:
+- We pin `0.33.1` at MVP Session 1
+- By MVP Session 12-15 (Now Playing showcase work, months later), Circuit may be at `0.35.x` with breaking changes
+- Migration cost depends on what changes
+
+Mitigation: pin Circuit at adoption time (MVP Session 12-15), not now. The version landscape will be clearer then. The library is past the "1.0 imminent" stage but the 0.33.x line is API-stable across patch versions.
+
+**Architecture pattern — what we adopt:**
+
+Circuit's Presenter pattern is purely composable functions or classes that produce a `CircuitUiState`:
+
+```kotlin
+// State + events as data classes / sealed interfaces
+data class NowPlayingState(
+    val track: Track?,
+    val isPlaying: Boolean,
+    val positionMs: Long,
+    val queueContext: QueueContext,
+    val eventSink: (NowPlayingEvent) -> Unit
+) : CircuitUiState
+
+sealed interface NowPlayingEvent : CircuitUiEvent {
+    data object PlayPause : NowPlayingEvent
+    data class SeekTo(val positionMs: Long) : NowPlayingEvent
+    data object SkipNext : NowPlayingEvent
+    data object SkipPrevious : NowPlayingEvent
+    // ...
+}
+
+// Presenter as composable function
+@CircuitInject(NowPlayingScreen::class, AppScope::class)
+@Composable
+fun NowPlayingPresenter(
+    player: PlatformPlayer,
+    queueRepository: QueueRepository
+): NowPlayingState {
+    val state by player.state.collectAsState()
+    val position by player.position.collectAsState()
+    val queue by player.queue.collectAsState()
+    // …
+    return NowPlayingState(...) { event -> ... }
+}
+
+// UI as separate composable, takes only state
+@Composable
+fun NowPlayingUi(state: NowPlayingState) {
+    // pure UI; events sent via state.eventSink(...)
+}
+```
+
+This is the spec §4 "MVI pattern fits Now Playing's complex state space" architecture made concrete. Tests can run the Presenter in isolation against fake `PlatformPlayer` / `QueueRepository` flows — no Compose UI needed.
+
+**Compile-time `@ComposableTarget("presenter")` enforcement:** Circuit annotates `Presenter.present` so the compiler emits a warning if Compose UI is emitted inside a Presenter. Enable `allWarningsAsErrors` in the Kotlin compiler options for `:ui:components` to make this a hard failure.
+
+**Molecule's role and its desktop dispatcher question:**
+
+Molecule converts a `@Composable` function into a `StateFlow<T>`. The Android-canonical setup is:
+
+```kotlin
+CoroutineScope(AndroidUiDispatcher.Main).launchMolecule(mode = ContextClock) {
+    NowPlayingPresenter(...)
+}
+```
+
+But `AndroidUiDispatcher` is Android-only. **For Kiln's desktop target, the pattern is to provide the equivalent for the JVM target.** Two paths:
+
+| Path | Approach | Verdict |
+|---|---|---|
+| (A) `RecompositionMode.Immediate` on desktop | Use Immediate mode; recompose eagerly on every state change | Documented fallback; works without a frame clock; risk of redundant recompositions if state changes mid-frame |
+| (B) Custom `BroadcastFrameClock` driven by an OS timer | Wire a 60Hz BroadcastFrameClock against a coroutine scope; gives frame-synced behavior | More work; matches Android quality of recomposition timing |
+
+Recommendation: **start with `RecompositionMode.Immediate` on desktop**, profile during MVP Sessions 12-15 (Now Playing), upgrade to BroadcastFrameClock only if Immediate-mode recomposition causes visible jitter. For Now Playing specifically (track metadata + playback position updating ~10Hz), Immediate is almost certainly fine.
+
+Actually, for Now Playing under Circuit, Molecule may not even be strictly needed — Circuit's Presenter is already a `@Composable` function and Circuit's own runtime handles the recomposition cycle when it's mounted via `CircuitContent`. Molecule is primarily useful when you want a StateFlow *outside* the Compose tree (e.g., for a notification or a media-session callback that wants the same state without participating in Compose). For Kiln's Now Playing, the `PlatformPlayer` already exposes `StateFlow` directly; the Presenter consumes those flows.
+
+**Likely Kiln usage:**
+- Circuit: yes, full adoption in `:ui:components` for Now Playing
+- Molecule: optional. Probably not needed for the Now Playing showcase itself. Pinned in `libs.versions.toml` anyway because it pairs naturally with Circuit and may earn its keep elsewhere (e.g., MediaSession callbacks, lock-screen state)
+
+`libs.versions.toml` additions (planned at MVP Session 1-3 scaffold, finalized at MVP Session 12-15 adoption):
+
+```toml
+circuit  = "0.33.1"      # confirm latest stable at MVP Session 12
+molecule = "2.2.0"       # confirm latest stable at MVP Session 12
+
+circuit-foundation = { module = "com.slack.circuit:circuit-foundation", version.ref = "circuit" }
+circuit-runtime    = { module = "com.slack.circuit:circuit-runtime", version.ref = "circuit" }
+circuit-codegen-annotations = { module = "com.slack.circuit:circuit-codegen-annotations", version.ref = "circuit" }
+# circuit-codegen ksp processor added at MVP Session 12-15 if we want @CircuitInject codegen
+
+molecule-runtime = { module = "app.cash.molecule:molecule-runtime", version.ref = "molecule" }
+```
+
+### Decision
+
+**Adopt Circuit 0.33.1 for the Now Playing screen showcase in `:ui:components`.** Final pin at MVP Session 12-15 (the version landscape at adoption time may have moved; 0.33.x line is stable across patches).
+
+**Adopt Molecule 2.2.0 as an opt-in companion**, pinned in `libs.versions.toml` but not necessarily wired into the Now Playing flow. Earn its keep in future modules (MediaSession glue, etc.) if a "Compose presenter outside the Compose tree" pattern emerges.
+
+Key decisions:
+- `allWarningsAsErrors = true` in `:ui:components/build.gradle.kts` to enforce `@ComposableTarget("presenter")` checks
+- Use Circuit's Presenter-as-composable-function pattern (not the class form) for the Now Playing showcase — simpler, less ceremony, fits Bus-Factor-of-One readability
+- Skip Circuit's optional `@CircuitInject` codegen at first; the Now Playing presenter is a single class so manual wiring through kotlin-inject is fine. Re-evaluate at MVP Session 12-15 if multiple Circuit presenters appear
+- `Saveable` no-op-on-non-Android caveat: state restoration on desktop relies on `PlatformPlayer.state` flows and on persisting non-UI state via SQLDelight / settings, not on Compose `rememberSaveable`
+
+### Soft-lock revisit triggers
+
+- Circuit hits a major breaking change between adoption-time pin and MVP Session 12-15 work — fall back one minor version or absorb the migration
+- Circuit's Presenter pattern proves heavier than the spec needs for Now Playing — drop it and use plain Compose state holders. Plan §4 anticipated this kind of soft-lock revisit ("Slack's recent activity on the libraries")
+- Molecule never earns its keep across the project — drop the dep at any cleanup pass (it adds ~50KB to the bundle)
+
+### Status
+
+**DECIDED.** Both libraries pinned in spec; final version confirmation at MVP Session 12-15 adoption time. Circuit usage scoped to Now Playing showcase per spec §4 / plan §3.2.
+
+---
+
 ## Next items in queue
 
-- (Remaining items 5, 7, 9, 10, 12 — to be tackled in subsequent Pre-MVP Research sessions)
+- (Remaining items 7, 9, 10, 12 — to be tackled in subsequent Pre-MVP Research sessions)
 
 Items still to research:
-- Item 5 — Circuit + Molecule on KMP (now applies to `:ui:components` Now Playing)
 - Item 7 — Compose-MP screenshot testing (Roborazzi maturity)
 - Item 9 — Java Sound capability survey on Windows
 - Item 10 — jpackage / Windows distribution
