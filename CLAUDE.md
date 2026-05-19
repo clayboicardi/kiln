@@ -4,7 +4,7 @@
 
 Kiln by Clayworks is a from-scratch Android + Windows Desktop music player. Personal-use audiophile player + developer portfolio piece. Owner is Clay Haworth (clayboicardi on GitHub) — analytically strong power user who directs AI to build.
 
-**Status as of 2026-05-19:** MVP Session 5 wrap (Media3ExoPlayerImpl.loadQueue resolves via MusicSource) + MVP Session 6 partial (AndroidAppGraph fully wired; DesktopAppGraph wired sans PlatformPlayer which awaits H5/JavaSoundPlayerImpl). Library scanner stack (Android MediaStore + JVM filesystem) fully implemented with 25 unit tests green. Pre-MVP gate cleared earlier this day. Repo public at https://github.com/clayboicardi/kiln; CI green on every push (Ubuntu Android + Windows Desktop). **Next: pick up at [`docs/sessions/2026-05-19-session-9-handoff.md`](docs/sessions/2026-05-19-session-9-handoff.md)** (4 pending items, ~17-25 hrs to end-to-end "play a FLAC" milestone).
+**Status as of 2026-05-19 (post-Session-9):** MVP Sessions 5 + 6 + 7 complete. H6 (JNA libFLAC bridge: vendoring + binding + STREAMINFO + decode + 24-bit packing + seek + JvmFlacDecoderImpl) + H5 (JavaSoundPlayerImpl + DesktopAppGraph player wiring) shipped. Both DI graphs (Android + Desktop) now expose the full chain including PlatformPlayer. **48 tests green** (25 :data:library + 23 :audio:playback). **Empirical FLAC smoke vs. Clay's D:\tiddl library: 10/10 decoded successfully.** Pre-MVP gate cleared earlier this day. Repo public at https://github.com/clayboicardi/kiln; CI green on every push. **Next: pick up at [`docs/sessions/2026-05-19-session-10-handoff.md`](docs/sessions/2026-05-19-session-10-handoff.md)** (H7 single-button play + H8 Pixel install — the vertical-slice milestone, ~2-4 hrs).
 
 ## Quick Navigation
 
@@ -12,7 +12,7 @@ Kiln by Clayworks is a from-scratch Android + Windows Desktop music player. Pers
 
 | If you're being asked to... | Read this first |
 |---|---|
-| Pick up the next session's work | `docs/sessions/2026-05-19-session-9-handoff.md` (4 pending items, recommended order, full file paths, critical gotchas) |
+| Pick up the next session's work | `docs/sessions/2026-05-19-session-10-handoff.md` (2 pending items, H7 vertical-slice + H8 Pixel install) |
 | Understand the design contract | `docs/superpowers/specs/2026-05-18-kiln-rebuild-design.md` |
 | Plan or sequence work | `docs/superpowers/plans/2026-05-18-kiln-execution-plan.md` |
 | Continue Pre-MVP Research | `docs/decisions/2026-05-18-library-vetting.md` (append-only log) |
@@ -49,7 +49,7 @@ This project replaces JAMZ!!! at `C:\Users\chawo\Projects\JAMZ!!!\`. JAMZ was a 
 - **Don't batch multiple changes into one commit.**
 - **Don't add features beyond the spec's anti-roadmap (§11).** Explicitly cut: Tidal, Spatial Audio, AI/LLM features, cross-device handoff, MIDI controller for EQ, iOS, Linux, macOS, Wear, Tablet-optimized, Auto, Tag editing, Lyrics, Last.fm scrobbling, BT codec readouts, Podcasts.
 
-## Build/Dep Gotchas (discovered MVP Sessions 1-6)
+## Build/Dep Gotchas (discovered MVP Sessions 1-7)
 
 One-liners that would have prevented friction this past session. Skim before scaffold/build work.
 
@@ -81,6 +81,16 @@ One-liners that would have prevented friction this past session. Skim before sca
 - **Value-class type-tags `@JvmInline value class UserDataDir(val path: Path)` distinguish ambiguous JVM-type DI bindings.** When two `@get:Provides` constructor params would both be `Path`, kotlin-inject can't tell them apart. Wrap each in a distinct `@JvmInline value class` — zero runtime cost, compile-time disambiguation. See `app-desktop/.../desktop/di/DesktopAppGraph.kt`.
 - **`abstract val` on a kotlin-inject @Component must have a complete provider chain at KSP time.** Adding an abstract member without a provider chain reachable from constructor params + `@Provides` functions fails KSP. Intentionally omit the abstract member until the impl exists (DesktopAppGraph omits `player` until H5 lands).
 - **`Application.onCreate` is main-thread by Android contract** → safe place for `AndroidAppGraph::class.create(applicationContext)` since the Media3ExoPlayerImpl provider eventually runs on main thread (ExoPlayer single-thread-access rule). `KilnApplication` registers via `android:name=".KilnApplication"` in AndroidManifest.
+- **Vendored *.dll requires explicit !-exception in .gitignore.** The repo's `.gitignore` line 32 (`*.dll`) was added for future native-build output (AAudio/WASAPI phase-2b). Vendored libraries under `:audio:playback/src/desktopMain/resources/native/**` need !-exceptions or git will silently exclude them, leading to JAR-without-native-lib at runtime. Verify via `git check-ignore -v <path>` — empty output = NOT ignored = good.
+- **Kotlin packages can't safely use `native` as a segment** (Java reserves `native` as a keyword for native methods). Use `nativeio` (or similar) instead. Existing example: `audio/playback/src/desktopMain/.../nativeio/`.
+- **JNA Windows-canonical library names drop the `lib` prefix.** `Native.load("FLAC", ...)` looks for `FLAC.dll` on Windows, NOT `libFLAC.dll`. When vendoring Xiph's `libFLAC.dll`, extract the temp copy as `FLAC.dll` so JNA's name resolution finds it. NativeLibraryLoader does this rename automatically.
+- **JNA callbacks need strong references for the lifetime of the native handle.** libFLAC stores raw C function pointers; if the JNI wrapper objects GC mid-decode, the next callback invocation crashes the JVM. Store callbacks as fields on the decoder's owner class (`JvmFlacDecodedStream` does this for write/metadata/error callbacks).
+- **libFLAC's STREAMINFO union starts at offset 16 in FLAC__StreamMetadata.** Header layout: type(4) + is_last(4) + length(4) = 12, plus 4 bytes alignment padding (the union's largest natural alignment is 8 for uint64 total_samples). Use `metadataPtr.share(16)` to point a JNA Structure at the union body.
+- **libFLAC delivers samples as FLAC__int32 regardless of source bit depth.** Pack down to LE bytes per the declared bit depth. For 24-bit: take low 3 bytes (sign preserved via upper-byte mirroring — libFLAC sign-extends bit 23 into bits 24-31). Bulk read via `Pointer.getIntArray(0, blocksize)` per channel before interleaving — ~10× faster than per-sample getInt at 4096 blocksizes.
+- **`ffprobe + FLACs with embedded album art emit duplicate keys.** Without `-select_streams a:0`, ffprobe's default-format output runs through BOTH audio + picture streams, and the picture-stream's bit-depth (often 8) silently overwrites the audio's via key-collision. Always pin `-select_streams a:0` for FLAC introspection in scripts/tests.
+- **JUnit 4 @Test methods must return Unit.** `fun foo() = runBlocking { assertNotNull(x) }` breaks because assertNotNull returns T (the non-null value). Use `assertTrue(x != null, ...)` or `assertEquals(...)` (both return Unit) instead, OR add an explicit trailing `Unit`.
+- **Kotlin smart-cast can fail through `if (X !is Either.Right)` + lambda-containing branches.** `val r = X(); if (r !is Either.Right) { log.w { ... }; return }; r.value` may not smart-cast because the lambda in `log.w { ... }` defeats cast tracking. Use `when (X()) { is Either.Left -> { ...; return }; is Either.Right -> r.value }` — when-as-expression has cleaner smart-cast propagation.
+- **Kotlin's `internal` is module-scoped — separate Gradle modules can NOT access each other's `internal` members.** For DI graphs in `:app-desktop` consuming impls in `:audio:playback`: expose public top-level factory functions returning the public interface type, keeping the impl class itself internal. Existing pattern: `createJvmFlacDecoder(): Decoder` + `createJavaSoundPlayer(...): PlatformPlayer`.
 
 ## Workflow
 
