@@ -1,31 +1,39 @@
 // DesktopAppGraph — root kotlin-inject component for :app-desktop. Wires
-// the Source Protocol + LibraryScanner for the Desktop app.
+// the Source Protocol + LibraryScanner + PlatformPlayer for the Desktop app.
 //
-// Per Session 8 handoff H3 + scaffold prep §8. KSP generates a
+// Per Session 8 handoff H3 + Session 9 H5. KSP generates a
 // `DesktopAppGraph::class.create(userDataDir, scanFolders)` extension function
 // that returns a concrete implementation. Main.kt (at H7) instantiates the
 // graph once and holds it for the process lifetime.
 //
-// What's NOT yet wired: PlatformPlayer. JavaSoundPlayerImpl + the JNA libFLAC
-// decoder land at H5 + H6 (Session 9-10). Adding `abstract val player:
-// PlatformPlayer` here without a `@Provides` would fail KSP generation; the
-// member is intentionally omitted until the impls exist. When they do, add
-// the abstract member + a @Provides function returning JavaSoundPlayerImpl.
+// PlatformPlayer is JavaSoundPlayerImpl: javax.sound.sampled SourceDataLine
+// fed by Decoder→DecodedStream→AudioFrame Flow. Decoder is JvmFlacDecoderImpl
+// (JNA bridge to vendored Xiph libFLAC 1.5.0 BSD-3). audioDispatcher is a
+// single-thread MAX_PRIORITY executor — JavaSound's SourceDataLine isn't
+// documented as thread-safe; constraining all line ops to one thread is the
+// safe choice. Per spec §3.4 Concentric Modules.
 
 package com.clayworks.kiln.desktop.di
 
 import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
+import com.clayworks.kiln.audio.playback.Decoder
+import com.clayworks.kiln.audio.playback.PlatformPlayer
+import com.clayworks.kiln.audio.playback.createJavaSoundPlayer
+import com.clayworks.kiln.audio.playback.createJvmFlacDecoder
 import com.clayworks.kiln.data.library.db.KilnDatabase
 import com.clayworks.kiln.library.scan.JvmFilesystemScanner
 import com.clayworks.kiln.library.scan.LibraryScanner
 import com.clayworks.kiln.library.source.LocalLibrarySource
 import com.clayworks.kiln.library.source.MusicSource
-import kotlinx.coroutines.Dispatchers
-import me.tatarka.inject.annotations.Component
-import me.tatarka.inject.annotations.Provides
 import java.nio.file.Path
 import java.util.Properties
+import java.util.concurrent.Executors
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.asCoroutineDispatcher
+import me.tatarka.inject.annotations.Component
+import me.tatarka.inject.annotations.Provides
 
 /**
  * Type-tag for the user data directory (where kiln.db lives). Distinguishes
@@ -52,6 +60,7 @@ abstract class DesktopAppGraph(
 ) {
     abstract val musicSource: MusicSource
     abstract val scanner: LibraryScanner
+    abstract val player: PlatformPlayer
 
     /**
      * JdbcSqliteDriver with `schema = KilnDatabase.Schema` auto-creates the
@@ -89,4 +98,40 @@ abstract class DesktopAppGraph(
         db: KilnDatabase,
         driver: SqlDriver,
     ): LibraryScanner = JvmFilesystemScanner(scanFolders.paths, db, driver, Dispatchers.IO)
+
+    /**
+     * Single-thread MAX_PRIORITY executor backing the audio output pipeline.
+     * JavaSoundPlayerImpl marshals all SourceDataLine + DecodedStream calls
+     * through this dispatcher. Daemon thread so JVM exit isn't blocked by
+     * audio cleanup; MAX_PRIORITY because audio underruns are user-visible
+     * (clicks/pops) whereas the OS scheduler is otherwise free to deprioritize
+     * us.
+     */
+    @Singleton
+    @Provides
+    protected fun audioDispatcher(): CoroutineDispatcher =
+        Executors.newSingleThreadExecutor { runnable ->
+            Thread(runnable, "kiln-audio-out").apply {
+                priority = Thread.MAX_PRIORITY
+                isDaemon = true
+            }
+        }.asCoroutineDispatcher()
+
+    /**
+     * Desktop FLAC decoder via JNA + vendored libFLAC 1.5.0. The factory
+     * internally invokes LibFlacLoader.load() — idempotent across calls; the
+     * NativeLibraryLoader extract-DLL + System.load + jna.library.path setup
+     * happens once per JVM.
+     */
+    @Singleton
+    @Provides
+    protected fun decoder(): Decoder = createJvmFlacDecoder()
+
+    @Singleton
+    @Provides
+    protected fun player(
+        audioDispatcher: CoroutineDispatcher,
+        decoder: Decoder,
+        source: MusicSource,
+    ): PlatformPlayer = createJavaSoundPlayer(audioDispatcher, decoder, source)
 }
