@@ -3,14 +3,16 @@
 // becoming-noisy handling + MediaSession; observes ExoPlayer state via
 // Player.Listener and republishes through the PlatformPlayer StateFlows.
 //
-// H4 SCAFFOLDING per Session 7 handoff: the file compiles + ExoPlayer is
-// properly instantiated + state observation is live + controls
-// (play/pause/seek/skip/volume/repeat/shuffle/release) delegate to ExoPlayer.
-// What's STUBBED: loadQueue (needs MusicSource → Playable resolution; lands
-// at H7), KilnRenderersFactory injecting the AudioProcessor chain (lands
-// when :audio:dsp gets its first concrete processor at MVP Sessions 16-22),
-// and the MediaSessionService surface (deferred — MediaSession instance is
-// constructed but service binding is a separate file).
+// loadQueue resolves each MediaItem to a Playable via the injected MusicSource,
+// converts to androidx.media3.common.MediaItem, and hands the list to ExoPlayer
+// via setMediaItems + prepare. Items that fail to resolve are skipped with a
+// log warning; the published queue reflects only the resolved items so that
+// QueueState.currentIndex remains aligned with ExoPlayer's media-item indices.
+//
+// What's still STUBBED: KilnRenderersFactory injecting the AudioProcessor chain
+// (lands when :audio:dsp gets its first concrete processor at MVP Sessions
+// 16-22), and the MediaSessionService surface (deferred — MediaSession instance
+// is constructed but service binding is a separate file).
 //
 // All ExoPlayer methods are called via Dispatchers.Main.immediate per the
 // "ExoPlayer is single-thread accessed via its application looper" contract.
@@ -24,8 +26,10 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.MediaSession
+import arrow.core.Either
 import co.touchlab.kermit.Logger
 import com.clayworks.kiln.library.source.MediaItem
+import com.clayworks.kiln.library.source.MusicSource
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -45,6 +49,7 @@ private const val POSITION_TICK_MS = 250L
 
 class Media3ExoPlayerImpl(
     context: Context,
+    private val source: MusicSource,
 ) : PlatformPlayer {
 
     private val _state = MutableStateFlow<PlayerState>(PlayerState.Idle)
@@ -163,19 +168,47 @@ class Media3ExoPlayerImpl(
         startIndex: Int,
         autoPlay: Boolean,
     ) = withContext(Dispatchers.Main.immediate) {
-        // TODO(H7): resolve each MediaItem to a Playable via injected MusicSource,
-        // construct androidx.media3.common.MediaItem from playable.uri,
-        // exo.setMediaItems(...), exo.prepare(). Until that lands, just publish
-        // the queue snapshot so observers see the intended state.
-        _queue.value = QueueState(
-            items = items,
-            currentIndex = startIndex.coerceAtLeast(0).coerceAtMost(items.lastIndex.coerceAtLeast(0)),
-            repeatMode = _queue.value.repeatMode,
-            shuffleEnabled = _queue.value.shuffleEnabled,
-        )
-        if (autoPlay && items.isNotEmpty()) {
-            _state.value = PlayerState.Loading
+        _state.value = PlayerState.Loading
+
+        // Resolve each MediaItem to a Playable via the Source Protocol. Items
+        // that fail to resolve (file deleted, transient I/O error, etc.) are
+        // skipped — the published queue reflects only the items that will
+        // actually play, keeping currentIndex aligned with ExoPlayer's
+        // media-item indices.
+        val resolved: List<Pair<MediaItem, String>> = items.mapNotNull { item ->
+            when (val r = source.getPlayable(item.itemId)) {
+                is Either.Right -> item to r.value.uri
+                is Either.Left -> {
+                    log.w { "loadQueue: skipping ${item.itemId.value}: ${r.value}" }
+                    null
+                }
+            }
         }
+
+        val media3Items = resolved.map { (_, uri) ->
+            androidx.media3.common.MediaItem.fromUri(uri)
+        }
+
+        val resolvedItems = resolved.map { it.first }
+        val coercedStart = if (resolvedItems.isEmpty()) {
+            -1
+        } else {
+            startIndex.coerceIn(0, resolvedItems.lastIndex)
+        }
+
+        _queue.value = _queue.value.copy(
+            items = resolvedItems,
+            currentIndex = coercedStart,
+        )
+
+        if (media3Items.isEmpty()) {
+            _state.value = PlayerState.Idle
+            return@withContext
+        }
+
+        exo.setMediaItems(media3Items, coercedStart.coerceAtLeast(0), /* startPositionMs = */ 0L)
+        exo.prepare()
+        if (autoPlay) exo.play()
     }
 
     override suspend fun play() = withContext(Dispatchers.Main.immediate) {
