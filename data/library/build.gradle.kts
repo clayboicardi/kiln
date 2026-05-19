@@ -25,6 +25,7 @@ kotlin {
             implementation(libs.bundles.sqldelight.common)
             implementation(libs.kotlinx.coroutines.core)
             implementation(libs.kermit)
+            implementation(libs.arrow.core)  // Either<SourceError, X> in MusicSource per spec §3.3
         }
         commonTest.dependencies {
             implementation(libs.kotlin.test)

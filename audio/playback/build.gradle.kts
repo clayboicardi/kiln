@@ -14,6 +14,8 @@ kotlin {
         commonMain.dependencies {
             implementation(libs.kotlinx.coroutines.core)
             implementation(libs.kermit)
+            implementation(libs.arrow.core)  // Either<DecoderError, DecodedStream> in Decoder
+            implementation(project(":data:library"))  // MediaItem type used in Queue + PlatformPlayer
         }
         commonTest.dependencies {
             implementation(libs.kotlin.test)
