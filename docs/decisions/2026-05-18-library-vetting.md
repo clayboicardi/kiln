@@ -1074,12 +1074,136 @@ The decoder swap is contained by spec §13's `JvmFlacDecoderImpl` abstraction �
 
 ---
 
+## Item 10: jpackage / Windows distribution
+
+> **Plan reference:** Pre-MVP Research §2.1 item 10. Defines what shipping the Windows Desktop binary actually looks like — portable, installer, signing, etc.
+
+### Question
+
+How should Kiln distribute the Windows Desktop build? Specifically: (a) jpackage output options (MSI vs EXE installer vs portable app-image vs MSIX), (b) what code signing actually requires in 2026, (c) which path matches Kiln's MVP+phase-2 trajectory.
+
+### Method
+
+- WebSearch for current jpackage state under JDK 21 and Compose Multiplatform's `nativeDistributions` Gradle DSL wrapper
+- WebSearch for 2026 Windows code-signing requirements (hardware token, EV cert, SmartScreen reputation)
+- Cross-reference with Compose Multiplatform's official "Native distributions" doc
+
+### Findings
+
+**Compose Multiplatform wraps jpackage via Gradle DSL — `compose.desktop.application { nativeDistributions { … } }`.**
+
+Canonical block (from JetBrains docs):
+
+```kotlin
+compose.desktop {
+    application {
+        mainClass = "com.clayworks.kiln.desktop.MainKt"
+        nativeDistributions {
+            targetFormats(TargetFormat.AppImage, TargetFormat.Msi, TargetFormat.Exe)
+            packageName = "Kiln"
+            packageVersion = "1.0.0"
+            vendor = "Clay Haworth / Clayworks"
+            copyright = "Copyright (c) 2026 Clay Haworth. Licensed Apache 2.0."
+            windows {
+                console = false
+                perUserInstall = true   // no admin elevation required at install
+                shortcut = true          // Start Menu + desktop shortcut
+                menu = true              // Add to Windows menu group
+                upgradeUuid = "..."      // stable UUID for upgrade detection
+            }
+        }
+    }
+}
+```
+
+Task: `./gradlew packageDistributionForCurrentOS` produces all configured `targetFormats`.
+
+**Output options compared:**
+
+| Format | What it produces | Tradeoffs for Kiln |
+|---|---|---|
+| `TargetFormat.AppImage` | Portable directory bundle (zipped exe + bundled JRE; no install needed; user just runs it) | Easiest dev-loop output; no admin install; no auto-update; no Start menu entry. **First choice for MVP dogfooding** |
+| `TargetFormat.Msi` | Real Windows installer (.msi); registers in Programs & Features; supports file associations and shortcuts; per-machine or per-user | Requires WiX Toolset 3.x installed on the build machine (free; download from `wixtoolset.org`). Real install experience. **Choice for shipping** |
+| `TargetFormat.Exe` | NSIS-style EXE installer wrapping the same payload | Smaller than MSI; same dev-experience as AppImage but with install wizard. Less IT-friendly than MSI |
+| **MSIX** (NOT directly supported by jpackage) | Modern Windows app package format; auto-update via update services; sandboxed | **Out of scope.** jpackage does not produce MSIX as of JDK 21. Would require separate MSIX Packaging Tool step. Microsoft Store path. Not aligned with Kiln's "GitHub-released binary" approach |
+
+**Code-signing reality in 2026:**
+
+- **Standard code signing certificate** is sufficient to sign MSI and EXE installers — **NOT** EV required for the signing itself
+- **HOWEVER:** Certificate Authorities now require **hardware token storage** (USB key or HSM) for newly-issued code signing certs (CA/Browser Forum policy change ~mid-2023, fully enforced by 2026). This affects:
+  - Local signing: needs the hardware token physically attached to the dev machine (DigiCert, Sectigo, SSL.com all ship USB tokens)
+  - CI signing: needs a cloud HSM (Azure Key Vault, DigiCert KeyLocker, etc.) — extra complexity
+- **EV (Extended Validation) certificate** is needed to *immediately* bypass Microsoft SmartScreen's "Windows protected your PC" warning. Non-EV certs build reputation over downloads/time (typically takes weeks-to-months of downloads to clear)
+- **Timestamping is mandatory** — sign with `signtool sign /tr <RFC-3161-timestamp-server> /td sha256 /fd sha256 ...` so the signature remains valid after the cert expires
+- Costs in 2026:
+  - Standard code signing cert + USB token: ~$300-500/year (DigiCert, SSL.com, Sectigo)
+  - EV cert + token: ~$300-700/year (EV is more about validation rigor than ongoing cost)
+  - Self-signed cert: free but produces persistent SmartScreen warnings — fine for Clay's own dogfooding, **not fine for any user who isn't Clay**
+
+**Build-side dependencies:**
+
+- **WiX Toolset 3.x** required on the build machine for MSI output. Free; install via Chocolatey (`choco install wixtoolset`) or installer from `wixtoolset.org`. Set `WIX_HOME` env var so jpackage finds it
+- **JDK 21 with jpackage on PATH** — already a hardware/JDK requirement per CLAUDE.md
+- For signing: signtool.exe from Windows SDK; or use `jsign` (Java implementation of Authenticode — pure-Java alternative, no Windows SDK install needed) — `jsign` by ebourg is well-maintained and useful for CI on Linux runners that need to sign Windows binaries
+
+**JRE bundling — what ships:**
+
+jpackage uses `jlink` under the hood to produce a stripped minimal JRE that's bundled into the distribution. Typical Compose-MP desktop app weighs in around **60-90 MB compressed** (much of which is the JRE + Skia native libs for Compose rendering). Compose-MP's `nativeDistributions` block handles `modules` configuration:
+
+```kotlin
+nativeDistributions {
+    modules("java.sql", "java.naming")  // anything Kiln transitively needs from JDK modules
+}
+```
+
+For Kiln, the modules list will populate at MVP Session 1-3 once we know what the dependency graph pulls in.
+
+### Decision
+
+**Kiln Desktop ships through `compose.desktop.application` with `targetFormats(TargetFormat.AppImage, TargetFormat.Msi)`.**
+
+Per-phase progression:
+
+| Phase | Output formats | Code signing |
+|---|---|---|
+| MVP-1.0 dogfooding | AppImage only | **No signing.** Clay runs Kiln on his own desktop; SmartScreen warning is one-time-OK. Saves ~$300-500/year |
+| MVP-1.0 ship to GitHub Releases | AppImage + MSI | **No signing.** Public binary downloads expected to be near-zero; absorb the SmartScreen friction for the rare downloader |
+| Phase 2a Flight E (`v1.1.0-jamz-parity`) | AppImage + MSI | **Optional standard code signing.** Re-evaluate based on actual downloads + Clay's appetite for the cert annual fee. If Kiln picks up users beyond Clay, sign |
+| Phase 2b Flight G (library extraction) | AppImage + MSI | **Same as Phase 2a.** Code signing decision driven by user count, not arbitrary milestone |
+| Phase 3 differentiator | AppImage + MSI | **Same.** EV cert only if SmartScreen warnings become a real friction point |
+
+**Key choices:**
+
+- `perUserInstall = true` in the windows block — no admin elevation required; install path is `%LOCALAPPDATA%\Kiln`
+- `shortcut = true`, `menu = true` — proper Windows app experience
+- `upgradeUuid` set at MVP Session 1-3 (deterministic UUID, never changed across versions) — enables in-place upgrade detection by MSI
+- `console = false` — Kiln is a GUI app, no console window
+- MSIX **not pursued** at any phase (not on Microsoft Store roadmap; sideload signing pain not worth it for this project)
+
+### Just-in-time research deferred (before MVP Session 26-28)
+
+- Install WiX Toolset on the build machine and verify `packageMsi` task produces a working MSI on Clay's i5-13400F
+- Decide between `jsign` (pure-Java; works on any OS) vs. `signtool.exe` (Windows SDK; native Windows tool) — only matters when signing actually starts
+- Confirm Compose-MP `nativeDistributions` DSL hasn't broken on the Compose-MP stable version pinned at MVP Session 1
+- Generate the stable `upgradeUuid` (e.g., from `kiln-windows-upgrade` namespace UUIDv5) and commit it as a constant
+
+### Soft-lock revisit triggers
+
+- Kiln gets unexpected user adoption → revisit code signing immediately to avoid SmartScreen warnings deterring downloads
+- Microsoft tightens Windows publisher requirements (e.g., requires EV for all installers) → reactive signing setup
+- A user reports "Windows won't let me run Kiln" → file the SmartScreen reputation curve as a real concern
+
+### Status
+
+**DECIDED.** Compose Multiplatform `nativeDistributions` wraps jpackage; AppImage + MSI is the output mix; no code signing at MVP (acceptable SmartScreen friction for Clay's dogfooding scope). Re-evaluate signing decision when actual downloads materialize beyond Clay.
+
+---
+
 ## Next items in queue
 
-- (Remaining items 10, 12 — to be tackled in subsequent Pre-MVP Research sessions)
+- (Remaining item 12 — to be tackled in subsequent Pre-MVP Research sessions)
 
 Items still to research:
-- Item 10 — jpackage / Windows distribution
 - Item 12 — Compose MP Desktop LazyColumn 40k stress test (requires actual code spike)
 
 ---
