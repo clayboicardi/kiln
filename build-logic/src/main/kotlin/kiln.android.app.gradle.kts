@@ -1,0 +1,35 @@
+// kiln.android.app — Android application convention.
+// Applied to: :app-android.
+//
+// Pure Android module (not KMP) consuming KMP libraries via their androidTarget
+// artifacts. Uses Android-classic Compose (androidx.compose.*) via the Kotlin
+// Compose Compiler plugin.
+
+plugins {
+    id("com.android.application")
+    id("org.jetbrains.kotlin.android")
+    id("org.jetbrains.kotlin.plugin.compose")
+}
+
+android {
+    namespace = "com.clayworks.kiln"
+    compileSdk = 36
+    defaultConfig {
+        applicationId = "com.clayworks.kiln"
+        minSdk = 21
+        targetSdk = 36
+        versionCode = 1
+        versionName = "0.1.0-scaffold"
+    }
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_21
+        targetCompatibility = JavaVersion.VERSION_21
+    }
+    buildFeatures {
+        compose = true
+    }
+}
+
+kotlin {
+    jvmToolchain(21)
+}

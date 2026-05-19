@@ -156,6 +156,13 @@ kermit = { module = "co.touchlab:kermit", version.ref = "kermit" }
 # === Desktop utility ===
 appdirs = { module = "net.harawata:appdirs", version.ref = "appdirs" }
 
+# === Gradle plugins (as libraries — for build-logic precompiled script plugins) ===
+gradle-plugin-kotlin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
+gradle-plugin-kotlin-compose-compiler = { module = "org.jetbrains.kotlin:compose-compiler-gradle-plugin", version.ref = "kotlin" }
+gradle-plugin-android = { module = "com.android.tools.build:gradle", version.ref = "agp" }
+gradle-plugin-compose = { module = "org.jetbrains.compose:compose-gradle-plugin", version.ref = "jb-compose" }
+gradle-plugin-ksp = { module = "com.google.devtools.ksp:com.google.devtools.ksp.gradle.plugin", version.ref = "ksp" }
+
 [bundles]
 compose-mp-common = [
     "compose-foundation",

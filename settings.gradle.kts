@@ -3,7 +3,7 @@
 rootProject.name = "kiln"
 
 pluginManagement {
-    // includeBuild("build-logic") — added at MVP Session 1 Task #6 when build-logic/ lands
+    includeBuild("build-logic")
     repositories {
         gradlePluginPortal()
         google()
