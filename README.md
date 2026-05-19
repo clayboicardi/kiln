@@ -4,7 +4,7 @@ A from-scratch Android + Windows Desktop music player. Personal-use audiophile p
 
 ## Status
 
-**Pre-MVP Research phase as of 2026-05-18.** Not yet runnable. Repo scaffolded as docs-only; no Gradle setup yet.
+**Status as of 2026-05-19:** Pre-MVP Research complete (12 of 12 vetting items decided across Sessions 1-2). MVP Session 1 scaffold work in progress. Not yet runnable; Gradle KMP scaffold is the current focus.
 
 ## What this is
 
@@ -21,6 +21,7 @@ Key features (planned, in phase order):
 
 | Document | Purpose |
 |---|---|
+| [`docs/README.md`](docs/README.md) | Documentation index — navigation for the full docs set (decisions/, scaffold/, reference/, sessions/, superpowers/) |
 | [`docs/superpowers/specs/2026-05-18-kiln-rebuild-design.md`](docs/superpowers/specs/2026-05-18-kiln-rebuild-design.md) | Design contract — 9 strategic decisions, architecture, design system, MVP scope, phase progression, named patterns |
 | [`docs/superpowers/plans/2026-05-18-kiln-execution-plan.md`](docs/superpowers/plans/2026-05-18-kiln-execution-plan.md) | Execution plan — module-by-module build sequence, test infrastructure timeline, ship cadence, session handoff protocol |
 | [`docs/decisions/2026-05-18-library-vetting.md`](docs/decisions/2026-05-18-library-vetting.md) | Pre-MVP Research decision log (append-only) |
