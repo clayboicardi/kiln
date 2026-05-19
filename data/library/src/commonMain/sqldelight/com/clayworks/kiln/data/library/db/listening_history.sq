@@ -1,0 +1,38 @@
+-- Listening history per schema sketch §3.7. APPEND-ONLY: rows are immutable
+-- once written. No CASCADE on track_id — soft-delete on track preserves history.
+
+CREATE TABLE listening_history (
+    id                  INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    track_id            INTEGER NOT NULL REFERENCES track(id),
+    played_at_ms        INTEGER NOT NULL,
+    play_duration_ms    INTEGER NOT NULL,
+    completed           INTEGER NOT NULL DEFAULT 0,
+    source              TEXT    NOT NULL DEFAULT 'local'
+);
+
+CREATE INDEX history_played_at_desc
+    ON listening_history(played_at_ms DESC);
+
+-- Composite serves both "all listens for a track in reverse order" AND (via
+-- prefix) "all listens for a track".
+CREATE INDEX history_track_played_at_desc
+    ON listening_history(track_id, played_at_ms DESC);
+
+selectRecentHistory:
+SELECT * FROM listening_history
+ORDER BY played_at_ms DESC
+LIMIT :pageSize;
+
+selectHistoryForTrack:
+SELECT * FROM listening_history
+WHERE track_id = ?
+ORDER BY played_at_ms DESC
+LIMIT :pageSize;
+
+countPlaysForTrack:
+SELECT COUNT(*) FROM listening_history
+WHERE track_id = ?;
+
+insert:
+INSERT INTO listening_history(track_id, played_at_ms, play_duration_ms, completed, source)
+VALUES (?, ?, ?, ?, ?);

@@ -1,0 +1,145 @@
+-- Track table per schema sketch §3.3 — ~30 columns; the big one.
+-- Soft-delete via deleted_at_ms preserves listening_history references when
+-- files temporarily disappear (USB unplugged, cloud sync out of sync).
+
+CREATE TABLE track (
+    id                       INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    album_id                 INTEGER REFERENCES album(id),
+    artist_id                INTEGER NOT NULL REFERENCES artist(id),
+
+    title                    TEXT    NOT NULL,
+    title_sort               TEXT    NOT NULL,
+    duration_ms              INTEGER NOT NULL,
+    track_number             INTEGER,
+    disc_number              INTEGER,
+    year                     INTEGER,
+    date                     TEXT,
+    genre                    TEXT,
+    composer                 TEXT,
+    bpm                      INTEGER,
+
+    -- Audio format
+    codec                    TEXT    NOT NULL,
+    bitrate_kbps             INTEGER,
+    sample_rate_hz           INTEGER NOT NULL,
+    bit_depth                INTEGER,
+    channels                 INTEGER NOT NULL,
+
+    -- File location + change detection
+    file_path                TEXT    NOT NULL UNIQUE,
+    file_size_bytes          INTEGER NOT NULL,
+    file_mtime_ms            INTEGER NOT NULL,
+
+    -- ReplayGain (JAMZ-parity)
+    replay_gain_track_db     REAL    DEFAULT NULL,
+    replay_gain_album_db     REAL    DEFAULT NULL,
+    replay_gain_track_peak   REAL    DEFAULT NULL,
+    replay_gain_album_peak   REAL    DEFAULT NULL,
+
+    -- Embedded art
+    has_embedded_art         INTEGER NOT NULL DEFAULT 0,
+    art_path                 TEXT    DEFAULT NULL,
+
+    -- Provenance / audit
+    source                   TEXT    NOT NULL DEFAULT 'local',
+    date_added_ms            INTEGER NOT NULL,
+    date_modified_ms         INTEGER NOT NULL,
+    last_scanned_ms          INTEGER NOT NULL,
+    deleted_at_ms            INTEGER DEFAULT NULL,
+
+    -- Lazy stats
+    play_count               INTEGER NOT NULL DEFAULT 0,
+    skip_count               INTEGER NOT NULL DEFAULT 0,
+    last_played_ms           INTEGER DEFAULT NULL
+);
+
+-- All track-list indexes are PARTIAL — `WHERE deleted_at_ms IS NULL` is part
+-- of the index definition, so soft-deleted rows don't bloat the index.
+
+CREATE INDEX track_album_id           ON track(album_id) WHERE deleted_at_ms IS NULL;
+CREATE INDEX track_artist_id          ON track(artist_id) WHERE deleted_at_ms IS NULL;
+CREATE INDEX track_title_sort         ON track(title_sort) WHERE deleted_at_ms IS NULL;
+CREATE INDEX track_date_added_desc    ON track(date_added_ms DESC) WHERE deleted_at_ms IS NULL;
+CREATE INDEX track_last_played_desc   ON track(last_played_ms DESC) WHERE deleted_at_ms IS NULL AND last_played_ms IS NOT NULL;
+CREATE INDEX track_play_count_desc    ON track(play_count DESC) WHERE deleted_at_ms IS NULL AND play_count > 0;
+CREATE INDEX track_file_mtime_ms      ON track(file_mtime_ms) WHERE deleted_at_ms IS NULL;
+
+selectAll:
+SELECT * FROM track
+WHERE deleted_at_ms IS NULL
+ORDER BY title_sort
+LIMIT :pageSize OFFSET :pageOffset;
+
+selectById:
+SELECT * FROM track
+WHERE id = ? AND deleted_at_ms IS NULL;
+
+selectByAlbum:
+SELECT * FROM track
+WHERE album_id = ? AND deleted_at_ms IS NULL
+ORDER BY disc_number, track_number;
+
+selectByArtist:
+SELECT * FROM track
+WHERE artist_id = ? AND deleted_at_ms IS NULL
+ORDER BY title_sort
+LIMIT :pageSize OFFSET :pageOffset;
+
+selectByFilePath:
+SELECT * FROM track
+WHERE file_path = ?;
+
+selectRecentlyAdded:
+SELECT * FROM track
+WHERE deleted_at_ms IS NULL
+ORDER BY date_added_ms DESC
+LIMIT :pageSize;
+
+selectRecentlyPlayed:
+SELECT * FROM track
+WHERE deleted_at_ms IS NULL AND last_played_ms IS NOT NULL
+ORDER BY last_played_ms DESC
+LIMIT :pageSize;
+
+selectMostPlayed:
+SELECT * FROM track
+WHERE deleted_at_ms IS NULL AND play_count > 0
+ORDER BY play_count DESC
+LIMIT :pageSize;
+
+insert:
+INSERT INTO track(
+    album_id, artist_id, title, title_sort, duration_ms,
+    track_number, disc_number, year, date, genre, composer, bpm,
+    codec, bitrate_kbps, sample_rate_hz, bit_depth, channels,
+    file_path, file_size_bytes, file_mtime_ms,
+    replay_gain_track_db, replay_gain_album_db,
+    replay_gain_track_peak, replay_gain_album_peak,
+    has_embedded_art, art_path,
+    source, date_added_ms, date_modified_ms, last_scanned_ms
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+lastInsertRowId:
+SELECT last_insert_rowid();
+
+markPlayed:
+UPDATE track
+SET play_count = play_count + 1,
+    last_played_ms = :playedAtMs
+WHERE id = ?;
+
+markSkipped:
+UPDATE track
+SET skip_count = skip_count + 1
+WHERE id = ?;
+
+softDelete:
+UPDATE track
+SET deleted_at_ms = :deletedAtMs
+WHERE id = ?;
+
+reactivate:
+UPDATE track
+SET deleted_at_ms = NULL,
+    last_scanned_ms = :scannedAtMs
+WHERE id = ?;

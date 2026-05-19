@@ -1,0 +1,41 @@
+-- Playlist membership table per schema sketch §3.6.
+-- PK (playlist_id, position) covers ordered iteration (the hot read pattern).
+-- Same track may appear multiple times in a playlist (no UNIQUE on track_id).
+
+CREATE TABLE playlist_track (
+    playlist_id     INTEGER NOT NULL REFERENCES playlist(id) ON DELETE CASCADE,
+    track_id        INTEGER NOT NULL REFERENCES track(id),
+    position        INTEGER NOT NULL,
+    date_added_ms   INTEGER NOT NULL,
+
+    PRIMARY KEY (playlist_id, position)
+);
+
+-- For "what playlists is this track in?" reverse-lookup. Forward lookup uses PK.
+CREATE INDEX playlist_track_track_id ON playlist_track(track_id);
+
+selectTracksOfPlaylist:
+SELECT track.*
+FROM playlist_track
+INNER JOIN track ON playlist_track.track_id = track.id
+WHERE playlist_track.playlist_id = :playlistId
+  AND track.deleted_at_ms IS NULL
+ORDER BY playlist_track.position;
+
+selectPlaylistsContainingTrack:
+SELECT playlist.*
+FROM playlist_track
+INNER JOIN playlist ON playlist_track.playlist_id = playlist.id
+WHERE playlist_track.track_id = ?;
+
+insert:
+INSERT INTO playlist_track(playlist_id, track_id, position, date_added_ms)
+VALUES (?, ?, ?, ?);
+
+deleteFromPlaylist:
+DELETE FROM playlist_track
+WHERE playlist_id = ? AND position = ?;
+
+maxPositionInPlaylist:
+SELECT COALESCE(MAX(position), -1) FROM playlist_track
+WHERE playlist_id = ?;

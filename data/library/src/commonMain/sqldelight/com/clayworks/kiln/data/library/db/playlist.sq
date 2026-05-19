@@ -1,0 +1,45 @@
+-- Playlist table per schema sketch §3.5.
+-- sort_order stored on the playlist (not per-row); manual mode uses
+-- playlist_track.position, other modes sort by computed columns.
+
+CREATE TABLE playlist (
+    id                INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    name              TEXT    NOT NULL UNIQUE,
+    description       TEXT    DEFAULT NULL,
+    date_created_ms   INTEGER NOT NULL,
+    date_modified_ms  INTEGER NOT NULL,
+    sort_order        TEXT    NOT NULL DEFAULT 'manual'
+);
+
+selectAll:
+SELECT * FROM playlist
+ORDER BY name;
+
+selectById:
+SELECT * FROM playlist
+WHERE id = ?;
+
+selectByName:
+SELECT * FROM playlist
+WHERE name = ?;
+
+insert:
+INSERT INTO playlist(name, description, date_created_ms, date_modified_ms, sort_order)
+VALUES (?, ?, ?, ?, ?);
+
+lastInsertRowId:
+SELECT last_insert_rowid();
+
+updateName:
+UPDATE playlist
+SET name = ?, date_modified_ms = :modifiedAtMs
+WHERE id = ?;
+
+updateSortOrder:
+UPDATE playlist
+SET sort_order = ?, date_modified_ms = :modifiedAtMs
+WHERE id = ?;
+
+delete:
+DELETE FROM playlist
+WHERE id = ?;

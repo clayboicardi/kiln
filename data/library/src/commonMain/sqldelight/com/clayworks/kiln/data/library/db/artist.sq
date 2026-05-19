@@ -1,0 +1,38 @@
+-- Artist table per schema sketch §3.1.
+-- AUTOINCREMENT intentional: history rows reference artist IDs transitively;
+-- recycled IDs could corrupt attribution.
+
+CREATE TABLE artist (
+    id                       INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    name                     TEXT    NOT NULL,
+    name_sort                TEXT    NOT NULL,
+    musicbrainz_artist_id    TEXT    DEFAULT NULL
+);
+
+-- Dedup by (name_sort, mbid) with NULL mbid treated as empty for uniqueness.
+-- Two "John Smith" artists with distinct MBIDs are allowed; two with no MBID
+-- collide and get merged.
+CREATE UNIQUE INDEX artist_name_mbid_unique
+    ON artist(name_sort, COALESCE(musicbrainz_artist_id, ''));
+
+CREATE INDEX artist_name_sort
+    ON artist(name_sort);
+
+selectAll:
+SELECT * FROM artist
+ORDER BY name_sort;
+
+selectById:
+SELECT * FROM artist
+WHERE id = ?;
+
+selectByName:
+SELECT * FROM artist
+WHERE name_sort = ? AND COALESCE(musicbrainz_artist_id, '') = COALESCE(?, '');
+
+insert:
+INSERT INTO artist(name, name_sort, musicbrainz_artist_id)
+VALUES (?, ?, ?);
+
+lastInsertRowId:
+SELECT last_insert_rowid();

@@ -1,0 +1,55 @@
+-- Album table per schema sketch §3.2.
+-- artist_id is the ALBUM-ARTIST (not per-track artist; track.artist_id covers that).
+-- Compilations: "Various Artists" artist row with compilation=1 on the album.
+
+CREATE TABLE album (
+    id                       INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    artist_id                INTEGER NOT NULL REFERENCES artist(id),
+    name                     TEXT    NOT NULL,
+    name_sort                TEXT    NOT NULL,
+    year                     INTEGER,
+    date                     TEXT,
+    musicbrainz_release_id   TEXT    DEFAULT NULL,
+    catalog_number           TEXT    DEFAULT NULL,
+    label                    TEXT    DEFAULT NULL,
+    art_path                 TEXT    DEFAULT NULL,
+    compilation              INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE UNIQUE INDEX album_artist_name_unique
+    ON album(artist_id, name_sort);
+
+CREATE INDEX album_year_desc
+    ON album(year DESC);
+
+CREATE INDEX album_artist_id
+    ON album(artist_id);
+
+selectAll:
+SELECT * FROM album
+ORDER BY name_sort;
+
+selectAllOrderedByArtistThenAlbum:
+SELECT album.*
+FROM album
+INNER JOIN artist ON album.artist_id = artist.id
+ORDER BY artist.name_sort, album.name_sort
+LIMIT :pageSize OFFSET :pageOffset;
+
+selectById:
+SELECT * FROM album
+WHERE id = ?;
+
+selectByArtist:
+SELECT * FROM album
+WHERE artist_id = ?
+ORDER BY year DESC, name_sort;
+
+insert:
+INSERT INTO album(
+    artist_id, name, name_sort, year, date,
+    musicbrainz_release_id, catalog_number, label, art_path, compilation
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+lastInsertRowId:
+SELECT last_insert_rowid();

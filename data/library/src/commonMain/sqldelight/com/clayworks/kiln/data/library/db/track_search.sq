@@ -1,0 +1,33 @@
+-- FTS5 contentless virtual table per schema sketch §4.1.
+-- unicode61 + remove_diacritics 2 handles "Beyoncé" matching "Beyonce" etc.
+-- Population is APPLICATION-MANAGED (not trigger-managed) per §4.2 —
+-- LocalLibrarySource maintains the index in sync with track table writes.
+--
+-- Note: FTS5 maintenance commands ('delete', 'delete-all') use special syntax
+-- that SQLDelight's parser doesn't accept inline. Those operations are issued
+-- by LocalLibrarySource via raw driver.execute() when needed (rescan, etc.).
+
+CREATE VIRTUAL TABLE track_search USING fts5(
+    title,
+    album_name,
+    artist_name,
+    album_artist_name,
+    content='',
+    tokenize='unicode61 remove_diacritics 2'
+);
+
+-- FTS5 MATCH search. Caller sanitizes the query via FtsSanitize.kt before
+-- passing in (operators stripped + tokens quoted + trailing * for prefix).
+-- Returns matching track rows joined back from track table.
+searchTracks:
+SELECT track.*, bm25(track_search) AS match_score
+FROM track_search
+INNER JOIN track ON track.id = track_search.rowid
+WHERE track_search MATCH :ftsQuery
+  AND track.deleted_at_ms IS NULL
+ORDER BY match_score
+LIMIT :limit;
+
+insertSearchIndex:
+INSERT INTO track_search(rowid, title, album_name, artist_name, album_artist_name)
+VALUES (?, ?, ?, ?, ?);
