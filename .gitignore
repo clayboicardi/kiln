@@ -1,0 +1,48 @@
+# IDE
+.idea/
+.fleet/
+.vscode/
+*.iml
+*.ipr
+*.iws
+out/
+
+# Claude Code session-local state
+.claude/
+
+# Gradle (when added in MVP Sessions 1-3)
+.gradle/
+build/
+local.properties
+gradle/wrapper/dists/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+
+# Environment
+.env
+.env.local
+
+# Native build output (when AAudio/WASAPI phase-2b lands)
+*.dll
+*.so
+*.dylib
+cmake-build-*/
+
+# Keystores (Android, when signing comes in)
+*.jks
+*.keystore
+keystore.properties
+
+# Coverage reports
+htmlcov/
+coverage/
+.nyc_output/
+
+# JetBrains
+.kotlin/

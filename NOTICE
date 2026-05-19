@@ -1,0 +1,21 @@
+Kiln by Clayworks
+Copyright 2026 Clay Haworth (clayboicardi)
+
+This product is developed under the Clayworks brand by Clay Haworth.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+----
+
+This codebase is a clean re-derivation, NOT a derivative work of
+Gramophone (https://github.com/FoedusProgramme/Gramophone, GPL-3.0).
+No GPL-licensed code is carried over. Architecture and behavior choices
+are derived from specifications and first principles rather than from
+the Gramophone source code.
+
+The predecessor project JAMZ!!! (a Gramophone fork) lives separately at
+C:\Users\chawo\Projects\JAMZ!!! and is preserved as artifact / reference.
