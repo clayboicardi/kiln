@@ -31,7 +31,11 @@ sealed interface BrowseScope {
     data class TracksOfAlbum(val albumId: AlbumId) : BrowseScope
 
     /** Tracks by a specific artist (per-track artist, not album-artist). */
-    data class TracksOfArtist(val artistId: ArtistId) : BrowseScope
+    data class TracksOfArtist(
+        val artistId: ArtistId,
+        val pageSize: Int = 100,
+        val pageOffset: Int = 0,
+    ) : BrowseScope
 
     /** Albums by a specific artist (album-artist). */
     data class AlbumsOfArtist(val artistId: ArtistId) : BrowseScope
