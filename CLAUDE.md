@@ -4,7 +4,7 @@
 
 Kiln by Clayworks is a from-scratch Android + Windows Desktop music player. Personal-use audiophile player + developer portfolio piece. Owner is Clay Haworth (clayboicardi on GitHub) — analytically strong power user who directs AI to build.
 
-**Status as of 2026-05-18:** Pre-MVP Research **COMPLETE** (12 of 12 vetting items decided across 2 sessions). Plan §2.3 has the outcome tally. Repo scaffolded as docs-only; no Gradle setup yet. **Next gate: Clay's review + acknowledgment per plan §2.2 before MVP Session 1 scaffold starts.** MVP Sessions 1-3 (when ready) will set up the Gradle KMP scaffold and produce a "Hello Kiln" running on both Pixel + Windows.
+**Status as of 2026-05-19:** MVP Session 4 first half complete (vertical-slice contracts + SQLDelight schema + LocalLibrarySource skeleton). Pre-MVP gate cleared earlier this day. Repo public at https://github.com/clayboicardi/kiln; CI green on every push (Ubuntu Android + Windows Desktop). **Next: pick up at [`docs/sessions/2026-05-19-session-7-handoff.md`](docs/sessions/2026-05-19-session-7-handoff.md)** (7 pending items, ~32-46 hrs to end-to-end "play a FLAC" milestone).
 
 ## Quick Navigation
 
@@ -12,6 +12,7 @@ Kiln by Clayworks is a from-scratch Android + Windows Desktop music player. Pers
 
 | If you're being asked to... | Read this first |
 |---|---|
+| Pick up the next session's work | `docs/sessions/2026-05-19-session-7-handoff.md` (7 pending items, recommended order, full file paths, critical gotchas) |
 | Understand the design contract | `docs/superpowers/specs/2026-05-18-kiln-rebuild-design.md` |
 | Plan or sequence work | `docs/superpowers/plans/2026-05-18-kiln-execution-plan.md` |
 | Continue Pre-MVP Research | `docs/decisions/2026-05-18-library-vetting.md` (append-only log) |
@@ -31,7 +32,7 @@ Kiln by Clayworks is a from-scratch Android + Windows Desktop music player. Pers
 - **Targets:** Android (min SDK 23, compile SDK 36) + Windows Desktop (JVM 21). Mac/Linux/iOS not blocked architecturally but not planned. (minSdk revised 21 → 23 on 2026-05-19; see vetting log Item 1 addendum.)
 - **Language:** Kotlin 100% via Kotlin Multiplatform (KMP)
 - **UI:** Compose Multiplatform
-- **GitHub:** TBD — repo not yet created; planned name `clayboicardi/kiln` (or similar — Clay's call when scaffolded). For now: local-only git.
+- **GitHub:** `clayboicardi/kiln` public at https://github.com/clayboicardi/kiln (Apache 2.0). CI: `.github/workflows/build.yml` runs `:app-android:assembleDebug` on Ubuntu + `:app-desktop:assemble` on Windows on every push to main.
 
 ## Predecessor
 
@@ -47,6 +48,24 @@ This project replaces JAMZ!!! at `C:\Users\chawo\Projects\JAMZ!!!\`. JAMZ was a 
 - **Don't change hard locks (spec items 1, 3, 5, 6, 8, 9)** without strong reason — they ripple through other decisions.
 - **Don't batch multiple changes into one commit.**
 - **Don't add features beyond the spec's anti-roadmap (§11).** Explicitly cut: Tidal, Spatial Audio, AI/LLM features, cross-device handoff, MIDI controller for EQ, iOS, Linux, macOS, Wear, Tablet-optimized, Auto, Tag editing, Lyrics, Last.fm scrobbling, BT codec readouts, Podcasts.
+
+## Build/Dep Gotchas (discovered MVP Sessions 1-4)
+
+One-liners that would have prevented friction this past session. Skim before scaffold/build work.
+
+- AGP 9.0 dropped `org.jetbrains.kotlin.android` plugin — Kotlin support is built-in to AGP. Don't re-add it.
+- AGP 9.0 + KMP requires `com.android.kotlin.multiplatform.library` (NOT `com.android.library`) for `:audio:*`, `:data:*`, `:ui:*` KMP modules. New DSL: `kotlin { androidLibrary { compileSdk = 36; minSdk = 23; namespace = ... } }`.
+- Gradle 9.x: `include(":foo")` REQUIRES `./foo/` directory to exist at settings.gradle.kts evaluation. Empty dirs with `.gitkeep` work; non-existent dirs fail the build.
+- `jvm("desktop")` source sets are `desktopMain` / `desktopTest` (NOT `jvmMain` / `jvmTest`). Use the renamed forms in module build.gradle.kts.
+- App modules (`:app-android`, `:app-desktop`) need `implementation(libs.bundles.compose.mp.common)` directly — `:ui:*` modules expose Compose deps as `implementation` (not `api`), so they don't propagate via project deps.
+- `:app-desktop` additionally needs `implementation(compose.desktop.currentOs)` for platform-specific Skia + window toolkit jars.
+- SQLDelight type-narrows queries with `IS NOT NULL` filters on nullable columns — generates a custom row class (e.g., `SelectRecentlyPlayed` distinct from `Track`). Write a separate mapper for the narrowed type.
+- SQLDelight can't parse FTS5 control commands (`'delete-all'`, `'delete'`) inline. Issue those via raw `driver.execute(...)` in LocalLibrarySource, not as labeled `.sq` queries.
+- Use `kotlinx.coroutines.flow.transform { rows -> rows.forEach { emit(...) } }` for the `Flow<List<T>> → Flow<T>` bridge. Avoid custom helpers (receiver-inference quirks) and `flatMapConcat` (opt-in stability concerns).
+- `kmpalette 4.0.0-beta02` is NOT on Maven Central — only tagged on GitHub. Dep is commented out in `:ui:theme/build.gradle.kts`; resolution deferred to Phase 2a Flight A (JitPack OR roll-our-own per Item 3 addendum).
+- **minSdk = 23** (revised from 21 on 2026-05-19; Compose-MP 1.11 components-resources-android requires ≥23). See vetting log "Item 1 addendum: minSdk hard-lock revisit 21 → 23".
+- `upgradeUuid = "611fd94b-756e-561d-ba94-af658a225268"` is wired in `kiln.desktop.app` convention. **NEVER MODIFY** — future MSI upgrades depend on stability.
+- Clay's music library root is `D:\tiddl` (NOT `%USERPROFILE%\Music`) for any scan-folder default at MVP Session 26-28 Settings UI.
 
 ## Workflow
 
