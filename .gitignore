@@ -33,6 +33,10 @@ desktop.ini
 *.so
 *.dylib
 cmake-build-*/
+# Exception: vendored native libraries (BSD-3 libFLAC + future siblings)
+!audio/playback/src/desktopMain/resources/native/**/*.dll
+!audio/playback/src/desktopMain/resources/native/**/*.so
+!audio/playback/src/desktopMain/resources/native/**/*.dylib
 
 # Keystores (Android, when signing comes in)
 *.jks
