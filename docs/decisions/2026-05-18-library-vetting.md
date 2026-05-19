@@ -1386,6 +1386,119 @@ Session 2 (Items 2, 3, 5, 6, 7, 9, 10, 12 + the SQLDelight schema-sketch file): 
 
 ---
 
+## Item 9 follow-up: FLAC decoder deep-dive (session 2 addendum)
+
+> **Plan reference:** Item 9 above marked the FLAC decoder decision as PARTIALLY DECIDED with two viable paths (JustFLAC license-conditional vs JNI-libflac). This addendum revisits with a wider survey and a narrower recommendation.
+
+### Question
+
+Is there an Apache-2.0-compatible, hi-res-capable, actively-maintained pure-JVM FLAC decoder we missed in the initial Item 9 pass? If not, what's the cleanest path to JNI-libflac?
+
+### Method
+
+- Wider Maven Central + GitHub search for any Kotlin/Java FLAC decoder library
+- Repo-health checks via GitHub Releases API on every candidate
+- License verification (FLAC reference impl, candidate decoders, JNA)
+- Cross-reference with how JVM music players (Subsonic / Airsonic / Jellyfin) actually handle FLAC (spoiler: they don't — they transcode via subprocess)
+
+### Findings — the complete candidate matrix
+
+| Candidate | License | Hi-res (24/96+) | Maintenance | Effort | Verdict |
+|---|---|---|---|---|---|
+| **jflac** (`org.jflac:jflac-codec`) | LGPL-2.1 | **NO 24-bit** | Dead 10+ years | trivial | **DISQUALIFIED** — missing capability + LGPL concern for fresh-derivation |
+| **JustFLAC** (drogatkin fork) | **Unstated (no LICENSE file)** | Unverified 24-bit claim | 3 years stale (last 2023-05-09) | trivial | **DISQUALIFIED on license risk alone** for a portfolio-public Apache 2.0 project |
+| **nayuki/FLAC-library-Java** (NEW FIND) | **GPL-3.0** | **YES — 4 to 32 bit, all sample rates, all block sizes, seek tables** | Last commit 2022-09-12 (dormant but feature-complete) | trivial | **DISQUALIFIED by license incompatibility** with Kiln's Apache 2.0. Technically the best Java decoder available; copyleft blocks adoption |
+| **nguillaumin/jflac fork** | Unstated ("NOASSERTION") | Same jflac codebase | Dead since 2017-05-29 | trivial | **DISQUALIFIED** |
+| **hipxel/flac-decoder** (C + Kotlin bindings) | Unstated | Unknown | Dead since 2021-04-17, 4 stars | medium | **DISQUALIFIED** |
+| **javaFlacEncoder** | LGPL-2.1 | n/a — encoder only | active-ish | n/a | **N/A** (encoder not decoder) |
+| **korau** (pure-Kotlin audio lib) | varies | n/a — WAV/MP3/OGG only, no FLAC | active | n/a | **N/A** (no FLAC support) |
+| **Subsonic/Airsonic transcode pattern** | n/a | n/a | active | n/a | **N/A** (they use external `flac`/`ffmpeg` binaries for stream-transcode; Kiln plays direct, not transcoding) |
+| **VLCJ** (libvlc Java wrapper) | LGPL+GPL parts | yes | active | medium | **DISQUALIFIED** — requires VLC installed on user system; not a self-contained app dep |
+| **JAVE2 / Jaffree** (ffmpeg wrappers) | LGPL bundle | yes | active | medium | Heavy (~50 MB native bundle); subprocess overhead — **rejected** for audiophile direct-DSP scope |
+| **Bundled `ffmpeg.exe` subprocess** | LGPL (no `--enable-gpl`) | yes | active | medium | Reject same reasons as above — large native bundle; subprocess management surface |
+| **JNI / JNA to Xiph libFLAC 1.5.0** | **BSD-3-Clause** for libraries (Apache-2.0-compatible) | **YES — full FLAC spec** | **Active** (Xiph FLAC 1.5.0 released 2025-02-11; last commit 2026-05-08; 2,313 stars) | ~10-20 hrs | **RECOMMENDED MVP PATH** |
+| **Pure-Kotlin re-derivation from FLAC spec** | Apache 2.0 (we own it) | yes (would implement to full spec) | n/a | 1500-3000 lines of Kotlin (~80-150 hrs) | **Phase 2b candidate** — publishable as `:audio:decode-flac` library; not MVP scope |
+
+**Key new finding: nayuki/FLAC-library-Java exists and is technically the gold standard among pure-Java FLAC decoders**, but its **GPL-3.0 license is incompatible with Kiln's Apache 2.0 hard-lock** (spec item 8). Linking GPL-3.0 forces the entire codebase to be GPL-3.0 — exactly the carry-over problem Kiln re-derives from Gramophone to avoid.
+
+The existence of nayuki's library — written by a careful programmer, comprehensive, and STILL not viable for an Apache 2.0 project — is the proof that the pure-Java decoder ecosystem fundamentally lacks an Apache-2.0-compatible-and-hi-res-capable option. The market gap is real.
+
+### Xiph libFLAC verification
+
+- **Repo:** github.com/xiph/flac
+- **Latest stable:** FLAC 1.5.0 (2025-02-11)
+- **License for libraries** (libFLAC, libFLAC++): **BSD-3-Clause** — Apache-2.0-compatible
+- **License for command-line tools** (`flac`, `metaflac`): GPL — Kiln does NOT redistribute these, so GPL doesn't propagate
+- **License for docs:** GFDL-1.3 — irrelevant to binary linking
+- **Maintenance:** 2,313 stars, last commit 2026-05-08 (~10 days ago at session time), 71 open issues — actively maintained, mature reference implementation
+- **Pre-built Windows DLLs:** YES — Xiph ships MSVS 2022-built Win32 + Win64 binaries in the 1.5.0 release archive (~773 KB)
+- **Android:** Media3 ExoPlayer's FLAC extension already handles FLAC on Android natively. **Only the desktop side needs the libFLAC bridge.** The `:audio:playback/src/androidMain/` retains its `Media3ExoPlayerImpl` path; the `:audio:playback/src/jvmMain/` gets a JNA-libFLAC bridge
+
+### JNA vs raw JNI — sub-decision
+
+| Approach | C wrapper code required? | Effort | Performance overhead | License |
+|---|---|---|---|---|
+| Raw JNI to libFLAC | YES — write a C shim layer (~150-300 lines) to flatten libFLAC's stream-decoder callback model into a JVM-friendly interface | ~20 hrs total | Zero per-call overhead (native) | n/a |
+| **JNA (Java Native Access)** | **NO — pure Kotlin interface declarations matching libFLAC's public C API** | **~10-15 hrs total** | ~5-10% slower per call vs JNI; insignificant for streaming decode | **Apache 2.0** (`net.java.dev.jna:jna`) |
+
+**Recommendation: JNA.** Reasons:
+- ~5-10 hr effort savings vs writing the C wrapper
+- Stays in Kotlin/JVM territory — Bus-Factor-of-One friendly. Clay can read the JNA bridge code in 6 months without needing C/CMake knowledge
+- Per-call overhead is irrelevant for FLAC decode where each call processes thousands of samples
+- JNA is itself Apache 2.0 licensed; ~1 MB additional dep (small)
+- JNA is mature, well-known, decade-old library (Sun JNA → Oracle → community-maintained)
+
+JNA library coordinates:
+```toml
+jna = "5.14.0"   # latest stable; verify at MVP Session 4
+
+jna           = { module = "net.java.dev.jna:jna",         version.ref = "jna" }
+jna-platform  = { module = "net.java.dev.jna:jna-platform", version.ref = "jna" }
+```
+
+### Native binary bundling pattern
+
+**Plan for shipping libFLAC.dll alongside Kiln Desktop:**
+
+1. Pre-built `libFLAC.dll` (Win-x64) downloaded from xiph/flac 1.5.0 GitHub release, committed to `:audio:playback/src/jvmMain/resources/native/win-x64/libFLAC.dll`. Treat as a vendored binary.
+2. At runtime, Kotlin code extracts the DLL from the JAR to a temp directory (e.g., `${java.io.tmpdir}/kiln/libFLAC-1.5.0.dll`) and calls `System.load(path)` to register it before JNA Native.load(...) instantiates the libFLAC interface
+3. License attribution: ship `THIRD_PARTY_LICENSES.md` in the app bundle with the xiph/flac BSD-3 license text. Compose-MP's `nativeDistributions { includeAllModules.set(true) }` handles license inclusion in the bundled output
+4. Win-x86 (32-bit) not shipped initially — Kiln is x64-only on Windows desktop per Clay's hardware. Add Win-x86 fallback only if needed
+5. Future macOS / Linux desktop: build separate `.dylib` and `.so` from xiph/flac source; out of scope for MVP
+
+### Effort revision
+
+**Item 9 original estimate: ~10-15 hrs for JNI bridge.**
+
+**Revised with JNA path: ~10-15 hrs total**:
+- ~3 hrs: write Kotlin JNA interface declarations for libFLAC's stream decoder API (10-15 native functions)
+- ~3 hrs: native binary loading + extraction-from-JAR plumbing
+- ~3 hrs: Gradle wiring (vendor the DLL, set up resource paths, configure jpackage to include native dir)
+- ~3 hrs: smoke testing on Clay's hardware with diverse FLAC files (16/44, 24/96, 24/192)
+- ~3 hrs: error handling (corrupt FLAC, missing DLL, JNA Native.load failure)
+
+Lands in MVP Session 4-7 (`:audio:playback` vertical slice). The `JvmFlacDecoderImpl` per spec §13 abstraction is where this lives.
+
+### Soft-lock revisit triggers (updated)
+
+- libFLAC bridge fails on any of Clay's hi-res FLAC files at MVP Session 4-7 → file upstream issue with xiph/flac (extremely unlikely; reference implementation handles everything in the spec)
+- Future macOS/Linux target appears → build `.dylib` and `.so` artifacts from xiph/flac source
+- Phase 2b kicks off the pure-Kotlin re-derivation as a published `:audio:decode-flac` library — this is the "Bus-Factor-of-One library showcase" candidate, not a forced migration
+
+### Updated status
+
+**DECIDED.** JNA + Xiph libFLAC 1.5.0 (BSD-3) is the MVP FLAC decoder path. **Supersedes** Item 9's "JustFLAC license-conditional vs JNI-libflac" hedge. The decoder choice is now firm.
+
+The original Item 9 "PARTIALLY DECIDED" status applied to the FLAC-decoder portion only; the Java Sound output portion was already firm. With this addendum, **the entire Item 9 is now fully DECIDED**.
+
+Pre-MVP Research final tally: **12 of 12 items fully decided.**
+
+### Engram + commit cross-reference
+
+This deep-dive follow-up commit supersedes the JustFLAC mention in commit `317e950` for guidance purposes. The commit itself stays in history; the recommendation is updated here.
+
+---
+
 ## Session 1 summary
 
 **Date:** 2026-05-18
