@@ -176,9 +176,18 @@ internal class JavaSoundPlayerImpl(
         // blocking sourceLine.write() call in the playback loop. Line.start()
         // is thread-safe per javax.sound spec; setting _paused.value is
         // thread-safe via MutableStateFlow.
+        //
+        // runCatching wraps the start() call because there's a race window:
+        // between the `line?.takeUnless` read and the .start() call, a
+        // concurrent teardown (cancelCurrentPlayback / release) could close
+        // the line, leaving us to call .start() on a closed line which
+        // throws IllegalStateException. Logged + swallowed — if the line
+        // was torn down, the user-visible intent ("start playing") is
+        // already moot.
         if (released) return
         _paused.value = false
-        line?.takeUnless { it.isRunning }?.start()
+        runCatching { line?.takeUnless { it.isRunning }?.start() }
+            .onFailure { e -> log.w(e) { "play(): line.start() failed (likely concurrent teardown)" } }
         updateReadyState()
     }
 
@@ -187,9 +196,11 @@ internal class JavaSoundPlayerImpl(
         // loop also observes _paused via its `.first { !it }` gate and will
         // stop the line on its next iteration; calling line.stop() here
         // additionally is for instant-pause UX. Both are idempotent.
+        // runCatching guards the same race-against-teardown that play() handles.
         if (released) return
         _paused.value = true
-        line?.stop()
+        runCatching { line?.stop() }
+            .onFailure { e -> log.w(e) { "pause(): line.stop() failed (likely concurrent teardown)" } }
         updateReadyState()
     }
 
