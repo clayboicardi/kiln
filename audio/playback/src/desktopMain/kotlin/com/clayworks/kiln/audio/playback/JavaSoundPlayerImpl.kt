@@ -129,30 +129,46 @@ internal class JavaSoundPlayerImpl(
         cancelCurrentPlayback()
         _state.value = PlayerState.Loading
 
-        val resolved: List<Pair<MediaItem, Playable>> = items.mapNotNull { item ->
+        // Triple(originalIndex, item, playable) preserves the mapping from
+        // the user's pre-filter items list to the post-filter resolved list.
+        // Without it, a user clicking "play track 5" when track 2 failed to
+        // resolve would get track 6 (or worse, the clamped-to-last item).
+        val resolved: List<Triple<Int, MediaItem, Playable>> = items.mapIndexedNotNull { idx, item ->
             when (val r = source.getPlayable(item.itemId)) {
-                is Either.Right -> item to r.value
+                is Either.Right -> Triple(idx, item, r.value)
                 is Either.Left -> {
                     log.w { "loadQueue: skipping ${item.itemId.value}: ${r.value}" }
                     null
                 }
             }
         }
-        val resolvedItems = resolved.map { it.first }
+        val resolvedItems = resolved.map { it.second }
         if (resolved.isEmpty()) {
             _queue.value = _queue.value.copy(items = emptyList(), currentIndex = -1)
             _state.value = PlayerState.Idle
             return@withContext
         }
 
-        val coercedStart = startIndex.coerceIn(0, resolvedItems.lastIndex)
+        // Map user's startIndex (original-list space) to resolved-list space.
+        // - startIndex ≤ 0 → start at the first resolved item (safe default).
+        // - exact match found → start at that resolved index.
+        // - user's requested item failed to resolve → fall FORWARD to the next
+        //   surviving item (preserves "start at or after this position" intent).
+        // - no surviving item at or after startIndex → fall BACK to the last
+        //   surviving item (rather than wrap or clamp incorrectly).
+        val coercedStart = if (startIndex <= 0) {
+            0
+        } else {
+            val matchOrSuccessor = resolved.indexOfFirst { (originalIdx, _, _) -> originalIdx >= startIndex }
+            if (matchOrSuccessor != -1) matchOrSuccessor else resolvedItems.lastIndex
+        }
         _queue.value = _queue.value.copy(items = resolvedItems, currentIndex = coercedStart)
 
         // Pass the already-resolved Playable for the start item to avoid the
         // redundant getPlayable round-trip in startPlaybackForCurrentIndex.
         // Skip-next/prev/skipTo paths still resolve on demand because they
         // target a different item than the originally-loaded start.
-        startPlaybackForCurrentIndex(autoPlay, preResolved = resolved[coercedStart].second)
+        startPlaybackForCurrentIndex(autoPlay, preResolved = resolved[coercedStart].third)
     }
 
     override suspend fun play() {
