@@ -681,3 +681,55 @@ All version dates verified 2026-05-21 via GitHub MCP `get_latest_release` / `lis
 ---
 
 **Authoring note:** This document is canonical for the tooling-stack decision as of 2026-05-21. Append addenda below if revisions are warranted in future sessions; do not edit prior content in-place (per CLAUDE.md "Append-only Decision Log" pattern). Cross-reference any FFM/Panama migration prep with `docs/decisions/2026-05-18-library-vetting.md` Item 9.
+
+---
+
+## Addendum 2026-05-21 (later same day): kotlin-lsp DEFERRED pending upstream fix
+
+**Status change:** kotlin-lsp goes from "Tier 1, install now" to **"DEFERRED — install ready, runtime blocked by upstream analyzer bug."** Install + setup are complete and committed; only the LSP-call path fails.
+
+### Diagnostic trail (chronological)
+
+1. **First test session (post-`af0de49`):** `LSP documentSymbol` → instant `ENOENT: uv_spawn 'kotlin-lsp'`. Plugin's binary-name expectation not met on PATH.
+2. **First fix attempt (`dae321e`):** added `bin\kotlin-lsp.cmd` wrapper. Failed identically — libuv's `uv_spawn` on Windows doesn't consult PATHEXT for `.cmd`/`.bat`, only auto-appends `.exe`.
+3. **Real spawn fix (`7628685`):** hard link `bin\kotlin-lsp.exe` → `bin\intellij-server.exe`. Verified `where.exe kotlin-lsp` resolves to the `.exe`; `kotlin-lsp --version` returns `LS-262.4739.0`. Manual invocation works end-to-end.
+4. **Second test session:** spawn now succeeds, but server init hits `LSP server 'plugin:kotlin-lsp:kotlin-lsp' timed out after 120000ms during initialization`. Server JVM stays alive after CC's pipe-close — 35-minute zombie consuming 1.5 GB but only ~5% average CPU (NOT actively indexing). `%LocalAppData%\JetBrains\kotlin-server2026.2\` never populated.
+5. **Heap bump (uncommitted vmoptions edit):** `-Xms128m → -Xms512m`, `-Xmx2048m → -Xmx6144m`. Zombie killed. Backup at `intellij-server.exe.vmoptions.pre-heap-bump.bak`.
+6. **Third test session:** init now completes within timeout (heap bump fixed the perf cliff), but the LSP call returns `'kotlin.Nothing' does not have instances` — an internal analyzer error in kotlin-lsp v262.4739.0. Reaches a type-resolution path that materializes Kotlin's bottom type (`Nothing`) where a concrete type was expected. Likely triggered by KSP-generated code (kotlin-inject `*::class.create()`, SQLDelight `Database.Schema`, Compose Compiler generated state-trackers) appearing in commonMain.
+
+### Why deferred (not abandoned)
+
+The Anthropic plugin's binary-name convention is fixed, the hard-link approach is durable, and the heap requirement is documented. The remaining blocker is **squarely upstream** in JetBrains/kotlin-lsp's analyzer. Nothing on Kiln's side needs to change for the LSP to start working — when upstream fixes the analyzer crash, the existing install will Just Work.
+
+### What's been preserved for the resumption case
+
+- All install steps documented (Tier 0 winget + Tier 1 hard link)
+- Heap-bump kept in `intellij-server.exe.vmoptions` (Kiln's scale needs it regardless of upstream fix)
+- `kiln/.claude/settings.json` keeps plugin enabled — no churn needed
+- `kiln/.mcp.json` dbhub remains active (independent of LSP state)
+
+### Resumption checklist (future session)
+
+When kotlin-lsp ships a release that resolves the analyzer bug, recommended re-test:
+
+1. Download new ZIP from <https://github.com/Kotlin/kotlin-lsp/releases>, replace `C:\Users\chawo\tools\kotlin-lsp\` contents
+2. Re-create the hard link: `New-Item -ItemType HardLink -Path bin\kotlin-lsp.exe -Target bin\intellij-server.exe` (re-applies; the prior link is broken by the ZIP overwrite)
+3. Confirm vmoptions still has `-Xmx6144m` (the JetBrains ZIP overwrites this; re-apply if needed)
+4. Fresh CC session in Kiln → `LSP documentSymbol` on any `.kt` file
+5. If it works: update this addendum's status to "RESOLVED"; document the version that fixed it
+6. If it fails with the same `kotlin.Nothing` error: keep deferred, post on the upstream tracking issue
+
+### Upstream tracking issues to watch
+
+- <https://github.com/Kotlin/kotlin-lsp/issues> — search for "Nothing does not have instances" + "KMP" + "KSP-generated" before filing a new one
+- Release notes for kotlin-lsp v262.4740+ — watch for analyzer fixes in the changelog
+- If no existing issue matches, worth filing with a Kiln-sized KMP repro (`./gradlew :app-desktop:assemble` + minimal commonMain file triggering the crash). Kiln is on GitHub public — easy reference repo for upstream reproduction.
+
+### What we got from the exercise anyway
+
+- Documented the Windows-spawn extension-resolution gotcha (`uv_spawn` doesn't see `.cmd`) — applies to any `*-lsp@claude-plugins-official` plugin on Windows. Saves future setups from this rabbit hole.
+- Captured Anthropic's plugin convention (slug-as-command-name) in engram memory + this doc. Reusable for the next LSP plugin enable.
+- Heap-requirement empirically validated for Kiln's scale — sticks in vmoptions regardless of when the analyzer bug is fixed.
+- Three real commits land the install + diagnosis: `7628685` (hard link), the dbhub activation `c5a69a9`, and this addendum.
+
+**For now, dev continues without kotlin-lsp.** Read/Grep/Glob plus the active dbhub MCP carry the day; Phase 2a + skill authoring + project review are unblocked.
