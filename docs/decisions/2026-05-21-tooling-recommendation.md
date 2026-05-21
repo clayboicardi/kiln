@@ -113,7 +113,31 @@ if (($userPath -split ';') -notcontains $kotlinBin) {
 }
 ```
 
-After running: open a **new** PowerShell session (current session's PATH is unchanged by the env-var write) and verify with `intellij-server.exe` — server speaks LSP over stdio so won't print a banner; you can confirm it launches without crashing by passing nothing and observing it idle, or by running `where.exe intellij-server.exe` which should resolve to the install path.
+**Step 2b — Create binary-name bridge (CRITICAL — discovered 2026-05-21):**
+
+Anthropic's `kotlin-lsp@claude-plugins-official` plugin spawns a binary literally named `kotlin-lsp` (no extension). On macOS this is provided by `brew install JetBrains/utils/kotlin-lsp`. On Windows, the JetBrains ZIP's `bin\` contains `intellij-server.exe` — NOT `kotlin-lsp.cmd`. There IS a deprecated `kotlin-lsp.cmd` at the install ROOT (not in `bin\`), but it warns about future removal.
+
+**Solution:** create a forward-compatible wrapper at `bin\kotlin-lsp.cmd`:
+
+```powershell
+@'
+@echo off
+set "DIR=%~dp0"
+"%DIR%intellij-server.exe" %*
+'@ | Set-Content -Path "C:\Users\chawo\tools\kotlin-lsp\bin\kotlin-lsp.cmd" -Encoding ASCII
+```
+
+This makes `where.exe kotlin-lsp` resolve correctly via the existing `bin\` PATH entry, and bypasses the upstream-deprecated root launcher. Survives whenever Kotlin/kotlin-lsp removes the legacy `kotlin-lsp.cmd`.
+
+After running: open a **new** PowerShell session and verify:
+```
+where.exe kotlin-lsp        # → C:\Users\chawo\tools\kotlin-lsp\bin\kotlin-lsp.cmd
+kotlin-lsp --version        # → LS-262.4739.0
+```
+
+If `where.exe` returns nothing, the wrapper wasn't created or `bin\` isn't on PATH. Re-check Step 2 PATH addition.
+
+**Failure mode this prevents:** Without this wrapper, the LSP plugin tries to spawn `kotlin-lsp` and fails with `ENOENT: uv_spawn 'kotlin-lsp'` before any index build can start. (Observed empirically when initially testing the install; the wrapper resolved it.)
 
 No winget/scoop bucket exists; manual download is the only Windows path. There is no auto-update; track new releases at <https://github.com/Kotlin/kotlin-lsp/releases>.
 
