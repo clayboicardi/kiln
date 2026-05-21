@@ -115,29 +115,32 @@ if (($userPath -split ';') -notcontains $kotlinBin) {
 
 **Step 2b — Create binary-name bridge (CRITICAL — discovered 2026-05-21):**
 
-Anthropic's `kotlin-lsp@claude-plugins-official` plugin spawns a binary literally named `kotlin-lsp` (no extension). On macOS this is provided by `brew install JetBrains/utils/kotlin-lsp`. On Windows, the JetBrains ZIP's `bin\` contains `intellij-server.exe` — NOT `kotlin-lsp.cmd`. There IS a deprecated `kotlin-lsp.cmd` at the install ROOT (not in `bin\`), but it warns about future removal.
+Anthropic's `kotlin-lsp@claude-plugins-official` plugin spawns a binary literally named `kotlin-lsp` (no extension). On macOS this is provided by `brew install JetBrains/utils/kotlin-lsp`. On Windows, the JetBrains ZIP's `bin\` contains `intellij-server.exe` — NOT `kotlin-lsp.exe`. There IS a deprecated `kotlin-lsp.cmd` at the install ROOT (not in `bin\`), but it warns about future removal.
 
-**Solution:** create a forward-compatible wrapper at `bin\kotlin-lsp.cmd`:
+**Critical Windows-spawn gotcha (verified empirically 2026-05-21):** libuv's `uv_spawn` (which CC's LSP tool uses) on Windows applies CreateProcess's extension-resolution rules: when given a bare name like `kotlin-lsp`, it tries the literal name then auto-appends `.exe`. It does **NOT** try `.cmd`, `.bat`, or other PATHEXT extensions. So a `.cmd` wrapper alone is invisible to the plugin's spawn — even though `where.exe` finds it. **You need a `.exe`-extension binary on PATH.**
+
+**Solution:** create a hard link `bin\kotlin-lsp.exe` pointing at the same content as `bin\intellij-server.exe`. Single file on disk, two names. No copy waste, no admin required (hard links — unlike symlinks — work without elevation on Windows when both endpoints are on the same NTFS volume).
 
 ```powershell
-@'
-@echo off
-set "DIR=%~dp0"
-"%DIR%intellij-server.exe" %*
-'@ | Set-Content -Path "C:\Users\chawo\tools\kotlin-lsp\bin\kotlin-lsp.cmd" -Encoding ASCII
+$src = "C:\Users\chawo\tools\kotlin-lsp\bin\intellij-server.exe"
+$dst = "C:\Users\chawo\tools\kotlin-lsp\bin\kotlin-lsp.exe"
+if (Test-Path $dst) { Remove-Item $dst -Force }
+$null = New-Item -ItemType HardLink -Path $dst -Target $src
 ```
 
-This makes `where.exe kotlin-lsp` resolve correctly via the existing `bin\` PATH entry, and bypasses the upstream-deprecated root launcher. Survives whenever Kotlin/kotlin-lsp removes the legacy `kotlin-lsp.cmd`.
-
-After running: open a **new** PowerShell session and verify:
+After running, open a **new** PowerShell session and verify:
 ```
-where.exe kotlin-lsp        # → C:\Users\chawo\tools\kotlin-lsp\bin\kotlin-lsp.cmd
+where.exe kotlin-lsp        # → C:\Users\chawo\tools\kotlin-lsp\bin\kotlin-lsp.exe
 kotlin-lsp --version        # → LS-262.4739.0
 ```
 
-If `where.exe` returns nothing, the wrapper wasn't created or `bin\` isn't on PATH. Re-check Step 2 PATH addition.
+If `where.exe` returns nothing, the link wasn't created or `bin\` isn't on PATH. Re-check Step 2 PATH addition.
 
-**Failure mode this prevents:** Without this wrapper, the LSP plugin tries to spawn `kotlin-lsp` and fails with `ENOENT: uv_spawn 'kotlin-lsp'` before any index build can start. (Observed empirically when initially testing the install; the wrapper resolved it.)
+**Optional supplemental** `bin\kotlin-lsp.cmd` wrapper for manual shell convenience (PATHEXT prefers `.EXE` over `.CMD`, so the hard link will win for both interactive use AND plugin spawn — the `.cmd` is purely redundant safety belt). Skippable.
+
+**Failure mode this prevents:** Without the `.exe` link, the LSP plugin spawns `kotlin-lsp` and fails immediately with `ENOENT: uv_spawn 'kotlin-lsp'` before any index build can start. Symptoms in CC test: the error appears INSTANTLY (not after a 30-2min index wait); a `.cmd`-only wrapper looks correct via `where.exe` but doesn't fix the spawn. (Observed empirically across two separate fresh CC test sessions; hard link finally resolved it.)
+
+**Forward compatibility note:** This hard link approach binds `kotlin-lsp.exe` to whatever `intellij-server.exe` is at the time of linking. If a future kotlin-lsp ZIP renames or relocates `intellij-server.exe`, recreate the hard link. The PowerShell snippet above is idempotent — safe to re-run.
 
 No winget/scoop bucket exists; manual download is the only Windows path. There is no auto-update; track new releases at <https://github.com/Kotlin/kotlin-lsp/releases>.
 
