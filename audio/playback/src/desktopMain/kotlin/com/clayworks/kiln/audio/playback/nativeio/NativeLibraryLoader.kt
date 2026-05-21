@@ -84,9 +84,14 @@ internal object NativeLibraryLoader {
         val osName = System.getProperty("os.name", "").lowercase(Locale.ROOT)
         val osArch = System.getProperty("os.arch", "").lowercase(Locale.ROOT)
         return when {
-            osName.contains("win") && (osArch.contains("64") || osArch == "amd64") -> "win-x64"
-            // Linux-x64 / macOS arm64 / macOS x64 — vendor the corresponding .so/.dylib
-            // and add the case here when those platforms enter scope (out of MVP per spec §2).
+            // x64 architecture canonical names: "amd64" (most JVMs) or "x86_64" (some).
+            // Earlier `osArch.contains("64")` was a false-positive on ARM64 Windows
+            // (osArch="aarch64"/"arm64" both contain "64") and would silently load
+            // the x64 DLL → crash on first FLAC playback.
+            osName.contains("win") && (osArch == "amd64" || osArch == "x86_64") -> "win-x64"
+            // Linux-x64 / macOS arm64 / macOS x64 / Windows-arm64 — vendor the
+            // corresponding .so/.dylib/.dll and add the case here when those
+            // platforms enter scope (out of MVP per spec §2).
             else -> error(
                 "Unsupported platform for vendored libFLAC: os.name='$osName', os.arch='$osArch'. " +
                     "MVP supports win-x64 only.",
