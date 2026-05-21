@@ -193,9 +193,13 @@ class Media3ExoPlayerImpl(
         // skipped — the published queue reflects only the items that will
         // actually play, keeping currentIndex aligned with ExoPlayer's
         // media-item indices.
-        val resolved: List<Pair<MediaItem, String>> = items.mapNotNull { item ->
+        //
+        // Triple(originalIndex, item, uri) preserves the mapping from user's
+        // pre-filter items list to the post-filter resolved list — see
+        // JavaSoundPlayerImpl for the analogous fix (U1) and rationale.
+        val resolved: List<Triple<Int, MediaItem, String>> = items.mapIndexedNotNull { idx, item ->
             when (val r = source.getPlayable(item.itemId)) {
-                is Either.Right -> item to r.value.uri
+                is Either.Right -> Triple(idx, item, r.value.uri)
                 is Either.Left -> {
                     log.w { "loadQueue: skipping ${item.itemId.value}: ${r.value}" }
                     null
@@ -203,15 +207,24 @@ class Media3ExoPlayerImpl(
             }
         }
 
-        val media3Items = resolved.map { (_, uri) ->
+        val media3Items = resolved.map { (_, _, uri) ->
             androidx.media3.common.MediaItem.fromUri(uri)
         }
 
-        val resolvedItems = resolved.map { it.first }
-        val coercedStart = if (resolvedItems.isEmpty()) {
-            -1
-        } else {
-            startIndex.coerceIn(0, resolvedItems.lastIndex)
+        val resolvedItems = resolved.map { it.second }
+        // Map user's startIndex (original-list space) to resolved-list space.
+        // - empty → -1
+        // - ≤ 0 → first resolved
+        // - exact match → that resolved index
+        // - user's item failed → fall FORWARD to next surviving
+        // - none at or after → fall BACK to last resolved
+        val coercedStart = when {
+            resolvedItems.isEmpty() -> -1
+            startIndex <= 0 -> 0
+            else -> {
+                val matchOrSuccessor = resolved.indexOfFirst { (originalIdx, _, _) -> originalIdx >= startIndex }
+                if (matchOrSuccessor != -1) matchOrSuccessor else resolvedItems.lastIndex
+            }
         }
 
         _queue.value = _queue.value.copy(
