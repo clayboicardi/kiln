@@ -25,7 +25,12 @@ kotlin {
             implementation(libs.bundles.sqldelight.common)
             implementation(libs.kotlinx.coroutines.core)
             implementation(libs.kermit)
-            implementation(libs.arrow.core)  // Either<SourceError, X> in MusicSource per spec §3.3
+            // arrow.core is `api` because Either<SourceError, X> + Either<ScanError, X>
+            // are part of the public surface of MusicSource and LibraryScanner.
+            // App-module consumers need to be able to pattern-match Either.Right /
+            // Either.Left when invoking these. Was implementation; H7 surfaced the
+            // gap when MainActivity / Main.kt tried to consume scanIncremental().
+            api(libs.arrow.core)
         }
         commonTest.dependencies {
             implementation(libs.kotlin.test)

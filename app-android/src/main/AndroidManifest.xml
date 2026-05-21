@@ -1,6 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!--
+        Permissions for library scanning (MediaStore.Audio.Media query).
+        Android 13+ (API 33) uses READ_MEDIA_AUDIO; earlier versions use
+        READ_EXTERNAL_STORAGE (capped at API 32 so newer devices don't
+        request the legacy permission).
+    -->
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+
     <application
         android:name="com.clayworks.kiln.KilnApplication"
         android:label="Kiln"
