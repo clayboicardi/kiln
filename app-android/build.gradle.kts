@@ -21,6 +21,12 @@ dependencies {
 
     // SQLDelight Android driver — graph constructs AndroidSqliteDriver directly.
     implementation(libs.sqldelight.android.driver)
+    // Bundled SQLite for Android — Session 10 H8 discovery: Pixel 10 / Android 16
+    // system SQLite reported "no such module: fts5" at schema-creation time,
+    // blocking the whole DB. requery's library bundles SQLite 3.49.x with FTS5
+    // enabled. AndroidAppGraph passes RequerySQLiteOpenHelperFactory to the
+    // SQLDelight driver so all DB I/O goes through the bundled SQLite.
+    implementation(libs.requery.sqlite.android)
 
     implementation(libs.bundles.android.media3)
 

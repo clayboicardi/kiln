@@ -32,6 +32,11 @@ molecule = "2.2.0"
 
 # === Data layer (Item 6 — Pre-MVP locked) ===
 sqldelight = "2.3.2"
+# Bundled SQLite for Android — vendor's system SQLite on Pixel 10 / Android 16
+# was missing the FTS5 module (Session 10 H8 discovery). Bundling guarantees
+# FTS5 + a known-version SQLite across device variance. ~3 MB APK cost.
+# 3.49.0 stable as of 2025-05-29.
+requery-sqlite-android = "3.49.0"
 
 # === DI ===
 kotlinInject = "0.9.0"                  # matches Slack circuit
@@ -112,6 +117,7 @@ molecule-runtime = { module = "app.cash.molecule:molecule-runtime", version.ref 
 sqldelight-coroutines-extensions = { module = "app.cash.sqldelight:coroutines-extensions", version.ref = "sqldelight" }
 sqldelight-primitive-adapters = { module = "app.cash.sqldelight:primitive-adapters", version.ref = "sqldelight" }
 sqldelight-android-driver = { module = "app.cash.sqldelight:android-driver", version.ref = "sqldelight" }
+requery-sqlite-android = { module = "com.github.requery:sqlite-android", version.ref = "requery-sqlite-android" }
 sqldelight-sqlite-driver = { module = "app.cash.sqldelight:sqlite-driver", version.ref = "sqldelight" }   # JVM Desktop
 
 # === DI (kotlin-inject) ===

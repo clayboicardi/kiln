@@ -15,6 +15,7 @@ import android.content.Context
 import androidx.sqlite.db.SupportSQLiteDatabase
 import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.driver.android.AndroidSqliteDriver
+import io.requery.android.database.sqlite.RequerySQLiteOpenHelperFactory
 import com.clayworks.kiln.audio.playback.Media3ExoPlayerImpl
 import com.clayworks.kiln.audio.playback.PlatformPlayer
 import com.clayworks.kiln.data.library.db.KilnDatabase
@@ -41,6 +42,13 @@ abstract class AndroidAppGraph(
      * every connection open — SQLite defaults FKs OFF, and the schema's
      * track→album→artist relationships rely on FK enforcement to catch
      * scanner bugs before they pollute the index. (Schema sketch §5.)
+     *
+     * `factory = RequerySQLiteOpenHelperFactory()` switches the underlying
+     * SQLite from Android's system one to a bundled SQLite 3.49.x. Required
+     * because Session 10 H8 on Pixel 10 / Android 16 surfaced
+     * "no such module: fts5" at schema-creation time — vendor builds
+     * don't always expose the FTS5 module to user-space queries despite
+     * AOSP's defaults. Bundled SQLite guarantees FTS5 across device variance.
      */
     @Singleton
     @Provides
@@ -48,6 +56,7 @@ abstract class AndroidAppGraph(
         schema = KilnDatabase.Schema,
         context = context,
         name = "kiln.db",
+        factory = RequerySQLiteOpenHelperFactory(),
         callback = object : AndroidSqliteDriver.Callback(KilnDatabase.Schema) {
             override fun onOpen(db: SupportSQLiteDatabase) {
                 super.onOpen(db)

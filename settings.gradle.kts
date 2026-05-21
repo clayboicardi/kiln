@@ -16,7 +16,16 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
-        // jitpack only if we ever consume a JitPack-only artifact; not at MVP
+        // JitPack — required by `com.github.requery:sqlite-android`
+        // (bundled SQLite for Android FTS5; Session 10 H8 finding —
+        // Pixel 10/Android 16 system SQLite was missing FTS5 module).
+        // Restrict to the requery group so JitPack isn't a fallback for
+        // everything else (faster + safer dependency resolution).
+        maven(url = "https://jitpack.io") {
+            content {
+                includeGroup("com.github.requery")
+            }
+        }
     }
 }
 
