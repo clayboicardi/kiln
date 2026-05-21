@@ -164,8 +164,12 @@ class JvmFilesystemScanner(
 
     private fun scanOneFile(path: Path, scanStartedMs: Long): Outcome {
         val pathStr = path.toString()
-        val mtime = Files.getLastModifiedTime(path).toMillis()
-        val size = Files.size(path)
+        // Single Files.readAttributes call instead of separate getLastModifiedTime + size
+        // — halves the syscalls per file (Gemini G5). For 40k-file libraries that's
+        // 40k fewer kernel transitions on the fast-path "unchanged file" check.
+        val attrs = Files.readAttributes(path, java.nio.file.attribute.BasicFileAttributes::class.java)
+        val mtime = attrs.lastModifiedTime().toMillis()
+        val size = attrs.size()
 
         val existing = db.trackQueries.selectByFilePath(pathStr).executeAsOneOrNull()
 
