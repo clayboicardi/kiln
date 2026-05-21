@@ -145,7 +145,19 @@ internal class JvmFlacDecodedStream(
     override suspend fun seekTo(positionMs: Long) {
         val si = streamInfoCaptured ?: return
         val sample = (positionMs * si.sampleRateHz) / 1000L
-        libFlac.FLAC__stream_decoder_seek_absolute(handle, sample)
+        val ok = libFlac.FLAC__stream_decoder_seek_absolute(handle, sample)
+        if (!ok) {
+            // libFLAC sets STATE_SEEK_ERROR on failed seek; the next
+            // process_single would throw via the existing G5 state-check, but
+            // surfacing here gives callers seek-specific diagnostics. Don't
+            // update positionMs to the failed target — preserve the pre-seek
+            // position in case the caller catches and recovers.
+            val state = libFlac.FLAC__stream_decoder_get_state(handle)
+            throw FlacDecodeException(
+                "FLAC__stream_decoder_seek_absolute failed (target sample=$sample, post-state=$state)",
+                state,
+            )
+        }
         this.positionMs = positionMs
         // Drop any frame in flight — caller will receive the post-seek frame next.
         pendingFrame = null

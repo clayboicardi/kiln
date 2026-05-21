@@ -201,7 +201,20 @@ internal class JavaSoundPlayerImpl(
 
     override suspend fun seekTo(positionMs: Long) = withContext(audioDispatcher) {
         if (released) return@withContext
-        currentStream?.seekTo(positionMs.coerceAtLeast(0L))
+        try {
+            currentStream?.seekTo(positionMs.coerceAtLeast(0L))
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            // Failed seek (e.g., libFLAC SEEK_ERROR from JvmFlacDecodedStream)
+            // surfaces here. Tear down + flip to Error so the user sees a
+            // clean state — without this catch, the exception would propagate
+            // to whatever scope invoked player.seekTo (UI scope at H7) and
+            // could cancel that scope silently.
+            log.w(e) { "seekTo failed — flipping to Error state" }
+            teardownActivePlayback(stopLineFirst = true)
+            _state.value = PlayerState.Error(PlayerError.DecodeFailed(e))
+            return@withContext
+        }
         line?.flush()
         _positionMs.value = positionMs.coerceAtLeast(0L)
     }
