@@ -75,9 +75,14 @@ SELECT * FROM track
 WHERE id = ? AND deleted_at_ms IS NULL;
 
 selectByAlbum:
+-- COALESCE handles NULL disc_number / track_number gracefully. In SQLite,
+-- NULL sorts BEFORE non-NULL in ASC order, which would put untagged tracks
+-- ABOVE disc 1. Treat null disc as disc 1 (overwhelming common case for
+-- single-disc albums that don't tag), and null track_number as 999999 so
+-- those untagged tracks sort to the END of the disc — better than the top.
 SELECT * FROM track
 WHERE album_id = ? AND deleted_at_ms IS NULL
-ORDER BY disc_number, track_number;
+ORDER BY COALESCE(disc_number, 1), COALESCE(track_number, 999999);
 
 selectByArtist:
 SELECT * FROM track
