@@ -40,11 +40,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
-import com.clayworks.kiln.audio.playback.PlatformPlayer
+import arrow.core.Either
 import com.clayworks.kiln.di.AndroidAppGraph
 import com.clayworks.kiln.library.scan.LibraryScanner
+import com.clayworks.kiln.library.scan.ScanError
+import com.clayworks.kiln.library.scan.ScanResult
 import com.clayworks.kiln.library.source.BrowseScope
-import com.clayworks.kiln.library.source.MusicSource
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
@@ -119,18 +120,32 @@ private fun PlayFirstTrackScreen(graph: AndroidAppGraph) {
                 scanStatus = "Scanning…"
                 lastError = null
                 coroutineScope.launch {
-                    runCatching {
-                        graph.scanner.scanLibrary { result ->
+                    graph.scanner.scanLibrary(
+                        onResult = { result ->
                             scanStatus = "Scan: ${result.tracksAdded} added, " +
                                 "${result.tracksUpdated} updated, " +
                                 "${result.tracksUnchanged} unchanged, " +
                                 "${result.tracksSoftDeleted} removed " +
                                 "(${result.durationMs}ms)"
-                        }
-                    }.onFailure { e ->
-                        lastError = "Scan failed: ${e.message}"
-                        scanStatus = "Scan: error"
-                    }
+                        },
+                        onError = { err ->
+                            scanStatus = "Scan: error"
+                            when (err) {
+                                is ScanError.PermissionDenied -> {
+                                    // Race: permission was revoked from Settings between
+                                    // checkSelfPermission and the MediaStore query. Re-show
+                                    // the Grant Permission UI instead of presenting it as a
+                                    // generic crash.
+                                    permissionGranted = false
+                                    lastError = "Permission revoked — re-grant via the button above."
+                                }
+                                is ScanError.IoError -> lastError = "Scan I/O error: ${err.cause.message}"
+                                is ScanError.MetadataParseError ->
+                                    lastError = "Tag parse failed for ${err.path}: ${err.cause.message}"
+                                is ScanError.Internal -> lastError = "Internal scan error: ${err.message}"
+                            }
+                        },
+                    )
                 }
             }) { Text("Scan Library") }
 
@@ -170,14 +185,18 @@ private suspend fun AndroidAppGraph.playFirstTrackFromBrowse() {
 }
 
 /**
- * Tiny convenience: call scanIncremental + invoke a callback with the result.
- * Pattern keeps the composable above simpler.
+ * Tiny convenience: call scanIncremental + fork onResult / onError. Forking via
+ * callbacks (instead of throwing on Either.Left) preserves the typed [ScanError]
+ * sub-type identity so callers can pattern-match on PermissionDenied vs IoError
+ * vs MetadataParseError vs Internal. Throwing collapses everything to a generic
+ * exception + string message, losing actionable distinction.
  */
 private suspend inline fun LibraryScanner.scanLibrary(
-    crossinline onResult: (com.clayworks.kiln.library.scan.ScanResult) -> Unit,
+    crossinline onResult: (ScanResult) -> Unit,
+    crossinline onError: (ScanError) -> Unit,
 ) {
     when (val result = scanIncremental()) {
-        is arrow.core.Either.Right -> onResult(result.value)
-        is arrow.core.Either.Left -> throw IllegalStateException("Scan error: ${result.value}")
+        is Either.Right -> onResult(result.value)
+        is Either.Left -> onError(result.value)
     }
 }

@@ -27,11 +27,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
+import arrow.core.Either
 import com.clayworks.kiln.desktop.di.DesktopAppGraph
 import com.clayworks.kiln.desktop.di.ScanFolders
 import com.clayworks.kiln.desktop.di.UserDataDir
 import com.clayworks.kiln.desktop.di.create
 import com.clayworks.kiln.library.scan.LibraryScanner
+import com.clayworks.kiln.library.scan.ScanError
 import com.clayworks.kiln.library.scan.ScanResult
 import com.clayworks.kiln.library.source.BrowseScope
 import java.nio.file.Path
@@ -39,20 +41,27 @@ import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 
-fun main() = application {
-    val graph = remember {
-        DesktopAppGraph::class.create(
-            userDataDir = UserDataDir(Path.of(System.getProperty("user.home"), ".kiln")),
-            scanFolders = ScanFolders(listOf(Path.of("D:\\tiddl"))),
-        )
-    }
-    Window(
-        onCloseRequest = ::exitApplication,
-        title = "Kiln by Clayworks",
-    ) {
-        MaterialTheme {
-            Surface(modifier = Modifier.fillMaxSize()) {
-                PlayFirstTrackScreen(graph)
+fun main() {
+    // Process-lifetime graph — hoisted OUTSIDE application { } so its scope is
+    // not Composable-bound. application { } is a Composable-scoped coroutine
+    // environment; remember{} inside it ties the graph to the Compose runtime
+    // and is not guaranteed identity across recomposition (especially future
+    // multi-window scenarios). The graph holds native resources (JavaSound +
+    // libFLAC); making its lifecycle explicit matches the Android side's
+    // KilnApplication ownership pattern.
+    val graph = DesktopAppGraph::class.create(
+        userDataDir = UserDataDir(Path.of(System.getProperty("user.home"), ".kiln")),
+        scanFolders = ScanFolders(listOf(Path.of("D:\\tiddl"))),
+    )
+    application {
+        Window(
+            onCloseRequest = ::exitApplication,
+            title = "Kiln by Clayworks",
+        ) {
+            MaterialTheme {
+                Surface(modifier = Modifier.fillMaxSize()) {
+                    PlayFirstTrackScreen(graph)
+                }
             }
         }
     }
@@ -79,18 +88,25 @@ private fun PlayFirstTrackScreen(graph: DesktopAppGraph) {
             scanStatus = "Scanning…"
             lastError = null
             coroutineScope.launch {
-                runCatching {
-                    graph.scanner.scanLibrary { result ->
+                graph.scanner.scanLibrary(
+                    onResult = { result ->
                         scanStatus = "Scan: ${result.tracksAdded} added, " +
                             "${result.tracksUpdated} updated, " +
                             "${result.tracksUnchanged} unchanged, " +
                             "${result.tracksSoftDeleted} removed " +
                             "(${result.durationMs}ms)"
-                    }
-                }.onFailure { e ->
-                    lastError = "Scan failed: ${e.message}"
-                    scanStatus = "Scan: error"
-                }
+                    },
+                    onError = { err ->
+                        scanStatus = "Scan: error"
+                        lastError = when (err) {
+                            is ScanError.PermissionDenied -> "Filesystem access denied: ${err.message}"
+                            is ScanError.IoError -> "Scan I/O error: ${err.cause.message}"
+                            is ScanError.MetadataParseError ->
+                                "Tag parse failed for ${err.path}: ${err.cause.message}"
+                            is ScanError.Internal -> "Internal scan error: ${err.message}"
+                        }
+                    },
+                )
             }
         }) { Text("Scan Library") }
 
@@ -123,11 +139,17 @@ private suspend fun DesktopAppGraph.playFirstTrackFromBrowse() {
     }
 }
 
+/**
+ * Tiny convenience: call scanIncremental + fork onResult / onError. Forking via
+ * callbacks (instead of throwing on Either.Left) preserves the typed [ScanError]
+ * sub-type identity so callers can pattern-match.
+ */
 private suspend inline fun LibraryScanner.scanLibrary(
     crossinline onResult: (ScanResult) -> Unit,
+    crossinline onError: (ScanError) -> Unit,
 ) {
     when (val result = scanIncremental()) {
-        is arrow.core.Either.Right -> onResult(result.value)
-        is arrow.core.Either.Left -> throw IllegalStateException("Scan error: ${result.value}")
+        is Either.Right -> onResult(result.value)
+        is Either.Left -> onError(result.value)
     }
 }

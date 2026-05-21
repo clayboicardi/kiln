@@ -18,5 +18,15 @@ class KilnApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         graph = AndroidAppGraph::class.create(applicationContext)
+        // Eagerly force Media3ExoPlayer instantiation. kotlin-inject's @Singleton
+        // providers are LAZY — without this read, the player would be created on
+        // first access (typically PlayFirstTrackScreen's collectAsState during
+        // Compose composition). Compose composition runs on the main thread so
+        // in practice this works, but ExoPlayer's single-thread-access invariant
+        // means ANY other access path (background service, instrumented test,
+        // future code) constructing the player off-main-thread would crash.
+        // Application.onCreate is guaranteed main-thread; reading graph.player
+        // here forces construction in the safe context.
+        graph.player
     }
 }
