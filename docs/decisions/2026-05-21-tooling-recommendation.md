@@ -31,16 +31,17 @@
 
 ### Tier 0 — Today (~10 min, zero risk)
 
-Six P0 CLIs via winget one-liner:
+Five P0 CLIs via PowerShell foreach (winget accepts only one `--id` per invocation, so loop):
 
 ```powershell
-winget install --id Genymobile.scrcpy `
-               --id Casey.Just `
-               --id MediaArea.MediaInfo.CLI `
-               --id DBBrowserForSQLite.DBBrowserForSQLite `
-               --id skylot.jadx `
-               --id IBotPeaches.APKTool
+foreach ($id in 'Genymobile.scrcpy','Casey.Just','MediaArea.MediaInfo','DBBrowserForSQLite.DBBrowserForSQLite','skylot.jadx') {
+    winget install --id $id --accept-source-agreements --accept-package-agreements --silent
+}
 ```
+
+**Notes on package IDs (verified 2026-05-21 via `winget search`):**
+- `MediaArea.MediaInfo` is the CLI build (NOT `MediaArea.MediaInfo.CLI` — that ID does not exist). `MediaArea.MediaInfo.GUI` is the GUI version.
+- **Apktool is NOT in winget.** Closest match is `AlexanderGorishnyak.APKEditorStudio` (GUI app, not the CLI). If you want apktool: `scoop install apktool` (requires scoop) or `choco install apktool` (requires chocolatey) or manual download from <https://bitbucket.org/iBotPeaches/apktool/downloads/>. jadx alone covers ~90% of APK-inspection use cases; defer apktool to Tier 3 / on-demand.
 
 Then drop a starter `justfile` at `C:\Users\chawo\Projects\kiln\justfile`:
 
@@ -77,18 +78,42 @@ devices:
 
 ### Tier 1 — This week (~30 min, low risk, highest leverage)
 
-**Step 1 — Install JDK 25 (separate from project Temurin 21):**
+**Step 1 — JDK 25 (OPTIONAL for kotlin-lsp; useful for FFM/jextract):**
 
 ```powershell
 winget install --id EclipseAdoptium.Temurin.25.JDK
 ```
 
+**Important:** kotlin-lsp's standalone Windows ZIP **bundles its own JetBrains Runtime (JBR) 25.0.2** at `jbr/bin/java.exe`. The server uses the bundled JBR per `product-info.json`'s `"javaExecutablePath": "jbr/bin/java.exe"`. So the separate system JDK 25 is **NOT required for kotlin-lsp to function**. Reasons to install JDK 25 anyway: (a) jextract (Phase 2b FFM/Panama exploration ships with JDK 22+), (b) future projects that want JDK 25 on PATH. If neither use case matters, skip this step entirely.
+
 **Step 2 — Install kotlin-lsp v262.4739.0:**
 
-1. Download `kotlin-server-262.4739.0.win.zip` from <https://github.com/Kotlin/kotlin-lsp/releases/tag/kotlin-lsp%2Fv262.4739.0>.
-2. Extract to `C:\Users\chawo\tools\kotlin-lsp\`.
-3. Add `C:\Users\chawo\tools\kotlin-lsp\bin\` to user `PATH` (System Properties → Environment Variables → User PATH → New).
-4. Verify: open new PowerShell, run `intellij-server.exe --help` — should print server CLI banner.
+The release-body of <https://github.com/Kotlin/kotlin-lsp/releases/tag/kotlin-lsp%2Fv262.4739.0> hosts downloads on JetBrains' CDN (NOT on GitHub release assets — `gh release view` returns `assets:[]`). Direct URLs:
+
+- ZIP: `https://download-cdn.jetbrains.com/kotlin-lsp/262.4739.0/kotlin-server-262.4739.0.win.zip` (~371 MB)
+- SHA256: `https://download-cdn.jetbrains.com/kotlin-lsp/262.4739.0/kotlin-server-262.4739.0.win.zip.sha256`
+
+PowerShell install script:
+
+```powershell
+New-Item -ItemType Directory -Force -Path "C:\Users\chawo\tools\kotlin-lsp" | Out-Null
+$zipPath = "$env:TEMP\kotlin-server-262.4739.0.win.zip"
+$url = "https://download-cdn.jetbrains.com/kotlin-lsp/262.4739.0/kotlin-server-262.4739.0.win.zip"
+Invoke-WebRequest -Uri $url -OutFile $zipPath -UseBasicParsing
+Invoke-WebRequest -Uri "$url.sha256" -OutFile "$zipPath.sha256" -UseBasicParsing
+$expectedSha = (Get-Content "$zipPath.sha256" -Raw).Trim().Split(' ')[0]
+$actualSha = (Get-FileHash $zipPath -Algorithm SHA256).Hash.ToLower()
+if ($expectedSha -ne $actualSha) { throw "SHA256 mismatch — abort" }
+Expand-Archive -Path $zipPath -DestinationPath "C:\Users\chawo\tools\kotlin-lsp" -Force
+# Add to user PATH (idempotent, reversible)
+$kotlinBin = "C:\Users\chawo\tools\kotlin-lsp\bin"
+$userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+if (($userPath -split ';') -notcontains $kotlinBin) {
+    [Environment]::SetEnvironmentVariable("Path", "$userPath;$kotlinBin", "User")
+}
+```
+
+After running: open a **new** PowerShell session (current session's PATH is unchanged by the env-var write) and verify with `intellij-server.exe` — server speaks LSP over stdio so won't print a banner; you can confirm it launches without crashing by passing nothing and observing it idle, or by running `where.exe intellij-server.exe` which should resolve to the install path.
 
 No winget/scoop bucket exists; manual download is the only Windows path. There is no auto-update; track new releases at <https://github.com/Kotlin/kotlin-lsp/releases>.
 
@@ -106,16 +131,18 @@ Create `C:\Users\chawo\Projects\kiln\.claude\settings.json`:
 
 **Step 4 — Workspace MCP file:**
 
-Create `C:\Users\chawo\Projects\kiln\.mcp.json`:
+Create `C:\Users\chawo\Projects\kiln\.mcp.json`. The dbhub entry is **deliberately commented out via a leading-underscore key** (`_kiln-db-desktop`) — uncomment by removing the underscore after first `./gradlew :app-desktop:run` populates `%AppData%\kiln\kiln.db`:
 
 ```json
 {
+  "_doc": "Workspace-scoped MCP servers for Kiln. See docs/decisions/2026-05-21-tooling-recommendation.md for rationale.",
+  "_dbhub_note": "kiln-db-desktop is COMMENTED OUT until ./gradlew :app-desktop:run has been invoked at least once to create %AppData%/kiln/kiln.db. After first run, remove the leading underscore from '_kiln-db-desktop' to activate.",
   "mcpServers": {
-    "kiln-db-desktop": {
+    "_kiln-db-desktop": {
       "command": "npx",
       "args": [
         "-y",
-        "@bytebase/dbhub@0.21.0",
+        "@bytebase/dbhub@0.21.2",
         "--transport", "stdio",
         "--max-rows", "1000",
         "--query-timeout", "10000",
@@ -130,8 +157,9 @@ Notes on this config:
 - **No `--readonly` flag** — Clay explicitly authorized write access. `execute_sql` will accept DDL/DML.
 - **`--max-rows 1000`** — bounds runaway SELECTs.
 - **`--query-timeout 10000`** — 10-second query timeout; aborts hung queries.
-- **Pinned version `@0.21.0`** — bytebase/dbhub has no GitHub releases tag (versioned via npm only). Verify latest at <https://www.npmjs.com/package/@bytebase/dbhub> before pinning; do NOT use `@latest` in this file to avoid silent breaking changes.
-- **DSN path** — `appdirs` resolves Kiln's desktop user-data-dir to `%AppData%\kiln\` on Windows; confirm by running `:app-desktop:run` once and checking where the DB lands. Adjust the DSN if the path differs.
+- **Pinned version `@0.21.2`** — latest npm as of 2026-05-21 (verified via `curl npmjs.org/@bytebase/dbhub`). bytebase/dbhub has no GitHub releases tag — npm is the source of truth.
+- **DSN path** — `appdirs` resolves Kiln's desktop user-data-dir to `%AppData%\kiln\` on Windows. Confirm at first `:app-desktop:run`; adjust the DSN if the path differs.
+- **Activation:** rename `"_kiln-db-desktop"` to `"kiln-db-desktop"` in `.mcp.json` after the DB file exists, then restart Claude Code.
 
 **Step 5 — Verify the chain:**
 
@@ -155,6 +183,7 @@ Three custom skills to live in `C:\Users\chawo\Projects\kiln\.claude\skills/`. F
 | **Maestro CLI** | Once `:app-android` has more than one screen — declarative Compose UI E2E in YAML. **Gemini's recommendation; the canonical modern Compose UI test framework.** | `curl -Ls "https://get.maestro.mobile.dev" \| bash` (run from WSL or Git Bash) |
 | `flac.exe` v1.5.0 | When kiln-flac-golden skill is authored | `winget install Xiph.FLAC` |
 | `ffmpeg` | Already installed per CLAUDE.md — verify with `ffmpeg -version` | N/A |
+| **Apktool** v3.0.2 | Smali decompilation / resource inspection beyond what jadx covers. NO winget package — use scoop or chocolatey | `scoop install apktool` OR `choco install apktool` OR manual: <https://bitbucket.org/iBotPeaches/apktool/downloads/> |
 
 ### Tier 4 — Phase 2a (Q3 2026) / Phase 2b (Q4 2026) — defer
 
@@ -543,18 +572,20 @@ These came up during research and deserve a dedicated decision-log entry (or a s
 Run these in order; each should succeed before proceeding to the next.
 
 ```powershell
-# 1. Verify P0 CLIs
+# 1. Verify P0 CLIs (new PowerShell session — winget updates PATH for new shells only)
 scrcpy --version          # → expects 4.0 or newer
 just --version            # → expects 1.51 or newer
 mediainfo --version       # → expects v26.05 or newer
-jadx --version            # → expects 1.5.5 or newer
-apktool --version         # → expects 3.0.2 or newer
+jadx-gui --version        # → expects 1.5.5 or newer (winget aliases the GUI as 'jadx-gui')
+sqlitebrowser --version   # DB Browser for SQLite (may not have --version; check Start Menu entry)
+# apktool — skip if not installed (no winget package); if installed via scoop/choco: apktool --version
 
-# 2. Verify JDK 25 for kotlin-lsp
+# 2. Verify JDK 25 (OPTIONAL — only if you installed via winget; not needed for kotlin-lsp)
 & 'C:\Program Files\Eclipse Adoptium\jdk-25\bin\java.exe' --version
 
-# 3. Verify kotlin-lsp on PATH
-intellij-server.exe --help
+# 3. Verify kotlin-lsp on PATH (kotlin-lsp uses its bundled JBR 25, not the system JDK 25)
+where.exe intellij-server.exe   # should resolve to C:\Users\chawo\tools\kotlin-lsp\bin\
+& 'C:\Users\chawo\tools\kotlin-lsp\jbr\bin\java.exe' --version  # confirms bundled JBR 25.0.2
 
 # 4. Verify justfile recipes work
 cd C:\Users\chawo\Projects\kiln
