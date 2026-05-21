@@ -7,8 +7,12 @@
 *.iws
 out/
 
-# Claude Code session-local state
-.claude/
+# Claude Code session-local state (transcripts, local overrides, custom skills until promoted)
+.claude/*
+# Exception: workspace-shared CC config (kotlin-lsp enable, etc.) — see docs/decisions/2026-05-21-tooling-recommendation.md
+!.claude/settings.json
+# Exception: workspace-shared skills (Tier 2 picks — once authored)
+!.claude/skills/
 
 # Gradle (when added in MVP Sessions 1-3)
 .gradle/
