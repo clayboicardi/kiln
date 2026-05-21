@@ -98,14 +98,23 @@ class JvmFilesystemScanner(
             val files = discoverAudioFiles()
             log.i { "discovered ${files.size} candidate file(s) across ${scanFolders.size} folder(s)" }
 
-            for (file in files) {
-                when (val outcome = scanOneFile(file, scanStartedMs)) {
-                    Outcome.Added -> added++
-                    Outcome.Updated -> updated++
-                    Outcome.Unchanged -> unchanged++
-                    is Outcome.ParseFailed -> {
-                        parseErrors++
-                        log.w(outcome.error) { "skipped ${file.name}: metadata parse failed" }
+            // ONE transaction wrapping the whole scan loop (Session 10 Gemini G2).
+            // Per-file transactions cost one disk sync each, so the original
+            // code issued ~40k syncs for Clay's library and blew the 5-min
+            // perf budget. SQLite handles a single long transaction over tens
+            // of thousands of inserts comfortably; the trade-off is that a
+            // mid-scan crash rolls back the whole pass (chunked batching is
+            // a Phase 2a follow-up if real-world scans hit issues).
+            db.transaction {
+                for (file in files) {
+                    when (val outcome = scanOneFile(file, scanStartedMs)) {
+                        Outcome.Added -> added++
+                        Outcome.Updated -> updated++
+                        Outcome.Unchanged -> unchanged++
+                        is Outcome.ParseFailed -> {
+                            parseErrors++
+                            log.w(outcome.error) { "skipped ${file.name}: metadata parse failed" }
+                        }
                     }
                 }
             }
@@ -176,7 +185,10 @@ class JvmFilesystemScanner(
             return Outcome.ParseFailed(e)
         }
 
-        db.transaction {
+        // Caller (runScan) holds the enclosing db.transaction — see the comment
+        // above the loop in runScan for the per-file-transaction → single-transaction
+        // refactor rationale.
+        run {
             val artistId = upsertArtist(tags.artist, tags.artistSort, tags.musicbrainzArtistId)
             val albumArtistId = tags.albumArtist?.let { albumArtist ->
                 upsertArtist(

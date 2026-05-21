@@ -68,14 +68,24 @@ class AndroidMediaStoreScanner(
 
             cursor.use { c ->
                 val cols = MediaCols.from(c)
-                while (c.moveToNext()) {
-                    when (val outcome = scanOneTrack(c, cols, scanStartedMs)) {
-                        Outcome.Added -> added++
-                        Outcome.Updated -> updated++
-                        Outcome.Unchanged -> unchanged++
-                        is Outcome.ParseFailed -> {
-                            parseErrors++
-                            log.w(outcome.error) { "skipped media id ${outcome.mediaId}: ${outcome.error.message}" }
+                // ONE transaction wrapping the whole scan loop (Session 10 Gemini G1).
+                // Per-track transactions cost one disk sync each, so the
+                // original code issued one sync per MediaStore row and blew
+                // the 5-min perf budget on libraries with 40k+ tracks.
+                // SQLite handles a single long transaction over tens of
+                // thousands of inserts comfortably; the trade-off is that a
+                // mid-scan crash rolls back the whole pass (chunked batching
+                // is a Phase 2a follow-up if real-world scans hit issues).
+                db.transaction {
+                    while (c.moveToNext()) {
+                        when (val outcome = scanOneTrack(c, cols, scanStartedMs)) {
+                            Outcome.Added -> added++
+                            Outcome.Updated -> updated++
+                            Outcome.Unchanged -> unchanged++
+                            is Outcome.ParseFailed -> {
+                                parseErrors++
+                                log.w(outcome.error) { "skipped media id ${outcome.mediaId}: ${outcome.error.message}" }
+                            }
                         }
                     }
                 }
@@ -149,7 +159,10 @@ class AndroidMediaStoreScanner(
             return Outcome.ParseFailed(mediaId, e)
         }
 
-        db.transaction {
+        // Caller (runScan) holds the enclosing db.transaction — see the comment
+        // above the cursor loop in runScan for the per-track-transaction → single-
+        // transaction refactor rationale.
+        run {
             val artistId = upsertArtist(tags.artist, tags.artistSort, mbid = null)
             val albumArtistId = tags.albumArtist?.let { albumArtist ->
                 upsertArtist(albumArtist, toSortName(albumArtist), mbid = null)
