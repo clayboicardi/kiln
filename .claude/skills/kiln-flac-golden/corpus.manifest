@@ -1,0 +1,24 @@
+# Kiln FLAC golden-corpus synthesis manifest
+#
+# Format (pipe-delimited, three fields):
+#   <filename>.flac | <ffmpeg args between `ffmpeg` and output filename> | <description>
+#
+# The generator reads each row, runs:
+#   ffmpeg <recipe-args> -y <corpus-dir>/<filename>
+# then produces the reference PCM via:
+#   flac.exe -d --force-raw-format --endian=little --sign=signed <flac> -o <pcm>
+#
+# Both .flac and .pcm outputs land in audio/playback/build/golden-corpus/
+# (gitignored, regenerable). Coverage axes:
+#   - bit depth: 16, 24
+#   - sample rate: 44100, 96000
+#   - signal type: sine, sweep, pink noise, impulse
+#   - channel count: 2 (stereo)
+#
+# Lines starting with '#' or blank lines are ignored.
+
+16bit-44100-sine-440hz.flac | -f lavfi -i sine=frequency=440:sample_rate=44100:duration=5:beep_factor=0 -ac 2 -sample_fmt s16 -ar 44100 -c:a flac | 5s 16-bit 44.1kHz pure sine 440Hz stereo
+24bit-96000-sine-440hz.flac | -f lavfi -i sine=frequency=440:sample_rate=96000:duration=5:beep_factor=0 -ac 2 -sample_fmt s32 -ar 96000 -bits_per_raw_sample 24 -c:a flac | 5s 24-bit 96kHz sine 440Hz stereo
+16bit-44100-sweep.flac | -f lavfi -i aevalsrc=sin(2*PI*(20+19980*t/10)*t):s=44100:c=2:d=10 -sample_fmt s16 -c:a flac | 10s log sweep 20Hz->20kHz 16-bit stereo
+24bit-96000-pink-noise.flac | -f lavfi -i anoisesrc=color=pink:sample_rate=96000:duration=5:amplitude=0.5 -ac 2 -sample_fmt s32 -ar 96000 -bits_per_raw_sample 24 -c:a flac | 5s 24-bit 96kHz pink noise stereo
+16bit-44100-stereo-impulse.flac | -f lavfi -i aevalsrc=if(eq(n\,0)\,1\,0):s=44100:c=2:d=1 -sample_fmt s16 -c:a flac | 1s impulse (sample 0 = 1, rest = 0) 16-bit stereo
