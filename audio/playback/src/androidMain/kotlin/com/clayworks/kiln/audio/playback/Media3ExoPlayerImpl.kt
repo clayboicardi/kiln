@@ -146,7 +146,17 @@ class Media3ExoPlayerImpl(
         }
 
         override fun onVolumeChanged(volume: Float) {
-            _volume.value = _volume.value.copy(linear = volume)
+            // Only sync the stored linear when NOT muted. When muted, the
+            // user-initiated setMuted(true) forced exo.volume = 0.0f, which
+            // triggers this callback with volume=0.0; if we wrote that into
+            // linear we'd lose the user's pre-mute desired volume — unmuting
+            // would then restore silence instead of the original level.
+            // Source-of-truth for the user's desired linear is _volume.value;
+            // ExoPlayer's actual volume is a derived signal.
+            val v = _volume.value
+            if (!v.muted) {
+                _volume.value = v.copy(linear = volume)
+            }
         }
     }
 
@@ -252,13 +262,23 @@ class Media3ExoPlayerImpl(
 
     override suspend fun setVolume(linear: Float) = withContext(Dispatchers.Main.immediate) {
         val clamped = linear.coerceIn(0.0f, 1.0f)
-        exo.volume = if (_volume.value.muted) 0.0f else clamped
+        // Update _volume FIRST so the listener's onVolumeChanged (fired by the
+        // exo.volume write below) sees the post-state and applies its !muted
+        // guard correctly. If we wrote to exo first, the listener would observe
+        // the pre-update _volume.value and could overwrite linear with whatever
+        // exo set (typically the same value, but the ordering is fragile).
         _volume.value = _volume.value.copy(linear = clamped)
+        exo.volume = if (_volume.value.muted) 0.0f else clamped
     }
 
     override suspend fun setMuted(muted: Boolean) = withContext(Dispatchers.Main.immediate) {
-        exo.volume = if (muted) 0.0f else _volume.value.linear
+        // Update _volume.muted FIRST so the listener's onVolumeChanged sees the
+        // post-mute state and skips the linear update (preserving the user's
+        // pre-mute volume so unmute restores it correctly). See U4 — without
+        // this ordering, setMuted(true) → exo.volume=0 → listener fires
+        // → linear gets clobbered with 0.0 → setMuted(false) restores silence.
         _volume.value = _volume.value.copy(muted = muted)
+        exo.volume = if (muted) 0.0f else _volume.value.linear
     }
 
     override fun addAudioProcessor(processor: AudioProcessor) {
