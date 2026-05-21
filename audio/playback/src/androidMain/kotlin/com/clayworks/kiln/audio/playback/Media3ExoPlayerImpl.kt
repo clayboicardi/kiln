@@ -74,6 +74,13 @@ class Media3ExoPlayerImpl(
     private val _processors = MutableStateFlow<List<AudioProcessor>>(emptyList())
     override val processors: StateFlow<List<AudioProcessor>> = _processors.asStateFlow()
 
+    // Released-state guard. ExoPlayer + MediaSession both throw
+    // IllegalStateException if methods are called after their release().
+    // Mirrors JavaSoundPlayerImpl's pattern so post-release no-ops are
+    // safe and the public API is forgiving (e.g., Compose recomposition
+    // racing with shutdown).
+    @Volatile private var released: Boolean = false
+
     // Player methods must run on the looper Exo was built on. Default is the
     // main looper; we marshal suspend entry points through Main.immediate to
     // match.
@@ -178,6 +185,7 @@ class Media3ExoPlayerImpl(
         startIndex: Int,
         autoPlay: Boolean,
     ) = withContext(Dispatchers.Main.immediate) {
+        if (released) return@withContext
         _state.value = PlayerState.Loading
 
         // Resolve each MediaItem to a Playable via the Source Protocol. Items
@@ -222,45 +230,55 @@ class Media3ExoPlayerImpl(
     }
 
     override suspend fun play() = withContext(Dispatchers.Main.immediate) {
+        if (released) return@withContext
         exo.play()
     }
 
     override suspend fun pause() = withContext(Dispatchers.Main.immediate) {
+        if (released) return@withContext
         exo.pause()
     }
 
     override suspend fun stop() = withContext(Dispatchers.Main.immediate) {
+        if (released) return@withContext
         exo.stop()
     }
 
     override suspend fun seekTo(positionMs: Long) = withContext(Dispatchers.Main.immediate) {
+        if (released) return@withContext
         exo.seekTo(positionMs.coerceAtLeast(0L))
         _positionMs.value = exo.currentPosition.coerceAtLeast(0L)
     }
 
     override suspend fun skipToNext() = withContext(Dispatchers.Main.immediate) {
+        if (released) return@withContext
         if (exo.hasNextMediaItem()) exo.seekToNextMediaItem()
     }
 
     override suspend fun skipToPrevious() = withContext(Dispatchers.Main.immediate) {
+        if (released) return@withContext
         if (exo.hasPreviousMediaItem()) exo.seekToPreviousMediaItem()
     }
 
     override suspend fun skipTo(queueIndex: Int) = withContext(Dispatchers.Main.immediate) {
+        if (released) return@withContext
         if (queueIndex in 0 until exo.mediaItemCount) {
             exo.seekTo(queueIndex, /* positionMs = */ 0L)
         }
     }
 
     override suspend fun setRepeatMode(mode: RepeatMode) = withContext(Dispatchers.Main.immediate) {
+        if (released) return@withContext
         exo.repeatMode = mode.toExoRepeatMode()
     }
 
     override suspend fun setShuffleMode(enabled: Boolean) = withContext(Dispatchers.Main.immediate) {
+        if (released) return@withContext
         exo.shuffleModeEnabled = enabled
     }
 
     override suspend fun setVolume(linear: Float) = withContext(Dispatchers.Main.immediate) {
+        if (released) return@withContext
         val clamped = linear.coerceIn(0.0f, 1.0f)
         // Update _volume FIRST so the listener's onVolumeChanged (fired by the
         // exo.volume write below) sees the post-state and applies its !muted
@@ -272,6 +290,7 @@ class Media3ExoPlayerImpl(
     }
 
     override suspend fun setMuted(muted: Boolean) = withContext(Dispatchers.Main.immediate) {
+        if (released) return@withContext
         // Update _volume.muted FIRST so the listener's onVolumeChanged sees the
         // post-mute state and skips the linear update (preserving the user's
         // pre-mute volume so unmute restores it correctly). See U4 — without
@@ -282,6 +301,7 @@ class Media3ExoPlayerImpl(
     }
 
     override fun addAudioProcessor(processor: AudioProcessor) {
+        if (released) return
         // TODO(MVP Sessions 16-22): inject the chain into ExoPlayer via a custom
         // RenderersFactory that wraps AudioSink with a kiln-controlled
         // AudioProcessor pipeline. Until :audio:dsp ships its first concrete
@@ -291,10 +311,13 @@ class Media3ExoPlayerImpl(
     }
 
     override fun removeAudioProcessor(processor: AudioProcessor) {
+        if (released) return
         _processors.value = _processors.value - processor
     }
 
     override suspend fun release() = withContext(Dispatchers.Main.immediate) {
+        if (released) return@withContext  // idempotent: repeat-release is a safe no-op
+        released = true
         positionTicker.cancel()
         exo.removeListener(playerListener)
         mediaSession.release()
