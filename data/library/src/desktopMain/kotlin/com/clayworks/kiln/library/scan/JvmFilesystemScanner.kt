@@ -56,6 +56,28 @@ class JvmFilesystemScanner(
     private fun runScan(forceFullRescan: Boolean): Either<ScanError, ScanResult> =
         Either.catch {
             val scanStartedMs = System.currentTimeMillis()
+
+            // GUARD: empty scanFolders is a data-loss bomb. Without this, the
+            // body below would (a) optionally bulk-reset every track's
+            // last_scanned_ms = 0 on forceFullRescan, (b) walk zero files →
+            // touch nothing, (c) softDeleteUnscanned(scanStartedMs) marks
+            // EVERY remaining live row as deleted because nothing was touched
+            // back up to scanStartedMs. Result: first-run-with-defaults or
+            // misconfig soft-deletes the entire library. Bail early instead.
+            if (scanFolders.isEmpty()) {
+                log.w {
+                    "scanIncremental/scanFull called with empty scanFolders; " +
+                        "skipping to avoid soft-deleting all tracks"
+                }
+                return@catch ScanResult(
+                    tracksAdded = 0,
+                    tracksUpdated = 0,
+                    tracksSoftDeleted = 0,
+                    tracksUnchanged = 0,
+                    durationMs = 0L,
+                )
+            }
+
             var added = 0
             var updated = 0
             var unchanged = 0

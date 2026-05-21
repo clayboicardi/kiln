@@ -39,5 +39,12 @@ kotlin {
             implementation(libs.jaudiotagger)
             implementation(libs.appdirs)
         }
+        // Desktop-only tests for JvmFilesystemScanner regression coverage —
+        // need JdbcSqliteDriver in test scope. commonTest deps inherit through.
+        val desktopTest by getting {
+            dependencies {
+                implementation(libs.sqldelight.sqlite.driver)
+            }
+        }
     }
 }
