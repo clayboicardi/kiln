@@ -1,8 +1,8 @@
 {
   "_doc": "Workspace-scoped MCP servers for Kiln. See docs/decisions/2026-05-21-tooling-recommendation.md for rationale.",
-  "_dbhub_note": "kiln-db-desktop is COMMENTED OUT until ./gradlew :app-desktop:run has been invoked at least once to create %AppData%/kiln/kiln.db. After first run, remove the leading underscore from '_kiln-db-desktop' to activate.",
+  "_dbhub_note": "ACTIVE as of 2026-05-21 after first ./gradlew :app-desktop:run. DSN points at ~/.kiln/kiln.db (NOT %AppData%/kiln/ as originally assumed in the doc — Kiln uses the user-home dir convention).",
   "mcpServers": {
-    "_kiln-db-desktop": {
+    "kiln-db-desktop": {
       "command": "npx",
       "args": [
         "-y",
@@ -10,7 +10,7 @@
         "--transport", "stdio",
         "--max-rows", "1000",
         "--query-timeout", "10000",
-        "--dsn", "sqlite:///C:/Users/chawo/AppData/Roaming/kiln/kiln.db"
+        "--dsn", "sqlite:///C:/Users/chawo/.kiln/kiln.db"
       ]
     }
   }

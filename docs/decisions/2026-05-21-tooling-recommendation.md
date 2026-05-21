@@ -131,7 +131,9 @@ Create `C:\Users\chawo\Projects\kiln\.claude\settings.json`:
 
 **Step 4 — Workspace MCP file:**
 
-Create `C:\Users\chawo\Projects\kiln\.mcp.json`. The dbhub entry is **deliberately commented out via a leading-underscore key** (`_kiln-db-desktop`) — uncomment by removing the underscore after first `./gradlew :app-desktop:run` populates `%AppData%\kiln\kiln.db`:
+Create `C:\Users\chawo\Projects\kiln\.mcp.json`. The dbhub entry is **deliberately commented out via a leading-underscore key** (`_kiln-db-desktop`) — uncomment by removing the underscore after first `./gradlew :app-desktop:run` populates `C:\Users\chawo\.kiln\kiln.db`.
+
+**Correction 2026-05-21:** Original draft assumed `%AppData%\kiln\kiln.db` (the standard Windows Roaming convention). Kiln actually uses `~/.kiln/kiln.db` (user-home dir, hidden). Verified empirically: after first `:app-desktop:run` against Clay's `D:\tiddl` library, the DB landed at `C:\Users\chawo\.kiln\kiln.db` (15.26 MB, 27,766 tracks indexed). DSN updated accordingly:
 
 ```json
 {
@@ -146,7 +148,7 @@ Create `C:\Users\chawo\Projects\kiln\.mcp.json`. The dbhub entry is **deliberate
         "--transport", "stdio",
         "--max-rows", "1000",
         "--query-timeout", "10000",
-        "--dsn", "sqlite:///C:/Users/chawo/AppData/Roaming/kiln/kiln.db"
+        "--dsn", "sqlite:///C:/Users/chawo/.kiln/kiln.db"
       ]
     }
   }
@@ -158,7 +160,7 @@ Notes on this config:
 - **`--max-rows 1000`** — bounds runaway SELECTs.
 - **`--query-timeout 10000`** — 10-second query timeout; aborts hung queries.
 - **Pinned version `@0.21.2`** — latest npm as of 2026-05-21 (verified via `curl npmjs.org/@bytebase/dbhub`). bytebase/dbhub has no GitHub releases tag — npm is the source of truth.
-- **DSN path** — `appdirs` resolves Kiln's desktop user-data-dir to `%AppData%\kiln\` on Windows. Confirm at first `:app-desktop:run`; adjust the DSN if the path differs.
+- **DSN path is `~/.kiln/kiln.db`** — Kiln uses the user-home-dir convention (verified empirically, not the standard appdirs Roaming convention). If you ever change Kiln's user-data-dir resolution (e.g., a Settings → custom data dir feature in Phase 2a), update this DSN accordingly.
 - **Activation:** rename `"_kiln-db-desktop"` to `"kiln-db-desktop"` in `.mcp.json` after the DB file exists, then restart Claude Code.
 
 **Step 5 — Verify the chain:**
