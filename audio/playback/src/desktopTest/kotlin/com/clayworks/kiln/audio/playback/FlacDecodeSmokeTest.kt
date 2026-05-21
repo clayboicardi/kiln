@@ -79,7 +79,11 @@ class FlacDecodeSmokeTest {
             val playable = Playable(
                 itemId = ItemId("smoke-$idx"),
                 sourceId = SourceId("local-smoke"),
-                uri = "file://$path",
+                // Path.toUri() emits a properly-formed file: URI (RFC 8089). The
+                // earlier "file://$path" form was malformed on Windows and
+                // broken by the consumer-side java.net.URI parser added in
+                // Session 10 (U14 + G3 fix).
+                uri = path.toUri().toString(),
                 codec = AudioCodec.FLAC,
                 sampleRateHz = probe.sampleRate,
                 bitDepth = probe.bitDepth,

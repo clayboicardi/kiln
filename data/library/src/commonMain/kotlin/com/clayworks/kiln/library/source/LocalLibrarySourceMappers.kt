@@ -67,11 +67,7 @@ internal fun Playlist.toMediaItem(): MediaItem = MediaItem(
 internal fun Track.toPlayable(sourceId: SourceId): Playable = Playable(
     itemId = ItemId(id.toString()),
     sourceId = sourceId,
-    uri = if (file_path.startsWith("/") || file_path.matches(Regex("^[A-Za-z]:.*"))) {
-        "file://$file_path"
-    } else {
-        file_path
-    },
+    uri = fileSystemPathToFileUri(file_path),
     codec = codec.toAudioCodec(),
     sampleRateHz = sample_rate_hz.toInt(),
     bitDepth = bit_depth?.toInt(),
@@ -124,6 +120,73 @@ internal fun SearchTracks.toSearchResult(): SearchResult = SearchResult(
     matchScore = match_score,  // bm25 returns non-null Double for matched rows
     matchedField = SearchResult.MatchedField.Title,  // bm25 doesn't tell us which field; default to Title
 )
+
+/**
+ * Convert an absolute filesystem path to a properly-formed `file://` URI per RFC 8089.
+ * Handles Windows drive-letter paths (`D:\foo bar\baz.flac` → `file:///D:/foo%20bar/baz.flac`)
+ * and Unix-style paths (`/foo bar/baz.flac` → `file:///foo%20bar/baz.flac`). Percent-encodes
+ * non-unreserved characters so spaces, parentheses, etc. round-trip cleanly through
+ * `java.net.URI` on the consumer side (see JvmFlacDecoderImpl, Media3 fromUri).
+ *
+ * Pass-through if the input already looks like a URI (contains `"://"`) so future remote
+ * sources (http:// content://) bypass the file-path normalization.
+ *
+ * Internal visibility for direct unit-test access from commonTest.
+ */
+internal fun fileSystemPathToFileUri(absolutePath: String): String {
+    if (absolutePath.contains("://")) return absolutePath
+
+    val withForwardSlashes = absolutePath.replace('\\', '/')
+    val isWindowsDrive = withForwardSlashes.length >= 2 &&
+        (withForwardSlashes[0] in 'A'..'Z' || withForwardSlashes[0] in 'a'..'z') &&
+        withForwardSlashes[1] == ':'
+    val withRoot = if (isWindowsDrive) "/$withForwardSlashes" else withForwardSlashes
+
+    return buildString {
+        append("file://")
+        for (c in withRoot) {
+            when {
+                c in 'A'..'Z' || c in 'a'..'z' || c in '0'..'9' -> append(c)
+                c == '-' || c == '.' || c == '_' || c == '~' -> append(c)
+                c == '/' || c == ':' -> append(c)
+                else -> appendUtf8PercentEncoded(c)
+            }
+        }
+    }
+}
+
+private fun StringBuilder.appendUtf8PercentEncoded(c: Char) {
+    val code = c.code
+    when {
+        code < 0x80 -> appendPercentByte(code)
+        code < 0x800 -> {
+            appendPercentByte(0xC0 or (code shr 6))
+            appendPercentByte(0x80 or (code and 0x3F))
+        }
+        code in 0xD800..0xDFFF -> {
+            // Lone surrogate — fall back to Unicode replacement character (U+FFFD encoded as
+            // EF BF BD). File paths rarely carry split surrogate pairs; this is a defensive
+            // best-effort that preserves round-trip-able output.
+            appendPercentByte(0xEF)
+            appendPercentByte(0xBF)
+            appendPercentByte(0xBD)
+        }
+        else -> {
+            appendPercentByte(0xE0 or (code shr 12))
+            appendPercentByte(0x80 or ((code shr 6) and 0x3F))
+            appendPercentByte(0x80 or (code and 0x3F))
+        }
+    }
+}
+
+private fun StringBuilder.appendPercentByte(b: Int) {
+    val v = b and 0xFF
+    append('%')
+    append(HEX_CHARS[(v shr 4) and 0x0F])
+    append(HEX_CHARS[v and 0x0F])
+}
+
+private const val HEX_CHARS = "0123456789ABCDEF"
 
 private fun String.toAudioCodec(): AudioCodec = when (uppercase()) {
     "FLAC" -> AudioCodec.FLAC

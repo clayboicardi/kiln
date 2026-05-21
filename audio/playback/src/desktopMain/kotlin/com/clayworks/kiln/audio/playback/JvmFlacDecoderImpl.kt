@@ -39,7 +39,22 @@ internal class JvmFlacDecoderImpl(
                 DecoderError.NativeBindingFailed("FLAC__stream_decoder_new returned null"),
             )
 
-        val filename = playable.uri.removePrefix("file://")
+        // Parse the URI properly instead of stripping prefix. `java.net.URI` +
+        // `java.io.File(URI)` handles percent-encoded chars, Windows drive letters
+        // (file:///D:/...), and forward-slash-vs-backslash normalization on Windows.
+        // The producer (LocalLibrarySourceMappers.fileSystemPathToFileUri) emits
+        // RFC 8089 file URIs; if anything malformed slips through, we surface it
+        // as DecoderError.IoError rather than passing garbage to libFLAC's fopen.
+        val filename = try {
+            java.io.File(java.net.URI(playable.uri)).absolutePath
+        } catch (e: Exception) {
+            libFlac.FLAC__stream_decoder_delete(handle)
+            return@withContext Either.Left(
+                DecoderError.IoError(
+                    java.io.IOException("Cannot resolve URI to file path: ${playable.uri}", e),
+                ),
+            )
+        }
         val stream = JvmFlacDecodedStream(libFlac, handle, playable.durationMs)
 
         val initStatus = libFlac.FLAC__stream_decoder_init_file(

@@ -25,11 +25,14 @@ class JvmFlacDecoderImplTest {
     private fun fixturePlayable(name: String, sampleRate: Int, bitDepth: Int, channels: Int, durationMs: Long): Playable {
         val url = JvmFlacDecoderImplTest::class.java.getResource("/fixtures/$name")
             ?: error("Missing test fixture: /fixtures/$name")
-        val path = File(url.toURI()).absolutePath
+        // URL.toURI() emits a properly-formed file: URI (RFC 8089). Avoid the
+        // "file://$path" string concat that produces malformed URIs on Windows
+        // (D:\... gets prefix-only, breaking java.net.URI parsing in the
+        // consumer per Session 10 ultrareview U14 + Gemini G3).
         return Playable(
             itemId = ItemId("test-$name"),
             sourceId = SourceId("test"),
-            uri = "file://$path",
+            uri = url.toURI().toString(),
             codec = AudioCodec.FLAC,
             sampleRateHz = sampleRate,
             bitDepth = bitDepth,
@@ -121,7 +124,10 @@ class JvmFlacDecoderImplTest {
         val playable = Playable(
             itemId = ItemId("test-missing"),
             sourceId = SourceId("test"),
-            uri = "file://C:\\nope\\does-not-exist.flac",
+            // Properly-formed file URI for a non-existent path on Windows; the
+            // consumer should parse OK but libFLAC's init_file should report
+            // INIT_STATUS_ERROR_OPENING_FILE → DecoderError.IoError.
+            uri = "file:///C:/nope/does-not-exist.flac",
             codec = AudioCodec.FLAC,
             sampleRateHz = 44100,
             bitDepth = 16,
