@@ -38,6 +38,11 @@ import arrow.core.Either
 import co.touchlab.kermit.Logger
 import com.clayworks.kiln.audio.dsp.AudioFrame
 import com.clayworks.kiln.audio.dsp.AudioProcessor
+import com.clayworks.kiln.audio.dsp.replaygain.ReplayGainPipelineMode
+import com.clayworks.kiln.audio.dsp.replaygain.ReplayGainProcessor
+import com.clayworks.kiln.audio.dsp.replaygain.resolveGainLinear
+import com.clayworks.kiln.library.settings.ReplayGainMode
+import com.clayworks.kiln.library.settings.SettingsRepository
 import com.clayworks.kiln.library.source.MediaItem
 import com.clayworks.kiln.library.source.MusicSource
 import com.clayworks.kiln.library.source.Playable
@@ -54,6 +59,8 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -76,12 +83,16 @@ fun createJavaSoundPlayer(
     audioDispatcher: CoroutineDispatcher,
     decoder: Decoder,
     source: MusicSource,
-): PlatformPlayer = JavaSoundPlayerImpl(audioDispatcher, decoder, source)
+    settings: SettingsRepository,
+    rgProcessor: ReplayGainProcessor,
+): PlatformPlayer = JavaSoundPlayerImpl(audioDispatcher, decoder, source, settings, rgProcessor)
 
 internal class JavaSoundPlayerImpl(
     private val audioDispatcher: CoroutineDispatcher,
     private val decoder: Decoder,
     private val source: MusicSource,
+    private val settings: SettingsRepository,
+    private val rgProcessor: ReplayGainProcessor,
 ) : PlatformPlayer {
 
     private val _state = MutableStateFlow<PlayerState>(PlayerState.Idle)
@@ -118,6 +129,44 @@ internal class JavaSoundPlayerImpl(
     private val _paused = MutableStateFlow(false)
 
     @Volatile private var released: Boolean = false
+
+    @Volatile private var currentPlayable: Playable? = null
+
+    init {
+        // Add the RG processor to the chain at construction time.
+        _processors.value = _processors.value + rgProcessor
+
+        // Observe settings changes; recompute + apply RG gain whenever mode
+        // or pre-amp changes (while a track is playing).
+        scope.launch {
+            combine(
+                settings.replayGainMode.distinctUntilChanged(),
+                settings.replayGainPreAmpDb.distinctUntilChanged(),
+            ) { mode, preAmp -> mode to preAmp }
+                .collect { (mode, preAmp) ->
+                    val playable = currentPlayable ?: return@collect
+                    applyRgGain(playable, mode, preAmp)
+                }
+        }
+    }
+
+    private fun applyRgGain(playable: Playable, mode: ReplayGainMode, preAmpDb: Double) {
+        val rg = playable.replayGain
+        val pipelineMode = when (mode) {
+            ReplayGainMode.Off -> ReplayGainPipelineMode.Off
+            ReplayGainMode.Track -> ReplayGainPipelineMode.Track
+            ReplayGainMode.Album -> ReplayGainPipelineMode.Album
+        }
+        val gain = resolveGainLinear(
+            trackDb = rg?.trackDb,
+            trackPeak = rg?.trackPeak,
+            albumDb = rg?.albumDb,
+            albumPeak = rg?.albumPeak,
+            mode = pipelineMode,
+            preAmpDb = preAmpDb,
+        )
+        rgProcessor.setLinearGain(gain)
+    }
 
     // ---------- PlatformPlayer ----------
 
@@ -341,10 +390,10 @@ internal class JavaSoundPlayerImpl(
             }
             is Either.Right -> r.value
         }
-        startStream(stream, autoPlay)
+        startStream(stream, autoPlay, playable)
     }
 
-    private fun startStream(stream: DecodedStream, autoPlay: Boolean) {
+    private fun startStream(stream: DecodedStream, autoPlay: Boolean, playable: Playable) {
         val format = AudioFormat(
             stream.format.sampleRateHz.toFloat(),
             stream.format.bitDepth,
@@ -370,6 +419,19 @@ internal class JavaSoundPlayerImpl(
 
         line = sourceLine
         currentStream = stream
+        currentPlayable = playable
+        rgProcessor.onFormatChange(stream.format)
+
+        // Compute initial gain for this track. startStream is called from the
+        // playback coroutine context — launch a one-shot child coroutine to
+        // do the settings I/O without making startStream itself suspend.
+        // The settings-change collector (init block) handles subsequent updates.
+        scope.launch {
+            val mode = settings.replayGainMode.first()
+            val preAmpDb = settings.replayGainPreAmpDb.first()
+            applyRgGain(playable, mode, preAmpDb)
+        }
+
         _paused.value = !autoPlay
         applyGain()
         if (autoPlay) sourceLine.start()
@@ -446,6 +508,10 @@ internal class JavaSoundPlayerImpl(
         line = null
         runCatching { currentStream?.close() }
         currentStream = null
+        currentPlayable = null
+        // NOTE: Don't reset rgProcessor.linearGain to 1.0 here — the next
+        // startStream call will set it anyway, and resetting between tracks
+        // could produce a transient pop.
     }
 
     private suspend fun advanceOnEof() {

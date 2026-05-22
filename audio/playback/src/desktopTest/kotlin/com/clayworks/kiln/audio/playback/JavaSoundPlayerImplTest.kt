@@ -9,6 +9,10 @@ import arrow.core.Either
 import com.clayworks.kiln.audio.dsp.AudioFrame
 import com.clayworks.kiln.audio.dsp.AudioProcessor
 import com.clayworks.kiln.audio.dsp.DecodedAudioFormat
+import com.clayworks.kiln.audio.dsp.replaygain.ReplayGainProcessor
+import com.clayworks.kiln.library.settings.ReplayGainMode
+import com.clayworks.kiln.library.settings.SettingsRepository
+import com.clayworks.kiln.library.settings.ThemeMode
 import com.clayworks.kiln.library.source.AudioCodec
 import com.clayworks.kiln.library.source.BrowseScope
 import com.clayworks.kiln.library.source.ItemId
@@ -27,7 +31,6 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 class JavaSoundPlayerImplTest {
@@ -80,15 +83,32 @@ class JavaSoundPlayerImplTest {
             Either.Left(DecoderError.UnsupportedCodec(playable.codec))
     }
 
+    // Minimal SettingsRepository stub: returns Off / 0.0 for RG settings;
+    // default values for the rest. No writes exercised by these tests.
+    private class StubSettingsRepository : SettingsRepository {
+        override val themeMode: Flow<ThemeMode> = flowOf(ThemeMode.System)
+        override suspend fun setThemeMode(mode: ThemeMode) = Unit
+        override val scanOnLaunch: Flow<Boolean> = flowOf(false)
+        override suspend fun setScanOnLaunch(enabled: Boolean) = Unit
+        override val scanFolders: Flow<List<String>> = flowOf(emptyList())
+        override suspend fun setScanFolders(folders: List<String>) = Unit
+        override val replayGainMode: Flow<ReplayGainMode> = flowOf(ReplayGainMode.Off)
+        override suspend fun setReplayGainMode(mode: ReplayGainMode) = Unit
+        override val replayGainPreAmpDb: Flow<Double> = flowOf(0.0)
+        override suspend fun setReplayGainPreAmpDb(db: Double) = Unit
+    }
+
     private fun newPlayer(source: MusicSource = AlwaysFailingSource(), decoder: Decoder = StubDecoder()) =
         createJavaSoundPlayer(
             audioDispatcher = Dispatchers.Unconfined,
             decoder = decoder,
             source = source,
+            settings = StubSettingsRepository(),
+            rgProcessor = ReplayGainProcessor(),
         )
 
     @Test
-    fun `initial state — Idle, position 0, empty queue, volume 1, no processors`() {
+    fun `initial state — Idle, position 0, empty queue, volume 1, rgProcessor in chain`() {
         val player = newPlayer()
         assertEquals(PlayerState.Idle, player.state.value)
         assertEquals(0L, player.positionMs.value)
@@ -99,7 +119,8 @@ class JavaSoundPlayerImplTest {
         assertEquals(false, q.shuffleEnabled)
         assertEquals(1.0f, player.volume.value.linear)
         assertEquals(false, player.volume.value.muted)
-        assertEquals(0, player.processors.value.size)
+        // ReplayGainProcessor is added to the chain in the init block.
+        assertEquals(1, player.processors.value.size)
     }
 
     @Test
@@ -210,15 +231,17 @@ class JavaSoundPlayerImplTest {
     @Test
     fun `addAudioProcessor + removeAudioProcessor mutate processors flow`() {
         val player = newPlayer()
+        // The init block already adds rgProcessor — size starts at 1.
+        assertEquals(1, player.processors.value.size)
         val processor = object : AudioProcessor {
             override val id = "test"
             override fun onFormatChange(format: DecodedAudioFormat) = Unit
             override fun process(frame: AudioFrame): AudioFrame = frame
         }
         player.addAudioProcessor(processor)
-        assertEquals(1, player.processors.value.size)
+        assertEquals(2, player.processors.value.size)
         player.removeAudioProcessor(processor)
-        assertEquals(0, player.processors.value.size)
+        assertEquals(1, player.processors.value.size)
     }
 
     @Test
