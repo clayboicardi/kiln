@@ -1,0 +1,38 @@
+--------- beginning of main
+03-10 06:11:59.947 10001 10001 I Zygote  : Process 10001 created for com.clayworks.kiln
+03-10 06:11:59.947 10001 10001 I .clayworks.kiln: Late-enabling -Xcheck:jni
+03-10 06:11:59.967 10001 10001 I .clayworks.kiln: Using CollectorTypeCMC GC.
+03-10 06:11:59.971 10001 10001 D nativeloader: Load libframework-connectivity-tiramisu-jni.so using APEX ns com_android_tethering for caller /apex/com.android.tethering/javalib/framework-connectivity-t.jar: ok
+03-10 06:11:59.978 10001 10001 I ActivityThread: Relaunch all activities: onCoreSettingsChange
+03-10 06:11:59.986 10001 10001 D ApplicationLoaders: Returning zygote-cached class loader: /system_ext/framework/androidx.window.extensions.jar
+03-10 06:11:59.986 10001 10001 D ApplicationLoaders: Returning zygote-cached class loader: /system_ext/framework/androidx.window.sidecar.jar
+03-10 06:12:00.234 10001 10001 D nativeloader: Configuring clns-9 for other apk /data/app/~~GywIXlBd_YKtx41Q0e5cqg==/com.clayworks.kiln-GVp80CeOwgZujPgnYQmjng==/base.apk. target_sdk_version=36, uses_libraries=, library_path=/data/app/~~GywIXlBd_YKtx41Q0e5cqg==/com.clayworks.kiln-GVp80CeOwgZujPgnYQmjng==/lib/arm64:/data/app/~~GywIXlBd_YKtx41Q0e5cqg==/com.clayworks.kiln-GVp80CeOwgZujPgnYQmjng==/base.apk!/lib/arm64-v8a, permitted_path=/data:/mnt/expand:/data/user/0/com.clayworks.kiln
+03-10 06:12:00.238 10001 10001 V GraphicsEnvironment: Currently set values for:
+03-10 06:12:00.238 10001 10001 V GraphicsEnvironment:   angle_gl_driver_selection_pkgs=[com.android.angle]
+03-10 06:12:00.238 10001 10001 V GraphicsEnvironment:   angle_gl_driver_selection_values=[angle]
+03-10 06:12:00.238 10001 10001 V GraphicsEnvironment: com.clayworks.kiln is not listed in per-application setting
+03-10 06:12:00.238 10001 10001 V GraphicsEnvironment: No special selections for ANGLE, returning default driver choice
+03-10 06:12:00.238 10001 10001 V GraphicsEnvironment: Neither updatable production driver nor prerelease driver is supported.
+03-10 06:12:00.278 10001 10001 I ExoPlayerImpl: Init 1c3fab3 [AndroidXMedia3/1.10.1] [cheetah, Pixel 7 Pro, Google, 36]
+03-10 06:12:00.301 10001 10020 D AudioSystem: onNewServiceWithAdapter: media.audio_flinger service obtained 0xb40000737be95a40
+03-10 06:12:00.301 10001 10020 D AudioSystem: getService: IAudioFlingerService retrieved: 0xb4000073bbeb14d0  IAudioFlinger cached: 0xb40000737be95a40
+03-10 06:12:00.302 10001 10001 I MediaSessionImpl: Init e93885d [AndroidXMedia3/1.10.1] [cheetah, Pixel 7 Pro, Google, 36]
+03-10 06:12:00.310 10001 10001 I MediaSessionCompat: Couldn't find a unique registered media button receiver in the given context.
+--------- beginning of system
+03-10 06:12:00.315 10001 10019 E ActivityThread: Failed to find provider info for androidx.car.app.connection
+03-10 06:12:00.325 10001 10022 I DisplayManager: Choreographer implicitly registered for the refresh rate.
+03-10 06:12:00.326 10001 10022 D vulkan  : searching for layers in '/data/app/~~GywIXlBd_YKtx41Q0e5cqg==/com.clayworks.kiln-GVp80CeOwgZujPgnYQmjng==/lib/arm64'
+03-10 06:12:00.326 10001 10022 D vulkan  : searching for layers in '/data/app/~~GywIXlBd_YKtx41Q0e5cqg==/com.clayworks.kiln-GVp80CeOwgZujPgnYQmjng==/base.apk!/lib/arm64-v8a'
+03-10 06:12:00.337 10001 10001 E .clayworks.kiln: Invalid resource ID 0x00000000.
+03-10 06:12:00.339 10001 10001 D CompatChangeReporter: Compat change id reported: 377864165; UID 10040; state: ENABLED
+03-10 06:12:00.339 10001 10001 D DesktopExperienceFlags: Toggle override initialized to: false
+03-10 06:12:00.339 10001 10001 D DesktopModeFlags: Toggle override initialized to: OVERRIDE_UNSET
+03-10 06:12:00.363 10001 10001 D WindowOnBackDispatcher: setTopOnBackInvokedCallback (unwrapped): android.app.Activity$$ExternalSyntheticLambda0@ecd1273
+03-10 06:12:00.427 10001 10001 I .clayworks.kiln: hiddenapi: Accessing hidden method Landroid/os/SystemProperties;->addChangeCallback(Ljava/lang/Runnable;)V (runtime_flags=0, domain=platform, api=unsupported) from Landroidx/compose/ui/platform/AndroidComposeView$Companion; (domain=app, TargetSdkVersion=36) using reflection: allowed
+03-10 06:12:00.477 10001 10001 D VRI[MainActivity]: WindowInsets changed: 1080x2340 statusBars:[0,108,0,0] navigationBars:[0,0,0,63] mandatorySystemGestures:[0,140,0,84] 
+03-10 06:12:00.485 10001 10001 I HWUI    : Using FreeType backend (prop=Auto)
+03-10 06:12:00.529 10001 10006 I .clayworks.kiln: Compiler allocated 5038KB to compile void android.view.ViewRootImpl.performTraversals()
+03-10 06:12:00.546 10001 10001 D InsetsController: hide(ime())
+03-10 06:12:00.546 10001 10001 I ImeTracker: com.clayworks.kiln:a460ca3f: onCancelled at PHASE_CLIENT_ALREADY_HIDDEN
+03-10 06:12:05.722 10001 10064 D ProfileInstaller: Installing profile for com.clayworks.kiln
+03-10 06:12:20.135 10001 10007 W .clayworks.kiln: userfaultfd: MOVE ioctl seems unsupported: Connection timed out

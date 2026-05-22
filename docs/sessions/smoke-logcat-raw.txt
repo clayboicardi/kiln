@@ -1,0 +1,407 @@
+--------- beginning of main
+03-10 06:09:08.890  2460  7898 I InfoMediaManager: dispatchDeviceListAdded()
+03-10 06:09:08.890  2460  8629 I InfoMediaManager: dispatchDeviceListAdded()
+03-10 06:09:08.890  2460  8378 I InfoMediaManager: dispatchDeviceListAdded()
+03-10 06:09:08.911  3893  3893 I StylusModule: StylusModule.onUpdateToolType():774 Update tool type = 0
+03-10 06:09:08.913  1380  9789 D MediaSessionService: dispatchVolumeKeyEvent, pkg=com.clayworks.kiln, opPkg=com.clayworks.kiln, pid=9868, uid=10040, asSystem=true, event=KeyEvent { action=ACTION_DOWN, keyCode=KEYCODE_VOLUME_UP, scanCode=115, metaState=0, flags=0x8, repeatCount=4, eventTime=9519006476815, downTime=9518452967000, deviceId=4, source=0x101, displayId=-1 }, stream=-2147483648, musicOnly=false
+03-10 06:09:08.914  1380  9789 D MediaSessionService: Adjusting suggestedStream=-2147483648 by 1. flags=4113, preferSuggestedStream=false, session=null
+03-10 06:09:08.938  1615  9909 D Vibrator: waitForComplete: Vibrator is already off
+03-10 06:09:08.940  2072  2596 I vol.Events: writeEvent level_changed STREAM_MUSIC 10
+03-10 06:09:08.952  2460  8629 I InfoMediaManager: dispatchDeviceListAdded()
+03-10 06:09:08.954  2460  8380 I InfoMediaManager: dispatchDeviceListAdded()
+03-10 06:09:08.954  2460  8378 I InfoMediaManager: dispatchDeviceListAdded()
+03-10 06:09:08.956  2460  8626 I InfoMediaManager: dispatchDeviceListAdded()
+03-10 06:09:08.956  2460  7899 I InfoMediaManager: dispatchDeviceListAdded()
+03-10 06:09:08.956  2460  7898 I InfoMediaManager: dispatchDeviceListAdded()
+03-10 06:09:08.962  3893  3893 I StylusModule: StylusModule.onUpdateToolType():774 Update tool type = 0
+03-10 06:09:08.963  1380  9789 D MediaSessionService: dispatchVolumeKeyEvent, pkg=com.clayworks.kiln, opPkg=com.clayworks.kiln, pid=9868, uid=10040, asSystem=true, event=KeyEvent { action=ACTION_DOWN, keyCode=KEYCODE_VOLUME_UP, scanCode=115, metaState=0, flags=0x8, repeatCount=5, eventTime=9519057517587, downTime=9518452967000, deviceId=4, source=0x101, displayId=-1 }, stream=-2147483648, musicOnly=false
+03-10 06:09:08.963  1380  9789 D MediaSessionService: Adjusting suggestedStream=-2147483648 by 1. flags=4113, preferSuggestedStream=false, session=null
+03-10 06:09:08.981  2072  2596 I vol.Events: writeEvent level_changed STREAM_MUSIC 11
+03-10 06:09:08.983  2072  2596 I vol.Events: writeEvent key STREAM_MUSIC 11
+03-10 06:09:08.993  2460  8378 I InfoMediaManager: dispatchDeviceListAdded()
+03-10 06:09:08.993  2460  8380 I InfoMediaManager: dispatchDeviceListAdded()
+03-10 06:09:08.994  2460  8629 I InfoMediaManager: dispatchDeviceListAdded()
+03-10 06:09:08.995  2460  7898 I InfoMediaManager: dispatchDeviceListAdded()
+03-10 06:09:08.996  2460  7899 I InfoMediaManager: dispatchDeviceListAdded()
+03-10 06:09:08.997  2460  8626 I InfoMediaManager: dispatchDeviceListAdded()
+03-10 06:09:09.013  3893  3893 I StylusModule: StylusModule.onUpdateToolType():774 Update tool type = 0
+03-10 06:09:09.014  1380  9789 D MediaSessionService: dispatchVolumeKeyEvent, pkg=com.clayworks.kiln, opPkg=com.clayworks.kiln, pid=9868, uid=10040, asSystem=true, event=KeyEvent { action=ACTION_DOWN, keyCode=KEYCODE_VOLUME_UP, scanCode=115, metaState=0, flags=0x8, repeatCount=6, eventTime=9519107849089, downTime=9518452967000, deviceId=4, source=0x101, displayId=-1 }, stream=-2147483648, musicOnly=false
+03-10 06:09:09.014  1380  9789 D MediaSessionService: Adjusting suggestedStream=-2147483648 by 1. flags=4113, preferSuggestedStream=false, session=null
+03-10 06:09:09.023  1615  9910 D Vibrator: waitForComplete: Vibrator is already off
+03-10 06:09:09.030  2072  2596 I vol.Events: writeEvent level_changed STREAM_MUSIC 12
+03-10 06:09:09.041  2460  8380 I InfoMediaManager: dispatchDeviceListAdded()
+03-10 06:09:09.042  2460  8629 I InfoMediaManager: dispatchDeviceListAdded()
+03-10 06:09:09.042  2460  7899 I InfoMediaManager: dispatchDeviceListAdded()
+03-10 06:09:09.042  2460  7898 I InfoMediaManager: dispatchDeviceListAdded()
+03-10 06:09:09.043  2460  8378 I InfoMediaManager: dispatchDeviceListAdded()
+03-10 06:09:09.046  2460  8626 I InfoMediaManager: dispatchDeviceListAdded()
+03-10 06:09:09.063  3893  3893 I StylusModule: StylusModule.onUpdateToolType():774 Update tool type = 0
+03-10 06:09:09.064  1380  2688 D MediaSessionService: dispatchVolumeKeyEvent, pkg=com.clayworks.kiln, opPkg=com.clayworks.kiln, pid=9868, uid=10040, asSystem=true, event=KeyEvent { action=ACTION_DOWN, keyCode=KEYCODE_VOLUME_UP, scanCode=115, metaState=0, flags=0x8, repeatCount=7, eventTime=9519158351652, downTime=9518452967000, deviceId=4, source=0x101, displayId=-1 }, stream=-2147483648, musicOnly=false
+03-10 06:09:09.064  1380  2688 D MediaSessionService: Adjusting suggestedStream=-2147483648 by 1. flags=4113, preferSuggestedStream=false, session=null
+03-10 06:09:09.080  2072  2596 I vol.Events: writeEvent level_changed STREAM_MUSIC 13
+03-10 06:09:09.094  2460  8380 I InfoMediaManager: dispatchDeviceListAdded()
+03-10 06:09:09.094  2460  7899 I InfoMediaManager: dispatchDeviceListAdded()
+03-10 06:09:09.095  2460  7898 I InfoMediaManager: dispatchDeviceListAdded()
+03-10 06:09:09.096  2460  8378 I InfoMediaManager: dispatchDeviceListAdded()
+03-10 06:09:09.096  2460  8629 I InfoMediaManager: dispatchDeviceListAdded()
+03-10 06:09:09.096  2460  8626 I InfoMediaManager: dispatchDeviceListAdded()
+03-10 06:09:09.110  1380  4325 D MediaSessionService: dispatchVolumeKeyEvent, pkg=com.clayworks.kiln, opPkg=com.clayworks.kiln, pid=9868, uid=10040, asSystem=true, event=KeyEvent { action=ACTION_UP, keyCode=KEYCODE_VOLUME_UP, scanCode=115, metaState=0, flags=0x8, repeatCount=0, eventTime=9519205907000, downTime=9518452967000, deviceId=4, source=0x101, displayId=-1 }, stream=-2147483648, musicOnly=false
+03-10 06:09:09.110  1615  9911 D Vibrator: waitForComplete: Vibrator is already off
+03-10 06:09:09.111  1380  4325 D MediaSessionService: Adjusting suggestedStream=-2147483648 by 0. flags=4116, preferSuggestedStream=false, session=null
+03-10 06:09:09.197  1615  9912 D Vibrator: waitForComplete: Vibrator is already off
+03-10 06:09:09.290  1615  9913 D Vibrator: waitForComplete: Vibrator is already off
+03-10 06:09:09.368  2360  2520 D SatelliteController: isInCarrierRoamingNbIotNtn: satellite is disabled
+03-10 06:09:09.368  2360  2520 D SatelliteController: getCarrierRoamingNtnConnectType: Checking connect type from PLMN config for subId: -1
+03-10 06:09:09.368  2360  2520 D SatelliteController: getCarrierRoamingNtnConnectType: config: null
+03-10 06:09:09.371  2360  2520 D SatelliteController: getCarrierRoamingNtnConnectType: Falling back to global carrier config connect type: 0
+03-10 06:09:09.372  2360  2520 D SatelliteController: updateLastNotifiedCarrierRoamingNtnSignalStrengthAndNotify(-1)
+03-10 06:09:09.372  2360  2520 D SatelliteController: updateLastNotifiedCarrierRoamingNtnSignalStrengthAndNotify(-1) lastNotifiedSignalStrength level: 0
+03-10 06:09:09.372  2360  2520 D SatelliteController: updateLastNotifiedCarrierRoamingNtnSignalStrengthAndNotify(-1) currSignalStrength level: 0
+03-10 06:09:09.374  2072  2596 I vol.Events: writeEvent active_stream_changed UNKNOWN_STREAM_-1
+03-10 06:09:09.428  2061  2078 I deeptouch: I0000 00:00:1773137349.428280    2078 tf_lite_classifier.cc:415] Event stream classified as kNone
+03-10 06:09:09.586  2072  2072 D WindowOnBackDispatcher: setTopOnBackInvokedCallback (unwrapped): null
+--------- beginning of system
+03-10 06:09:09.588  1380  4325 D CoreBackPreview: Window{a3c04f6 u0 VolumeDialog}: Setting back callback null
+03-10 06:09:09.671  1149  1149 W TracingMuxer: type=1400 audit(0.0:552): avc:  denied  { write } for  name="traced_producer" dev="tmpfs" ino=1275 scontext=u:r:gxp_logging:s0 tcontext=u:object_r:traced_producer_socket:s0 tclass=sock_file permissive=0
+03-10 06:09:10.165  2210  2786 D HbmSvManager: Ambient sensor :  TMD3719 Ambient Light update Lux : 0.44488373
+03-10 06:09:11.647  2188  2411 D TemperatureStateSource: sequence=745 actualDelay=10003
+03-10 06:09:11.649  2188  2411 D TemperatureStateSource: Reading temperature: sequence=746
+03-10 06:09:11.657  1613  1613 I pixel-thermal: VIRTUAL-SKIN:24.8959 raw data: VIRTUAL-GNSS-DISP:24895.9 VIRTUAL-NEUTRAL-QUIET:24027.8 VIRTUAL-QUIET-USB2:22732.3 VIRTUAL-SKIN:24895.9 VIRTUAL-USB2-QUIET:23301 disp_therm:25441 gnss_tcxo_therm:25277 neutral_therm:25792 quiet_therm:23684 usb_pwr_therm2:26167 
+03-10 06:09:11.661  2188  2411 D TemperatureStateSource: getDeviceTemperatures: sequence=746 deviceTemperatureType=3 temperatureSource=0 temperatures=[24.89588]
+03-10 06:09:11.661  2188  2411 D BusinessScope: Enqueuing the block
+03-10 06:09:11.662  2188  2411 D TemperatureStateSource: sequence=746 waitTime=10000
+03-10 06:09:11.663  2188  3270 D BusinessScope: Start running the #1500 block
+03-10 06:09:11.668  1613  1613 I pixel-thermal: VIRTUAL-SKIN:24.8959 raw data: VIRTUAL-SKIN:24895.9 
+03-10 06:09:11.670  2188  3270 I TemperatureStateSource: temperature was set
+03-10 06:09:11.671  2188  3270 D BusinessScope: Enqueuing the block
+03-10 06:09:11.672  2188  3270 D ImpulseStateSource: Notify clients: 749
+03-10 06:09:11.672  2188  3270 D BusinessScope: Finish running the #1500 block
+03-10 06:09:11.673  2188  3270 D BusinessScope: Start running the #1501 block
+03-10 06:09:11.674  2188  2416 D ImpulseConnection: bindService: com.google.android.apps.turbo
+03-10 06:09:11.684  1380  2022 D BackgroundInstallControlService: Package event received: 0
+03-10 06:09:11.700  1380  1836 D ActivityManager: sync unfroze 6583 com.google.android.apps.turbo for 6
+03-10 06:09:11.703  1380  2022 D BackgroundInstallControlService: Package event received: 0
+03-10 06:09:11.727  2188  2188 D ImpulseConnection: onServiceConnected: ComponentInfo{com.google.android.apps.turbo/com.google.android.apps.turbo.adaptiveplatform.impulse.ImpulseClientService} service is null false
+03-10 06:09:11.728  2188  2472 D BusinessScope: Finish running the #1501 block
+03-10 06:09:13.008  9868  9917 D ProfileInstaller: Installing profile for com.clayworks.kiln
+03-10 06:09:13.481  1154  1154 D AOC     : A3:MSG: lsm6dsv_device.cc, 732: USF: Lsm6dsvDevice: Sensor 4: Enabled 0, odr_index 0, period_ns 0.
+03-10 06:09:13.482  1154  1154 D AOC     : A3:MSG: lsm6dsv_fifo.cc, 755: USF: Lsm6dsvFifo: ODR: XL/G/T/TS: 60/60/15/7 WM: 6 Intr: 24.
+03-10 06:09:13.483  1154  1154 D AOC     : A3:MSG: lsm6dsv_device.cc, 641: USF: Lsm6dsvDevice: Fifo was disabled for 1526408ns.
+03-10 06:09:13.487  1154  1154 D AOC     : A3:MSG: usf_sensor.cc, 1713: USF: Received stop sampling request for LSM6DSV Stationary Detect (active:-1).
+03-10 06:09:13.487  1154  1154 D AOC     : A3:MSG: usf_sensor.cc, 2169: USF: Sampling configuration 232 not found.
+03-10 06:09:13.488  1154  1154 D AOC     : A3:MSG: usf_sensor_client.cc, 161: USF: Received kErrNotFound when disabling one shot sensor.
+03-10 06:09:13.488  1154  1154 D AOC     : A3:MSG: usf_sensor.cc, 1705: USF: Received start sampling request for LSM6DSV Motion Detect (active:1).
+03-10 06:09:13.488  1154  1154 D AOC     : A3:MSG: lsm6dsv_device.cc, 732: USF: Lsm6dsvDevice: Sensor 3: Enabled 1, odr_index 1, period_ns 500000000.
+03-10 06:09:13.488  1154  1154 D AOC     : A3:MSG: lsm6dsv_fifo.cc, 755: USF: Lsm6dsvFifo: ODR: XL/G/T/TS: 60/60/15/7 WM: 6 Intr: 24.
+03-10 06:09:13.490  1154  1154 D AOC     : A3:MSG: lsm6dsv_device.cc, 641: USF: Lsm6dsvDevice: Fifo was disabled for 743978ns.
+03-10 06:09:13.490  1154  1154 D AOC     : A3:MSG: motion_state_sensor.cc, 327: USF: MoSt: MotionDetect sampling started with sampling ID 237.
+03-10 06:09:13.492  1154  1154 D AOC     : A3:MSG: usf_sensor.cc, 1705: USF: Received start sampling request for LSM6DSV Motion Detect (active:2).
+03-10 06:09:13.494  1154  1154 D AOC     : A3:MSG: usf_sensor.cc, 1713: USF: Received stop sampling request for LSM6DSV FreeFall Detect (active:0).
+03-10 06:09:13.495  1154  1154 D AOC     : A3:MSG: lsm6dsv_device.cc, 732: USF: Lsm6dsvDevice: Sensor 5: Enabled 0, odr_index 0, period_ns 0.
+03-10 06:09:13.495  1154  1154 D AOC     : A3:MSG: lsm6dsv_fifo.cc, 755: USF: Lsm6dsvFifo: ODR: XL/G/T/TS: 60/60/15/7 WM: 6 Intr: 24.
+03-10 06:09:13.496  1154  1154 D AOC     : A3:MSG: lsm6dsv_device.cc, 641: USF: Lsm6dsvDevice: Fifo was disabled for 559977ns.
+03-10 06:09:13.499  1154  1154 D AOC     : A3:MSG: usf_sensor.cc, 1713: USF: Received stop sampling request for LSM6DSV Stationary Detect (active:-1).
+03-10 06:09:13.499  1154  1154 D AOC     : A3:MSG: usf_sensor.cc, 2169: USF: Sampling configuration 236 not found.
+03-10 06:09:13.499  1154  1154 D AOC     : A3:MSG: usf_sensor_client.cc, 145: USF: Received kErrNotFound when disabling one shot sensor.
+03-10 06:09:14.036   918   950 I CHRE    : @ 9571.572: [AR] inconsistent: 41.176471
+03-10 06:09:15.309  1154  1154 D AOC     : A3:MSG: vsc_controller.cc, 532: VSC: [Step Counter] requestSensorEvents: sensor 0x20002, period=18446744073709 latency
+03-10 06:09:15.315  1154  1154 D AOC     : A3:MSG: usf_sensor.cc, 1705: USF: Received start sampling request for LSM6DSV Motion Detect (active:3).
+03-10 06:09:15.316  1154  1154 D AOC     : A3:MSG: vsc_controller.cc, 550: VSC: [Step Counter] stopSensorEvents: sensor 0x10001
+03-10 06:09:15.318  1154  1154 D AOC     : A3:MSG: usf_sensor.cc, 1713: USF: Received stop sampling request for LSM6DSV Accelerometer (active:5).
+03-10 06:09:15.318  1154  1154 D AOC     : A3:MSG: usf_sensor_client.cc, 435: USF: Stopping stale sample stream with sampling ID: 233
+03-10 06:09:15.318  1154  1154 D AOC     : A3:MSG: usf_sensor_client.cc, 435: USF: Stopping stale sample stream with sampling ID: 233
+03-10 06:09:15.319  1154  1154 D AOC     : A3:MSG: usf_sensor.cc, 1713: USF: Received stop sampling request for LSM6DSV Accelerometer (active:4).
+03-10 06:09:15.319  1154  1154 D AOC     : A3:MSG: usf_sensor.cc, 2169: USF: Sampling configuration 233 not found.
+03-10 06:09:15.319  1154  1154 D AOC     : A3:MSG: usf_sensor.cc, 1713: USF: Received stop sampling request for LSM6DSV Accelerometer (active:4).
+03-10 06:09:15.319  1154  1154 D AOC     : A3:MSG: usf_sensor.cc, 2169: USF: Sampling configuration 233 not found.
+03-10 06:09:15.872   918   950 I CHRE    : @ 9573.407: [ip] Peak detected: magnitude = 0.240015 hpa, duration = 280.000001 ms
+03-10 06:09:15.875   918   950 I CHRE    : @ 9573.408: [ip] Peak detected: magnitude = 0.219582 hpa, duration = 200.000002 ms
+03-10 06:09:15.875   918   950 I CHRE    : @ 9573.409: [ip] Peak detected: magnitude = 0.214869 hpa, duration = 159.999996 ms
+03-10 06:09:15.876   918   950 D CHRE.HAL: Received a nanoapp message from 0x476f6f676c001022 endpoint 0x8042: Type 0x3 size 8 
+03-10 06:09:15.877   941  1538 I suez-nanoapp-clients: Barometric peak detected: magnitude = 0.240015 hPa (bucket: 6), duration = 280.000000 ms (bucket: 24).
+03-10 06:09:15.878   918   950 D CHRE.HAL: Received a nanoapp message from 0x476f6f676c001022 endpoint 0x8042: Type 0x3 size 8 
+03-10 06:09:15.878   941  1790 I suez-nanoapp-clients: Vendor atom [id = 100047] reported.
+03-10 06:09:15.879   941  1538 I suez-nanoapp-clients: Barometric peak detected: magnitude = 0.219582 hPa (bucket: 5), duration = 200.000000 ms (bucket: 18).
+03-10 06:09:15.880   941  1790 I suez-nanoapp-clients: Vendor atom [id = 100047] reported.
+03-10 06:09:15.881   918   950 D CHRE.HAL: Received a nanoapp message from 0x476f6f676c001022 endpoint 0x8042: Type 0x3 size 8 
+03-10 06:09:15.881   941  1538 I suez-nanoapp-clients: Barometric peak detected: magnitude = 0.214869 hPa (bucket: 5), duration = 160.000000 ms (bucket: 14).
+03-10 06:09:15.882   941  1790 I suez-nanoapp-clients: Vendor atom [id = 100047] reported.
+03-10 06:09:15.882   918   950 D CHRE.HAL: Received a nanoapp message from 0x476f6f676c001022 endpoint 0x8042: Type 0x3 size 8 
+03-10 06:09:15.883   941   941 I suez-nanoapp-clients: Barometric peak detected: magnitude = 0.311418 hPa (bucket: 7), duration = 160.000000 ms (bucket: 14).
+03-10 06:09:15.883   941  1790 I suez-nanoapp-clients: Vendor atom [id = 100047] reported.
+03-10 06:09:15.884   918   950 I CHRE    : @ 9573.409: [ip] Peak detected: magnitude = 0.311418 hpa, duration = 159.999996 ms
+03-10 06:09:21.665  2188  2472 D TemperatureStateSource: sequence=746 actualDelay=10003
+03-10 06:09:21.667  2188  2472 D TemperatureStateSource: Reading temperature: sequence=747
+03-10 06:09:21.673  1613  1613 I pixel-thermal: VIRTUAL-SKIN:24.9573 raw data: VIRTUAL-GNSS-DISP:24957.3 VIRTUAL-NEUTRAL-QUIET:24036.9 VIRTUAL-QUIET-USB2:22711.2 VIRTUAL-SKIN:24957.3 VIRTUAL-USB2-QUIET:23183 disp_therm:25394 gnss_tcxo_therm:25417 neutral_therm:25816 quiet_therm:23684 usb_pwr_therm2:25956 
+03-10 06:09:21.675  2188  2472 D TemperatureStateSource: getDeviceTemperatures: sequence=747 deviceTemperatureType=3 temperatureSource=0 temperatures=[24.95734]
+03-10 06:09:21.675  2188  2472 D BusinessScope: Enqueuing the block
+03-10 06:09:21.676  2188  2472 D TemperatureStateSource: sequence=747 waitTime=10000
+03-10 06:09:21.677  2188  3270 D BusinessScope: Start running the #1502 block
+03-10 06:09:21.678  2188  3270 D BusinessScope: Enqueuing the block
+03-10 06:09:21.678  2188  3270 D ImpulseStateSource: Notify clients: 750
+03-10 06:09:21.678  2188  3270 D BusinessScope: Finish running the #1502 block
+03-10 06:09:21.680  2188  3270 D BusinessScope: Start running the #1503 block
+03-10 06:09:21.680  2188  3270 D BusinessScope: Finish running the #1503 block
+03-10 06:09:23.268  1154  1154 D AOC     : A3:MSG: vsc_controller.cc, 532: VSC: [Significant Motion] requestSensorEvents: sensor 0x20002, period=18446744073709 l
+03-10 06:09:23.269  1154  1154 D AOC     : A3:MSG: vsc_controller.cc, 550: VSC: [Significant Motion] stopSensorEvents: sensor 0x10001
+03-10 06:09:23.274  1154  1154 D AOC     : A3:MSG: usf_sensor.cc, 1705: USF: Received start sampling request for LSM6DSV Accelerometer (active:6).
+03-10 06:09:23.274  1154  1154 D AOC     : A3:MSG: lsm6dsv_device.cc, 732: USF: Lsm6dsvDevice: Sensor 0: Enabled 1, odr_index 5, period_ns 20000000.
+03-10 06:09:23.275  1154  1154 D AOC     : A3:MSG: lsm6dsv_fifo.cc, 755: USF: Lsm6dsvFifo: ODR: XL/G/T/TS: 60/60/15/7 WM: 6 Intr: 24.
+03-10 06:09:23.276  1154  1154 D AOC     : A3:MSG: lsm6dsv_device.cc, 641: USF: Lsm6dsvDevice: Fifo was disabled for 837158ns.
+03-10 06:09:26.758   918   950 D CHRE.HAL: Received a nanoapp message from 0x476f6f676c001016 endpoint 0x3: Type 0x8003 size 1 
+03-10 06:09:26.794   989  3272 I vendor.google.wifi_ext-service-vendor: Wifi: Resetting SAR Scenario to default
+03-10 06:09:26.794   989  3272 E WifiHAL : wifi_reset_tx_power_scenario
+03-10 06:09:26.862  2225  2225 D GRIL-S  : [0056]> UPDATE_DEVICE_STATE DeviceState: Usb:1, Wifi: 0, Wifi AP: 0, Earpiece: 0, Bluetooth: 0, Wireless charging: 0, Screen: 1, Camera: 0, 0, -, -, Motion: 0, Bluetooth tethering: 0, Voice: 0, Wifi 2.4G: 0, Radio: 1, Bluetooth connected: 0, Bluetooth media: 0, Wifi Band: 0, Wifi AP Band: 0, Wifi call: 0, mmWave: 0, mCellBackhaul: 0, mHallSensor: 0, mDozeStatus: 0, mAppClassInfo: 0, mWifiCapSensorStatus: 0, mCellCapSensorStatus: 0, mBesideHeadHandStatus: 0, mSpeakerStatus: 0, mProtectiveCaseStatus: 0, mWifiSettingStatus: 0, mGpsStatus: 0
+03-10 06:09:26.915  2225  2774 D GRIL-S  : [0056]< UPDATE_DEVICE_STATE 
+03-10 06:09:27.019  9868  9876 W .clayworks.kiln: userfaultfd: MOVE ioctl seems unsupported: Connection timed out
+03-10 06:09:28.265  1120  1220 D DMD     : Flush DMD buffer, size=2098539
+03-10 06:09:31.679  2188  2411 D TemperatureStateSource: sequence=747 actualDelay=10002
+03-10 06:09:31.681  2188  2411 D TemperatureStateSource: Reading temperature: sequence=748
+03-10 06:09:31.690  1613  1613 I pixel-thermal: VIRTUAL-SKIN:24.8761 raw data: VIRTUAL-GNSS-DISP:24876.1 VIRTUAL-NEUTRAL-QUIET:24098.4 VIRTUAL-QUIET-USB2:22770.4 VIRTUAL-SKIN:24876.1 VIRTUAL-USB2-QUIET:23188.1 disp_therm:25394 gnss_tcxo_therm:25277 neutral_therm:25862 quiet_therm:23755 usb_pwr_therm2:25909 
+03-10 06:09:31.692  2188  2411 D TemperatureStateSource: getDeviceTemperatures: sequence=748 deviceTemperatureType=3 temperatureSource=0 temperatures=[24.87614]
+03-10 06:09:31.693  2188  2411 D BusinessScope: Enqueuing the block
+03-10 06:09:31.693  2188  2411 D TemperatureStateSource: sequence=748 waitTime=10000
+03-10 06:09:31.694  2188  3270 D BusinessScope: Start running the #1504 block
+03-10 06:09:31.696  2188  3270 D BusinessScope: Enqueuing the block
+03-10 06:09:31.696  2188  3270 D ImpulseStateSource: Notify clients: 751
+03-10 06:09:31.696  2188  3270 D BusinessScope: Finish running the #1504 block
+03-10 06:09:31.698  2188  3270 D BusinessScope: Start running the #1505 block
+03-10 06:09:31.699  2188  3270 D BusinessScope: Finish running the #1505 block
+03-10 06:09:33.381  1380  1519 V DisplayPowerController[0]: Brightness [0.0] reason changing to: 'automatic [ dim ]', previous reason: 'automatic'.
+03-10 06:09:33.381  1380  1519 I DisplayPowerController[0]: BrightnessEvent: brt=0.0(0.0%), nits=2.0, lux=7.858204E-7, reason=automatic [ dim ], strat=AutomaticBrightnessStrategy, state=ON, stateReason=KEY, policy=DIM, flags=, initBrt=0.0032738803, rcmdBrt=0.0032738803, preBrt=0.0042888746, preLux=0.0259279, lastReadLux=0.824811, wasShortTermModelActive=false, autoBrightness=true (default), unclampedBrt=0.0032738803, hbmMax=0.6, hbmMode=off, thrmMax=1.0, rbcStrength=50, powerFactor=1.0, physDisp=Built-in Screen(local:4619827677550801152), logicalId=0, slowChange=false, rampSpeed=0.7047244
+03-10 06:09:33.388  2210  2786 D HbmSvManager: Display onChange info : 
+03-10 06:09:33.388  2210  2786 D HbmSvManager: ; displayInfoIndex : 0
+03-10 06:09:33.388  2210  2786 D HbmSvManager: ; adjustedBrightness : 0.0
+03-10 06:09:33.397   571   614 I hwc-display: path=drm, id=0, level=14, nits=4.823454, brightness=0.002833, DimmingOn=0, Hbm=0, LhbmOn=0, OpRate=0
+03-10 06:09:33.406   571   614 I hwc-display: path=drm, id=0, level=12, nits=4.299601, brightness=0.002307, DimmingOn=0, Hbm=0, LhbmOn=0, OpRate=0
+03-10 06:09:33.413   571   614 I hwc-display: path=drm, id=0, level=11, nits=3.986390, brightness=0.001993, DimmingOn=0, Hbm=0, LhbmOn=0, OpRate=0
+03-10 06:09:33.422   571   614 I hwc-display: path=drm, id=0, level=10, nits=3.696121, brightness=0.001702, DimmingOn=0, Hbm=0, LhbmOn=0, OpRate=0
+03-10 06:09:33.430   571   614 I hwc-display: path=drm, id=0, level=9, nits=3.428767, brightness=0.001434, DimmingOn=0, Hbm=0, LhbmOn=0, OpRate=0
+03-10 06:09:33.438   571   614 I hwc-display: path=drm, id=0, level=8, nits=3.184329, brightness=0.001188, DimmingOn=0, Hbm=0, LhbmOn=0, OpRate=0
+03-10 06:09:33.447   571   614 I hwc-display: path=drm, id=0, level=7, nits=2.962807, brightness=0.000966, DimmingOn=0, Hbm=0, LhbmOn=0, OpRate=0
+03-10 06:09:33.447  1154  1154 D AOC     : A3:MSG: tmd3719_device.cc, 4582: USF: TMD3719: dbv:8 leakage:0.722378 refresh_rate:120 status:1 op_hz:120 [0]
+03-10 06:09:33.463   571   614 I hwc-display: path=drm, id=0, level=6, nits=2.588538, brightness=0.000591, DimmingOn=0, Hbm=0, LhbmOn=0, OpRate=0
+03-10 06:09:33.472   571   614 I hwc-display: path=drm, id=0, level=5, nits=2.435427, brightness=0.000437, DimmingOn=0, Hbm=0, LhbmOn=0, OpRate=0
+03-10 06:09:33.498   571   671 I hwc-display: path=drm, id=0, level=4, nits=2.114699, brightness=0.000115, DimmingOn=0, Hbm=0, LhbmOn=0, OpRate=0
+03-10 06:09:33.506  1154  1154 D AOC     : A3:MSG: tmd3719_device.cc, 4582: USF: TMD3719: dbv:4 leakage:0.682031 refresh_rate:120 status:1 op_hz:120 [0]
+03-10 06:09:34.037  1380  4325 D WifiNl80211Manager: Scan result ready event
+03-10 06:09:34.037  1380  4325 D WifiNative: Scan result ready event
+03-10 06:09:34.081  1380  1950 D PasspointManager: ANQP entry not found for: ba:cf:84:26:36:b1:<MCH-NET-2.4G>
+03-10 06:09:34.082  1380  1950 D PasspointManager: ANQP entry not found for: ba:cf:84:26:36:b2:<MCH-NET-IoT>
+03-10 06:09:34.082  1380  1950 D PasspointManager: ANQP entry not found for: 6a:cf:84:26:36:b5:<MCH-NET-5G>
+03-10 06:09:34.082  1380  1950 D PasspointManager: ANQP entry not found for: 6a:cf:84:26:36:b6:<MCH-NET-IoT>
+03-10 06:09:34.082  1380  1950 D PasspointManager: ANQP entry not found for: 6a:cf:84:26:36:b7:<MCH-NET-PROTON>
+03-10 06:09:34.085   989  3272 I WifiHAL : Creating message to get link statistics; iface = 47
+03-10 06:09:34.173   989  3272 D WifiHAL : Start debug command: mType GET_FEATURE
+03-10 06:09:34.174   989  3272 I WifiHAL : CreateRequest mType = GET_FEATURE
+03-10 06:09:34.174   989  3272 D WifiHAL : In DebugCommand::handleResponse, mType:GET_FEATURE
+03-10 06:09:34.174   989  3272 D WifiHAL : len = 4, expected len = 4
+03-10 06:09:34.855  1380  5532 I AppSearchIcing: icing-search-engine.cc:2486: Persisting data to disk with mode 3
+03-10 06:09:34.865  1380  5532 I AppSearchIcing: icing-search-engine.cc:2501: PersistToDisk completed.
+03-10 06:09:35.002  2360  2523 D EuiccConnector: handleMessage: E msg.what=3
+03-10 06:09:35.003  2360  2523 D EuiccConnector: processMsg: ConnectedState
+03-10 06:09:35.013  2721  2721 I EuiccGoogle: [2] EuiccServiceImpl.onDestroy: onDestroy: EuiccService on destroy.
+03-10 06:09:35.028  2360  2523 D EuiccConnector: transitionTo: destState=AvailableState
+03-10 06:09:35.028  2360  2523 D EuiccConnector: handleMessage: new destination call exit/enter
+03-10 06:09:35.028  2360  2523 D EuiccConnector: setupTempStateStackWithStatesToEnter: X mTempStateStackCount=2,curStateInfo: null
+03-10 06:09:35.028  2360  2523 D EuiccConnector: invokeExitMethods: ConnectedState
+03-10 06:09:35.029  2360  2523 D EuiccConnector: invokeExitMethods: DisconnectedState
+03-10 06:09:35.029  2360  2523 D EuiccConnector: moveTempStackToStateStack: i=1,j=0
+03-10 06:09:35.029  2360  2523 D EuiccConnector: moveTempStackToStateStack: i=0,j=1
+03-10 06:09:35.029  2360  2523 D EuiccConnector: moveTempStackToStateStack: X mStateStackTop=1,startingIndex=0,Top=AvailableState
+03-10 06:09:35.029  2360  2523 D EuiccConnector: invokeEnterMethods: UnavailableState
+03-10 06:09:35.029  2360  2523 D EuiccConnector: invokeEnterMethods: AvailableState
+03-10 06:09:35.029  2360  2523 D EuiccConnector: handleMessage: X
+03-10 06:09:37.056  9918  9918 W libbinder.BackendUnifiedServiceManager: Thread Pool max thread count is 0. Cannot cache binder as linkToDeath cannot be implemented. serviceName: activity
+03-10 06:09:37.323  9923  9923 W libbinder.BackendUnifiedServiceManager: Thread Pool max thread count is 0. Cannot cache binder as linkToDeath cannot be implemented. serviceName: SurfaceFlingerAIDL
+03-10 06:09:37.323  9923  9923 W libbinder.BpBinder: Linking to death on android.gui.ISurfaceComposer but there are no threads (yet?) listening to incoming transactions. See ProcessState::startThreadPool and ProcessState::setThreadPoolMaxThreadCount. Generally you should setup the binder threadpool before other initialization steps.
+03-10 06:09:39.707  1149  1149 W TracingMuxer: type=1400 audit(0.0:553): avc:  denied  { write } for  name="traced_producer" dev="tmpfs" ino=1275 scontext=u:r:gxp_logging:s0 tcontext=u:object_r:traced_producer_socket:s0 tclass=sock_file permissive=0
+03-10 06:09:40.059  1380  1961 D InetDiagMessage: Destroyed 0 sockets, proto=IPPROTO_TCP, family=AF_INET, states=14
+03-10 06:09:40.068  1380  1961 D InetDiagMessage: Destroyed 0 sockets, proto=IPPROTO_TCP, family=AF_INET6, states=14
+03-10 06:09:40.069  1380  1961 D InetDiagMessage: Destroyed live tcp sockets for uids={10133} in 27ms
+03-10 06:09:40.078  1380  1961 D InetDiagMessage: Destroyed 0 sockets, proto=IPPROTO_TCP, family=AF_INET, states=14
+03-10 06:09:40.087  1380  1961 D InetDiagMessage: Destroyed 0 sockets, proto=IPPROTO_TCP, family=AF_INET6, states=14
+03-10 06:09:40.087  1380  1961 D InetDiagMessage: Destroyed live tcp sockets for uids={20133} in 18ms
+03-10 06:09:40.542  4590  5795 I libbinder.IPCThreadState: oneway function results for code 2 on binder at 0xb40000737bf007e0 will be dropped but finished with status UNKNOWN_TRANSACTION
+03-10 06:09:40.545  4590  9838 I libbinder.IPCThreadState: oneway function results for code 2 on binder at 0xb40000737bee8720 will be dropped but finished with status UNKNOWN_TRANSACTION
+03-10 06:09:40.553  1380  4063 W ProcessStats: Tracking association SourceState{a9c5e0d com.google.android.googlequicksearchbox:googleapp/10172 Service #6150} whose proc state 8 is better than process ProcessState{687ed0a com.google.android.googlequicksearchbox:search/10172 pkg=com.google.android.googlequicksearchbox} proc state 14 (10 skipped)
+03-10 06:09:40.607  4761  4779 I libbinder.IPCThreadState: oneway function results for code 2 on binder at 0xb40000737bea4d40 will be dropped but finished with status UNKNOWN_TRANSACTION
+03-10 06:09:40.681  3892  3915 I libbinder.IPCThreadState: oneway function results for code 2 on binder at 0xb40000737bea2af0 will be dropped but finished with status UNKNOWN_TRANSACTION
+03-10 06:09:41.696  2188  2416 D TemperatureStateSource: sequence=748 actualDelay=10003
+03-10 06:09:41.698  2188  2416 D TemperatureStateSource: Reading temperature: sequence=749
+03-10 06:09:41.708  1613  1613 I pixel-thermal: VIRTUAL-SKIN:25.0525 raw data: VIRTUAL-GNSS-DISP:25052.5 VIRTUAL-NEUTRAL-QUIET:24104.1 VIRTUAL-QUIET-USB2:22788.8 VIRTUAL-SKIN:25052.5 VIRTUAL-USB2-QUIET:23185.4 disp_therm:25394 gnss_tcxo_therm:25581 neutral_therm:25839 quiet_therm:23778 usb_pwr_therm2:25886 
+03-10 06:09:41.709  2188  2416 D TemperatureStateSource: getDeviceTemperatures: sequence=749 deviceTemperatureType=3 temperatureSource=0 temperatures=[25.05246]
+03-10 06:09:41.710  2188  2416 D BusinessScope: Enqueuing the block
+03-10 06:09:41.710  2188  2416 D TemperatureStateSource: sequence=749 waitTime=10000
+03-10 06:09:41.711  2188  3270 D BusinessScope: Start running the #1506 block
+03-10 06:09:41.716  1613  1613 I pixel-thermal: VIRTUAL-SKIN:25.0525 raw data: VIRTUAL-SKIN:25052.5 
+03-10 06:09:41.717  2188  3270 I TemperatureStateSource: temperature was set
+03-10 06:09:41.720  2188  3270 D BusinessScope: Enqueuing the block
+03-10 06:09:41.720  2188  3270 D ImpulseStateSource: Notify clients: 752
+03-10 06:09:41.720  2188  3270 D BusinessScope: Finish running the #1506 block
+03-10 06:09:41.721  2188  3270 D BusinessScope: Start running the #1507 block
+03-10 06:09:41.729  2188  3270 D ImpulseConnection: timeout didn't happen: com.google.android.apps.turbo
+03-10 06:09:41.731  2188  2411 D BusinessScope: Finish running the #1507 block
+03-10 06:09:42.678   918   950 I CHRE    : @ 9600.215: [AR] still: 95.686268
+03-10 06:09:44.714   989   989 I WifiHAL : Creating message to get link statistics; iface = 47
+03-10 06:09:44.843   989   989 E libbinder.IPCThreadState: binder thread pool (1 threads) starved for 129 ms
+03-10 06:09:45.082  1380  1896 D ActivityManager: freezing 2721 com.google.android.euicc
+03-10 06:09:45.096  1380  1961 D InetDiagMessage: Destroyed 0 sockets, proto=IPPROTO_TCP, family=AF_INET, states=14
+03-10 06:09:45.101  1380  1961 D InetDiagMessage: Destroyed 0 sockets, proto=IPPROTO_TCP, family=AF_INET6, states=14
+03-10 06:09:45.101  1380  1961 D InetDiagMessage: Destroyed live tcp sockets for uids={10133} in 13ms
+03-10 06:09:45.575  1380  1961 D InetDiagMessage: Destroyed 0 sockets, proto=IPPROTO_TCP, family=AF_INET, states=14
+03-10 06:09:45.585  1380  1961 D InetDiagMessage: Destroyed 0 sockets, proto=IPPROTO_TCP, family=AF_INET6, states=14
+03-10 06:09:45.585  1380  1961 D InetDiagMessage: Destroyed live tcp sockets for uids={10282} in 15ms
+03-10 06:09:45.594  1380  1961 D InetDiagMessage: Destroyed 0 sockets, proto=IPPROTO_TCP, family=AF_INET, states=14
+03-10 06:09:45.603  1380  1961 D InetDiagMessage: Destroyed 0 sockets, proto=IPPROTO_TCP, family=AF_INET6, states=14
+03-10 06:09:45.604  1380  1961 D InetDiagMessage: Destroyed live tcp sockets for uids={20282} in 19ms
+03-10 06:09:49.319   941   991 D USF     : AP/AOC clock synced: AOC: 9606862853608 ns (236098231978 tk), AP: 9605483814704 ns, diff = 1379038904 ns
+03-10 06:09:50.351  1613  1624 I pixel-thermal: VIRTUAL-SKIN-CPU:24.8216 raw data: VIRTUAL-GNSS-DISP:24821.6 VIRTUAL-NEUTRAL-QUIET:24077.6 VIRTUAL-QUIET-USB2:22788.8 VIRTUAL-SKIN:24821.6 VIRTUAL-SKIN-CPU:24821.6 VIRTUAL-USB2-QUIET:23185.4 disp_therm:25394 gnss_tcxo_therm:25183 neutral_therm:25769 quiet_therm:23778 usb_pwr_therm2:25886 
+03-10 06:09:50.352  1613  1624 I pixel-thermal: VIRTUAL-SKIN:24.8216 raw data: VIRTUAL-SKIN:24821.6 
+03-10 06:09:50.353  1613  1624 I pixel-thermal: VIRTUAL-SKIN-CHARGE:24.2921 raw data: VIRTUAL-SKIN-CHARGE:24292.1 qi_therm:27104 quiet_therm:23778 
+03-10 06:09:50.353  1613  1624 I pixel-thermal: VIRTUAL-SKIN-HINT:24.8216 raw data: VIRTUAL-SKIN:24821.6 VIRTUAL-SKIN-HINT:24821.6 
+03-10 06:09:50.354  1613  1624 I pixel-thermal: VIRTUAL-SKIN-CPU-GPU:24.8216 raw data: VIRTUAL-SKIN:24821.6 VIRTUAL-SKIN-CPU-GPU:24821.6 
+03-10 06:09:50.354  1613  1624 I pixel-thermal: cellular-emergency:24.8216 raw data: VIRTUAL-SKIN:24821.6 cellular-emergency:24821.6 
+03-10 06:09:50.580  1380  1896 D ActivityManager: freezing 4761 com.google.android.googlequicksearchbox:googleapp
+03-10 06:09:50.588  1380  1896 D ActivityManager: freezing 7842 com.google.android.adservices.api
+03-10 06:09:50.590  1380  1896 D ActivityManager: freezing 7807 com.google.android.webview:sandboxed_process0:org.chromium.content.app.SandboxedProcessService0:0
+03-10 06:09:50.889  1380  1961 D InetDiagMessage: Destroyed 0 sockets, proto=IPPROTO_TCP, family=AF_INET, states=14
+03-10 06:09:50.892  1380  1961 D InetDiagMessage: Destroyed 0 sockets, proto=IPPROTO_TCP, family=AF_INET6, states=14
+03-10 06:09:50.893  1380  1961 D InetDiagMessage: Destroyed live tcp sockets for uids={10282} in 9ms
+03-10 06:09:50.896  1380  1961 D InetDiagMessage: Destroyed 0 sockets, proto=IPPROTO_TCP, family=AF_INET, states=14
+03-10 06:09:50.900  1380  1961 D InetDiagMessage: Destroyed 0 sockets, proto=IPPROTO_TCP, family=AF_INET6, states=14
+03-10 06:09:50.900  1380  1961 D InetDiagMessage: Destroyed live tcp sockets for uids={99000} in 7ms
+03-10 06:09:50.953  1380  1896 D ActivityManager: freezing 4590 com.google.android.googlequicksearchbox:search
+03-10 06:09:51.718  2188  2416 D TemperatureStateSource: sequence=749 actualDelay=10003
+03-10 06:09:51.722  2188  2416 D TemperatureStateSource: Reading temperature: sequence=750
+03-10 06:09:51.728  1613  1613 I pixel-thermal: VIRTUAL-SKIN:24.8216 raw data: VIRTUAL-SKIN:24821.6 
+03-10 06:09:51.730  2188  2416 D TemperatureStateSource: getDeviceTemperatures: sequence=750 deviceTemperatureType=3 temperatureSource=0 temperatures=[24.82162]
+03-10 06:09:51.731  2188  2416 D BusinessScope: Enqueuing the block
+03-10 06:09:51.732  2188  2411 D BusinessScope: Start running the #1508 block
+03-10 06:09:51.732  2188  2416 D TemperatureStateSource: sequence=750 waitTime=10000
+03-10 06:09:51.738  1613  1613 I pixel-thermal: VIRTUAL-SKIN:24.8216 raw data: VIRTUAL-SKIN:24821.6 
+03-10 06:09:51.739  2188  2411 I TemperatureStateSource: temperature was set
+03-10 06:09:51.741  2188  2411 D BusinessScope: Enqueuing the block
+03-10 06:09:51.742  2188  2411 D ImpulseStateSource: Notify clients: 753
+03-10 06:09:51.742  2188  2411 D BusinessScope: Finish running the #1508 block
+03-10 06:09:51.743  2188  2411 D BusinessScope: Start running the #1509 block
+03-10 06:09:51.745  2188  3270 D BusinessScope: Finish running the #1509 block
+03-10 06:09:51.958  9927  9927 W libbinder.BackendUnifiedServiceManager: Thread Pool max thread count is 0. Cannot cache binder as linkToDeath cannot be implemented. serviceName: SurfaceFlingerAIDL
+03-10 06:09:51.958  9927  9927 W libbinder.BpBinder: Linking to death on android.gui.ISurfaceComposer but there are no threads (yet?) listening to incoming transactions. See ProcessState::startThreadPool and ProcessState::setThreadPoolMaxThreadCount. Generally you should setup the binder threadpool before other initialization steps.
+03-10 06:09:51.959  9927  9927 W libbinder.ProcessState: Extra binder thread started, but 0 threads requested. Do not use *startThreadPool when zero threads are requested.
+03-10 06:09:52.009  3881  4201 W MediaProvider: isAppCloneUserPair for user 0: false
+03-10 06:09:52.031  3881  4085 D DatabaseBackupAndRecovery: xattr set to 150 for key:user.nextownerid on path: /data/media/0/.transforms/recovery/leveldb-ownership.
+03-10 06:09:52.031  3881  4085 D DatabaseBackupAndRecovery: Updated next owner id to: 150
+03-10 06:09:52.032  3881  4085 V DatabaseBackupAndRecovery: Created relation b/w 100 and com.android.shell::0
+03-10 06:09:52.032  2550  6396 W DeviceStateUtils: Active network is null
+03-10 06:09:52.033  2550  6396 W DeviceStateUtils: Active network is null
+03-10 06:09:52.033  3881  4085 V DatabaseBackupAndRecovery: Got backed up next generation number 1022 for volume external_primary
+03-10 06:09:52.033  2550  6396 W DeviceStateUtils: Active network is null
+03-10 06:09:52.035  2550  6396 W DeviceStateUtils: Active network is null
+03-10 06:09:52.035  2550  6396 W DeviceStateUtils: Active network is null
+03-10 06:09:52.076  2550  2550 D BoundBrokerSvc: onBind: Intent { act=com.google.android.contextmanager.service.ContextManagerLogsUploadBoundService.ACTION_TASK_READY dat=chimera-action:/... xflg=0x4 cmp=com.google.android.gms/.chimera.PersistentInternalBoundBrokerService }
+03-10 06:09:52.077  2550  2550 D BoundBrokerSvc: Loading bound service for intent: Intent { act=com.google.android.contextmanager.service.ContextManagerLogsUploadBoundService.ACTION_TASK_READY dat=chimera-action:/... xflg=0x4 cmp=com.google.android.gms/.chimera.PersistentInternalBoundBrokerService }
+03-10 06:09:52.083  2550  4957 I NetworkScheduler.Stats: (REDACTED) Task %s/%s started execution. cause:%s exec_start_elapsed_seconds: %s
+03-10 06:09:52.090  2550  9836 I NetworkScheduler.Stats: (REDACTED) Task %s/%s finished executing. cause:%s result: %s elapsed_millis: %s uptime_millis: %s exec_start_elapsed_seconds: %s
+03-10 06:09:52.093  2550  2550 D BoundBrokerSvc: onUnbind: Intent { act=com.google.android.contextmanager.service.ContextManagerLogsUploadBoundService.ACTION_TASK_READY dat=chimera-action:/... xflg=0x4 cmp=com.google.android.gms/.chimera.PersistentInternalBoundBrokerService }
+03-10 06:09:52.102  2550  6396 W DeviceStateUtils: Active network is null
+03-10 06:09:52.102  2550  6396 W DeviceStateUtils: Active network is null
+03-10 06:09:52.102  2550  6396 W DeviceStateUtils: Active network is null
+03-10 06:09:52.103  2550  6396 W DeviceStateUtils: Active network is null
+03-10 06:09:52.103  2550  6396 W DeviceStateUtils: Active network is null
+03-10 06:09:52.181  1613  1624 I pixel-thermal: VIRTUAL-USB-UI:0 raw data: USB-MINUS-NEUTRAL:70 USB-MINUS-USB2:-47 VIRTUAL-USB-UI:0 neutral_therm:25769 usb_pwr_therm:25839 usb_pwr_therm2:25886 
+03-10 06:09:52.181  1613  1624 I pixel-thermal: VIRTUAL-USB-THROTTLING:0 raw data: USB-MINUS-NEUTRAL:70 USB-MINUS-USB2:-47 VIRTUAL-USB-THROTTLING:0 usb_pwr_therm:25839 
+03-10 06:09:52.182  1613  1624 I pixel-thermal: usb_pwr_therm:25.839 raw data: usb_pwr_therm:25839 
+03-10 06:09:52.182  1613  1624 I pixel-thermal: Power rails total power: 670.23 mW for 60021 ms
+03-10 06:09:52.182  1613  1624 I pixel-thermal: Power rails [S6M_LLDO1: 143.47 mW] [L7S_SENSORS: 3.80 mW] [S10M_VDD_TPU: 0.00 mW] [S5M_VDD_INT: 5.88 mW] [S2M_VDD_CPUCL2: 49.40 mW] [S1M_VDD_MIF: 19.82 mW] 
+03-10 06:09:52.182  1613  1624 I pixel-thermal: Power rails [S4M_VDD_CPUCL0: 34.24 mW] [VSYS_PWR_WLAN_BT: 20.09 mW] [VSYS_PWR_RFFE: 0.00 mW] [VSYS_PWR_MODEM: 20.93 mW] [VSYS_PWR_MMWAVE: 0.00 mW] [S3M_VDD_CPUCL1: 11.21 mW] 
+03-10 06:09:52.182  1613  1624 I pixel-thermal: Power rails [L2S_PLL_MIPI_UFS: 15.50 mW] [L14S_ALIVE: 0.01 mW] [S9S_VDD_AOC: 5.70 mW] [S4S_VDD2H_MEM: 16.23 mW] [L9S_GNSS_CORE: 2.60 mW] [S8S_VDD_G3D_L2: 7.62 mW] 
+03-10 06:09:52.182  1613  1624 I pixel-thermal: Power rails [S5S_VDDQ_MEM: 2.82 mW] [S2S_VDD_G3D: 0.84 mW] [S1S_VDD_CAM: 0.90 mW] [S8M_LLDO2: 30.86 mW] [L15M_VDD_SLC_M: 6.81 mW] [VSYS_PWR_DISPLAY: 271.49 mW] 
+03-10 06:09:52.182  1613  1624 I pixel-thermal: CDEV log gxp-cooling state:0 tpu_cooling state:0 usbc-port state:0 thermal-cpufreq-1 state:0 chg_mdis state:0 thermal-gpufreq-0 state:0 thermal-cpufreq-2 state:0 thermal-cpufreq-0 state:0 
+03-10 06:09:52.204  1380  1836 I ActivityManager: Broadcasting: Intent { act=android.intent.action.MEDIA_SCANNER_SCAN_FILE dat=file:///... flg=0x400000 }
+03-10 06:09:52.205  1380  1836 I ActivityManager: Enqueued broadcast Intent { act=android.intent.action.MEDIA_SCANNER_SCAN_FILE dat=file:///... flg=0x400000 }: 0
+03-10 06:09:52.209  3881  3881 I MediaServiceV2: Creating work for intent Intent { act=android.intent.action.MEDIA_SCANNER_SCAN_FILE dat=file:///... flg=0x1400010 cmp=com.google.android.providers.media.module/com.android.providers.media.MediaServiceV2 }
+03-10 06:09:52.210  3881  3881 I MediaServiceV2: Work enqueued for intent: Intent { act=android.intent.action.MEDIA_SCANNER_SCAN_FILE dat=file:///... flg=0x1400010 cmp=com.google.android.providers.media.module/com.android.providers.media.MediaServiceV2 }
+03-10 06:09:52.211  1380  1474 I ActivityManager: Broadcast completed: result=0
+03-10 06:09:52.231  3881  4137 W JobInfo : Requested important-while-foreground flag for job38 is ignored and takes no effect
+03-10 06:09:52.231  3881  4137 D WM-SystemJobScheduler: Scheduling work ID a1347ec6-1224-4a66-95c1-8b94dbe23f19Job ID 38
+03-10 06:09:52.236  3881  4137 D WM-GreedyScheduler: Starting work for a1347ec6-1224-4a66-95c1-8b94dbe23f19
+03-10 06:09:52.240  3881  3881 D WM-SystemJobService: onStartJob for WorkGenerationalId(workSpecId=a1347ec6-1224-4a66-95c1-8b94dbe23f19, generation=0)
+03-10 06:09:52.241  3881  4137 D WM-Processor: Processor: processing WorkGenerationalId(workSpecId=a1347ec6-1224-4a66-95c1-8b94dbe23f19, generation=0)
+03-10 06:09:52.244  3881  4137 D WM-Processor: Work WorkGenerationalId(workSpecId=a1347ec6-1224-4a66-95c1-8b94dbe23f19, generation=0) is already enqueued for processing
+03-10 06:09:52.249  3881  3881 D WM-WorkerWrapper: Starting work for com.android.providers.media.MediaServiceV2
+03-10 06:09:52.251  3881  9935 I MediaServiceV2: Work initiated for action [ android.intent.action.MEDIA_SCANNER_SCAN_FILE ]
+03-10 06:09:52.269  1613  1624 I pixel-thermal: quiet_therm:23.778 raw data: quiet_therm:23778 
+03-10 06:09:52.284  3881  9935 I MediaServiceV2: Work ended for action [ android.intent.action.MEDIA_SCANNER_SCAN_FILE ]
+03-10 06:09:52.285  3881  4290 I WM-WorkerWrapper: Worker result SUCCESS for Work [ id=a1347ec6-1224-4a66-95c1-8b94dbe23f19, tags={ com.android.providers.media.MediaServiceV2 } ]
+03-10 06:09:52.287  3881  3881 D WM-Processor: Processor a1347ec6-1224-4a66-95c1-8b94dbe23f19 executed; reschedule = false
+03-10 06:09:52.287  3881  3881 D WM-SystemJobService: a1347ec6-1224-4a66-95c1-8b94dbe23f19 executed on JobScheduler
+03-10 06:09:52.294  3881  4290 D WM-GreedyScheduler: Cancelling work ID a1347ec6-1224-4a66-95c1-8b94dbe23f19
+03-10 06:09:52.314  3881  4290 D WM-SystemJobScheduler: Scheduling work ID b7133c98-50e3-4120-b529-7c2e317f160cJob ID 39
+03-10 06:09:53.804  3881  3881 D WM-DelayedWorkTracker: Scheduling work b7133c98-50e3-4120-b529-7c2e317f160c
+03-10 06:09:53.805  3881  3881 D WM-GreedyScheduler: Starting tracking for b7133c98-50e3-4120-b529-7c2e317f160c
+03-10 06:09:53.817  3881  4287 D WM-ConstraintTracker: BatteryNotLowTracker: initial state = true
+03-10 06:09:53.817  3881  4287 D WM-BrdcstRcvrCnstrntTrc: BatteryNotLowTracker: registering receiver
+03-10 06:09:53.821  3881  4287 D WM-GreedyScheduler: Constraints met: Scheduling work ID WorkGenerationalId(workSpecId=b7133c98-50e3-4120-b529-7c2e317f160c, generation=0)
+03-10 06:09:53.828  3881  4290 D WM-Processor: Processor: processing WorkGenerationalId(workSpecId=b7133c98-50e3-4120-b529-7c2e317f160c, generation=0)
+03-10 06:09:53.836  3881  3881 D WM-WorkerWrapper: Starting work for com.android.providers.media.photopicker.sync.ProactiveSyncWorker
+03-10 06:09:53.839  3881  9937 I PSyncWorker: Starting proactive picker sync from sync source: 1
+03-10 06:09:53.841  3881  9937 I PickerSyncTracker: Created new sync future java.util.concurrent.CompletableFuture@9de2f2d[Not completed, 1 dependents]. Future map: {b7133c98-50e3-4120-b529-7c2e317f160c=java.util.concurrent.CompletableFuture@9de2f2d[Not completed, 1 dependents]}
+03-10 06:09:53.845  3881  9937 D PickerSyncController: syncAllMediaFromProvider() LOCAL, auth=com.android.providers.media.photopicker, retry=true
+03-10 06:09:53.846  3881  9937 D PickerSyncController: getSyncRequestParams() LOCAL, auth=com.android.providers.media.photopicker
+03-10 06:09:53.854  3881  3881 D WM-SystemJobService: onStartJob for WorkGenerationalId(workSpecId=b7133c98-50e3-4120-b529-7c2e317f160c, generation=0)
+03-10 06:09:53.864  3881  4137 D WM-Processor: Work WorkGenerationalId(workSpecId=b7133c98-50e3-4120-b529-7c2e317f160c, generation=0) is already enqueued for processing
+03-10 06:09:53.868  1380  1836 D CompatChangeReporter: Compat change id reported: 343977174; UID 10278; state: ENABLED
+03-10 06:09:53.869  3881  9937 D PickerSyncController:    Latest ID/Gen=264fdc6d4646dfc5:external_primary/83
+03-10 06:09:53.869  3881  9937 D PickerSyncController:    Cached ID/Gen=264fdc6d4646dfc5:external_primary/33
+03-10 06:09:53.869  3881  9937 D PickerSyncController:    RESULT=SyncRequestParams{type=MEDIA_INCREMENTAL, gen=33, latest=Bundle[{last_media_sync_generation=83, media_collection_id=264fdc6d4646dfc5:external_primary}], pageSize=1000}
+03-10 06:09:53.869  3881  9937 I PickerSyncController: Executing SyncAdd. isLocal: true. authority: com.android.providers.media.photopicker
+03-10 06:09:53.869  3881  9937 D PickerSyncLockManager: Trying to acquire lock com.android.providers.media.photopicker.sync.CloseableReentrantLock@c940d4b[Unlocked]. Lock Name = CLOUD_PROVIDER_LOCK. Threads that may be waiting to acquire this lock = [] with timeout.
+03-10 06:09:53.869  3881  9937 D CloseableReentrantLock: Successfully acquired lock com.android.providers.media.photopicker.sync.CloseableReentrantLock@c940d4b[Locked by thread pool-4-thread-5]. Lock Name = CLOUD_PROVIDER_LOCK. Threads that may be waiting to acquire this lock = []
+03-10 06:09:53.869  3881  9937 D CloseableReentrantLock: Successfully released lock com.android.providers.media.photopicker.sync.CloseableReentrantLock@c940d4b[Unlocked]. Lock Name = CLOUD_PROVIDER_LOCK. Threads that may be waiting to acquire this lock = []
+03-10 06:09:53.870  3881  9937 D ExternalDbFacade: Token received for queryMedia = null
+03-10 06:09:53.881  3881  9937 V PickerDatabaseHelper: onConfigure() for picker.db
+03-10 06:09:53.883  3881  9937 D PickerSyncLockManager: Trying to acquire lock com.android.providers.media.photopicker.sync.CloseableReentrantLock@c940d4b[Unlocked]. Lock Name = CLOUD_PROVIDER_LOCK. Threads that may be waiting to acquire this lock = [] with timeout.
+03-10 06:09:53.884  3881  9937 D CloseableReentrantLock: Successfully acquired lock com.android.providers.media.photopicker.sync.CloseableReentrantLock@c940d4b[Locked by thread pool-4-thread-5]. Lock Name = CLOUD_PROVIDER_LOCK. Threads that may be waiting to acquire this lock = []
+03-10 06:09:53.884  3881  9937 D PickerSyncController: Saving next page token: 1773137392000|25 for key: local_provider:media_add:resume
+03-10 06:09:53.885  3881  9937 D CloseableReentrantLock: Successfully released lock com.android.providers.media.photopicker.sync.CloseableReentrantLock@c940d4b[Unlocked]. Lock Name = CLOUD_PROVIDER_LOCK. Threads that may be waiting to acquire this lock = []
+03-10 06:09:53.887  3881  9937 D PickerNotificationSender: Sending a notification for media update
+03-10 06:09:53.889  3881  9937 D PickerNotificationSender: Sending a notification for merged album media update Favorites
+03-10 06:09:53.889  3881  9937 D PickerNotificationSender: Sending a notification for album media update Favorites
+03-10 06:09:53.891  3881  9937 D PickerNotificationSender: Sending a notification for merged album media update Videos
+03-10 06:09:53.891  3881  9937 D PickerNotificationSender: Sending a notification for album media update Videos
+03-10 06:09:53.892  3881  9937 D ExternalDbFacade: Token received for queryMedia = 1773137392000|25
+03-10 06:09:53.895  3881  9937 D PickerSyncLockManager: Trying to acquire lock com.android.providers.media.photopicker.sync.CloseableReentrantLock@c940d4b[Unlocked]. Lock Name = CLOUD_PROVIDER_LOCK. Threads that may be waiting to acquire this lock = [] with timeout.
+03-10 06:09:53.896  3881  9937 D CloseableReentrantLock: Successfully acquired lock com.android.providers.media.photopicker.sync.CloseableReentrantLock@c940d4b[Locked by thread pool-4-thread-5]. Lock Name = CLOUD_PROVIDER_LOCK. Threads that may be waiting to acquire this lock = []
+03-10 06:09:53.896  3881  9937 D PickerSyncController: Clearing next page token for key: local_provider:media_add:resume
+03-10 06:09:53.896  3881  9937 D CloseableReentrantLock: Successfully released lock com.android.providers.media.photopicker.sync.CloseableReentrantLock@c940d4b[Unlocked]. Lock Name = CLOUD_PROVIDER_LOCK. Threads that may be waiting to acquire this lock = []
+03-10 06:09:53.896  3881  9937 D PickerNotificationSender: Sending a notification for media update
+03-10 06:09:53.897  3881  9937 D PickerNotificationSender: Sending a notification for merged album media update Favorites
+03-10 06:09:53.897  3881  9937 D PickerNotificationSender: Sending a notification for album media update Favorites
+03-10 06:09:53.898  3881  9937 D PickerNotificationSender: Sending a notification for merged album media update Videos
+03-10 06:09:53.898  3881  9937 D PickerNotificationSender: Sending a notification for album media update Videos
+03-10 06:09:53.899  3881  9937 I PickerSyncController: Paged sync successful. QueryArgs: Bundle[{android.provider.extra.PAGE_TOKEN=1773137392000|25, android.provider.extra.SYNC_GENERATION=33, android.provider.extra.PAGE_SIZE=1000}] Total Rows: 1
+03-10 06:09:53.899  3881  9937 I PickerSyncController: Executing SyncRemove. isLocal: true. authority: com.android.providers.media.photopicker
+03-10 06:09:53.899  3881  9937 D PickerSyncLockManager: Trying to acquire lock com.android.providers.media.photopicker.sync.CloseableReentrantLock@c940d4b[Unlocked]. Lock Name = CLOUD_PROVIDER_LOCK. Threads that may be waiting to acquire this lock = [] with timeout.
+03-10 06:09:53.899  3881  9937 D CloseableReentrantLock: Successfully acquired lock com.android.providers.media.photopicker.sync.CloseableReentrantLock@c940d4b[Locked by thread pool-4-thread-5]. Lock Name = CLOUD_PROVIDER_LOCK. Threads that may be waiting to acquire this lock = []
+03-10 06:09:53.899  3881  9937 D CloseableReentrantLock: Successfully released lock com.android.providers.media.photopicker.sync.CloseableReentrantLock@c940d4b[Unlocked]. Lock Name = CLOUD_PROVIDER_LOCK. Threads that may be waiting to acquire this lock = []
+03-10 06:09:53.901  3881  9937 D PickerSyncLockManager: Trying to acquire lock com.android.providers.media.photopicker.sync.CloseableReentrantLock@c940d4b[Unlocked]. Lock Name = CLOUD_PROVIDER_LOCK. Threads that may be waiting to acquire this lock = [] with timeout.
+03-10 06:09:53.901  3881  9937 D CloseableReentrantLock: Successfully acquired lock com.android.providers.media.photopicker.sync.CloseableReentrantLock@c940d4b[Locked by thread pool-4-thread-5]. Lock Name = CLOUD_PROVIDER_LOCK. Threads that may be waiting to acquire this lock = []
+03-10 06:09:53.902  3881  9937 D PickerSyncController: Clearing next page token for key: local_provider:media_remove:resume
+03-10 06:09:53.902  3881  9937 D CloseableReentrantLock: Successfully released lock com.android.providers.media.photopicker.sync.CloseableReentrantLock@c940d4b[Unlocked]. Lock Name = CLOUD_PROVIDER_LOCK. Threads that may be waiting to acquire this lock = []
+03-10 06:09:53.902  3881  9937 D PickerNotificationSender: Sending a notification for media update
+03-10 06:09:53.903  3881  9937 D PickerNotificationSender: Sending a notification for merged album media update Favorites
+03-10 06:09:53.903  3881  9937 D PickerNotificationSender: Sending a notification for album media update Favorites
+03-10 06:09:53.904  3881  9937 D PickerNotificationSender: Sending a notification for merged album media update Videos
+03-10 06:09:53.904  3881  9937 D PickerNotificationSender: Sending a notification for album media update Videos
+03-10 06:09:53.905  3881  9937 I PickerSyncController: Paged sync successful. QueryArgs: Bundle[{android.provider.extra.PAGE_TOKEN=1773137392000|25, android.provider.extra.SYNC_GENERATION=33, android.provider.extra.PAGE_SIZE=1000}] Total Rows: 0
+03-10 06:09:53.905  3881  9937 I PickerSyncTracker: Marked sync future complete for work id: b7133c98-50e3-4120-b529-7c2e317f160c. Future map: {}
+03-10 06:09:53.905  3881  9937 I PSyncWorker: Completed picker proactive sync complete from local provider.
+03-10 06:09:53.910  3881  4287 I WM-WorkerWrapper: Worker result SUCCESS for Work [ id=b7133c98-50e3-4120-b529-7c2e317f160c, tags={ com.android.providers.media.photopicker.sync.ProactiveSyncWorker } ]
+03-10 06:09:53.915  3881  3881 D WM-Processor: Processor b7133c98-50e3-4120-b529-7c2e317f160c executed; reschedule = false
+03-10 06:09:53.916  3881  3881 D WM-GreedyScheduler: Stopping tracking for WorkGenerationalId(workSpecId=b7133c98-50e3-4120-b529-7c2e317f160c, generation=0)
+03-10 06:09:53.916  3881  3881 D WM-SystemJobService: b7133c98-50e3-4120-b529-7c2e317f160c executed on JobScheduler
+03-10 06:09:53.923  3881  4287 D WM-GreedyScheduler: Cancelling work ID b7133c98-50e3-4120-b529-7c2e317f160c
+03-10 06:09:53.938  3881  4287 D WM-BrdcstRcvrCnstrntTrc: BatteryNotLowTracker: unregistering receiver
+03-10 06:09:55.371  1154  1154 D AOC     : A3:MSG: usf_sensor.cc, 1713: USF: Received stop sampling request for LSM6DSV Accelerometer (active:4).
+03-10 06:09:55.375   918   950 I CHRE    : @ 9612.912: [AR] ON => IDLE
