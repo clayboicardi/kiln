@@ -222,6 +222,19 @@ class Media3ExoPlayerImplTest {
         assertEquals(0, player.processors.value.size)
     }
 
+    @Test
+    fun `play pause stop are safe to invoke before loadQueue`() = runBlocking {
+        val player = newPlayer()
+        // None of these should crash. ExoPlayer accepts play()/pause()/stop()
+        // in any state — they're no-ops when no media is loaded, mirroring
+        // the JavaSoundPlayer line-null no-op contract.
+        player.play()
+        player.pause()
+        player.stop()
+        // State stays Idle.
+        assertEquals(PlayerState.Idle, player.state.value)
+    }
+
     private fun makeMediaItem(id: String): MediaItem = MediaItem(
         itemId = ItemId(id),
         sourceId = SourceId("test"),
