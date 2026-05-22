@@ -1,34 +1,28 @@
 // Desktop entry point. Graph instantiated once at process start; userDataDir
 // is injected directly (DB must exist before settings can be read). Scan
-// folders now flow from SettingsRepository (Phase 2a Track A rewire): on
-// first launch (empty settings.scanFolders), seed D:\tiddl so Clay's existing
+// folders flow from SettingsRepository (Phase 2a Track A rewire): on first
+// launch (empty settings.scanFolders), seed D:\tiddl so Clay's existing
 // workflow keeps working. Subsequent launches read the persisted list; the
-// SettingsScreen (Task 9) edits it via the gear icon.
+// SettingsScreen edits it via the gear icon.
 //
-// Task 9 wires the Compose surface: KilnTheme wraps content via
-// SettingsRepository.themeMode (Light/Dark/System dispatch). A gear icon at
-// the top of PlayFirstTrackScreen flips a boolean route to
-// DesktopSettingsRoute, which renders the shared SettingsScreen composable
-// from :ui:components. The folder picker is a real javax.swing.JFileChooser
-// in DIRECTORIES_ONLY mode, invoked on the Swing EDT via Dispatchers.Swing
-// so it doesn't violate Swing's single-thread rule when called from a
-// Compose coroutine context.
+// Phase 2a Track C: the H7 PlayFirstTrackScreen dev surface is replaced by
+// KilnHomeScreen — the Voyager TabNavigator-hosted 3-tab shell (Library /
+// Now Playing / Search). KilnTheme wraps content via SettingsRepository
+// .themeMode (Light/Dark/System dispatch). The gear icon in KilnHomeScreen's
+// TopAppBar flips a boolean route to DesktopSettingsRoute, which renders the
+// shared SettingsScreen composable from :ui:components. The folder picker is
+// a real javax.swing.JFileChooser in DIRECTORIES_ONLY mode, invoked on the
+// Swing EDT via Dispatchers.Swing so it doesn't violate Swing's single-thread
+// rule when called from a Compose coroutine context.
 
 package com.clayworks.kiln.desktop
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.Button
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
@@ -45,15 +39,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
-import arrow.core.Either
 import com.clayworks.kiln.desktop.di.DesktopAppGraph
 import com.clayworks.kiln.desktop.di.UserDataDir
 import com.clayworks.kiln.desktop.di.create
-import com.clayworks.kiln.library.scan.LibraryScanner
-import com.clayworks.kiln.library.scan.ScanError
-import com.clayworks.kiln.library.scan.ScanResult
 import com.clayworks.kiln.library.settings.ThemeMode
-import com.clayworks.kiln.library.source.BrowseScope
+import com.clayworks.kiln.ui.components.home.KilnHomeScreen
 import com.clayworks.kiln.ui.components.settings.SettingsScreen
 import com.clayworks.kiln.ui.components.settings.SettingsState
 import com.clayworks.kiln.ui.theme.KilnTheme
@@ -61,8 +51,6 @@ import java.nio.file.Path
 import javax.swing.JFileChooser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.take
-import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.swing.Swing
@@ -115,8 +103,9 @@ fun main() {
                             onClose = { showSettings = false },
                         )
                     } else {
-                        PlayFirstTrackScreen(
-                            graph = graph,
+                        KilnHomeScreen(
+                            musicSource = graph.musicSource,
+                            player = graph.player,
                             onOpenSettings = { showSettings = true },
                         )
                     }
@@ -206,105 +195,3 @@ private suspend fun pickFolderDialog(): String? =
             else -> null
         }
     }
-
-/**
- * H7 vertical-slice surface, augmented with the Phase 2a Track A gear-icon
- * entry point. Two buttons still cover the smoke path: Scan Library + Play
- * First Track. The gear icon at top-right swaps the route to
- * DesktopSettingsRoute via the hoisted onOpenSettings callback.
- */
-@Composable
-private fun PlayFirstTrackScreen(graph: DesktopAppGraph, onOpenSettings: () -> Unit) {
-    val coroutineScope = rememberCoroutineScope()
-    val playerState by graph.player.state.collectAsState()
-    val positionMs by graph.player.positionMs.collectAsState()
-    val queueState by graph.player.queue.collectAsState()
-
-    var scanStatus by remember { mutableStateOf("Not scanned") }
-    var lastError by remember { mutableStateOf<String?>(null) }
-
-    Column(modifier = Modifier.fillMaxSize().padding(24.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = "Kiln by Clayworks",
-                style = MaterialTheme.typography.headlineMedium,
-            )
-            IconButton(onClick = onOpenSettings) {
-                Icon(Icons.Filled.Settings, contentDescription = "Settings")
-            }
-        }
-        Spacer(modifier = Modifier.height(24.dp))
-
-        Button(onClick = {
-            scanStatus = "Scanning…"
-            lastError = null
-            coroutineScope.launch {
-                graph.scanner.scanLibrary(
-                    onResult = { result ->
-                        scanStatus = "Scan: ${result.tracksAdded} added, " +
-                            "${result.tracksUpdated} updated, " +
-                            "${result.tracksUnchanged} unchanged, " +
-                            "${result.tracksSoftDeleted} removed " +
-                            "(${result.durationMs}ms)"
-                    },
-                    onError = { err ->
-                        scanStatus = "Scan: error"
-                        lastError = when (err) {
-                            is ScanError.PermissionDenied -> "Filesystem access denied: ${err.message}"
-                            is ScanError.IoError -> "Scan I/O error: ${err.cause.message}"
-                            is ScanError.MetadataParseError ->
-                                "Tag parse failed for ${err.path}: ${err.cause.message}"
-                            is ScanError.Internal -> "Internal scan error: ${err.message}"
-                        }
-                    },
-                )
-            }
-        }) { Text("Scan Library") }
-
-        Spacer(modifier = Modifier.height(8.dp))
-        Text(scanStatus)
-        Spacer(modifier = Modifier.height(24.dp))
-
-        Button(onClick = {
-            lastError = null
-            coroutineScope.launch {
-                runCatching { graph.playFirstTrackFromBrowse() }
-                    .onFailure { e -> lastError = "Play failed: ${e.message}" }
-            }
-        }) { Text("Play First Track") }
-
-        Spacer(modifier = Modifier.height(24.dp))
-        Text("State: $playerState")
-        Text("Position: ${positionMs}ms")
-        queueState.currentItem?.let { item ->
-            Text("Now: ${item.title}")
-        }
-        lastError?.let { Text("⚠ $it") }
-    }
-}
-
-private suspend fun DesktopAppGraph.playFirstTrackFromBrowse() {
-    val firstTrack = musicSource.browse(BrowseScope.AllTracks()).take(1).toList()
-    if (firstTrack.isNotEmpty()) {
-        player.loadQueue(items = firstTrack, startIndex = 0, autoPlay = true)
-    }
-}
-
-/**
- * Tiny convenience: call scanIncremental + fork onResult / onError. Forking via
- * callbacks (instead of throwing on Either.Left) preserves the typed [ScanError]
- * sub-type identity so callers can pattern-match.
- */
-private suspend inline fun LibraryScanner.scanLibrary(
-    crossinline onResult: (ScanResult) -> Unit,
-    crossinline onError: (ScanError) -> Unit,
-) {
-    when (val result = scanIncremental()) {
-        is Either.Right -> onResult(result.value)
-        is Either.Left -> onError(result.value)
-    }
-}
