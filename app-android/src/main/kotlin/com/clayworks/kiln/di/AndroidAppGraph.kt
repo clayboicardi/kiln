@@ -18,6 +18,9 @@ import app.cash.sqldelight.driver.android.AndroidSqliteDriver
 import io.requery.android.database.sqlite.RequerySQLiteOpenHelperFactory
 import com.clayworks.kiln.audio.playback.Media3ExoPlayerImpl
 import com.clayworks.kiln.audio.playback.PlatformPlayer
+import com.clayworks.kiln.audio.playback.createAndroidMediaTrackAnalyzer
+import com.clayworks.kiln.library.scan.TrackAnalysisRunner
+import com.clayworks.kiln.library.scan.TrackAnalyzer
 import com.clayworks.kiln.data.library.db.KilnDatabase
 import com.clayworks.kiln.library.scan.AndroidMediaStoreScanner
 import com.clayworks.kiln.library.scan.LibraryScanner
@@ -115,4 +118,18 @@ abstract class AndroidAppGraph(
         context: Context,
         source: MusicSource,
     ): PlatformPlayer = Media3ExoPlayerImpl(context, source)
+
+    @Provides
+    protected fun trackAnalyzer(context: Context): TrackAnalyzer =
+        createAndroidMediaTrackAnalyzer(context)
+
+    @Provides
+    protected fun analysisRunner(
+        db: KilnDatabase,
+        analyzer: TrackAnalyzer,
+    ): TrackAnalysisRunner = TrackAnalysisRunner(
+        db = db,
+        analyzer = analyzer,
+        ioDispatcher = Dispatchers.IO,
+    )
 }

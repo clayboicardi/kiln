@@ -33,6 +33,7 @@ kotlin {
             implementation(libs.kotlinx.coroutines.core)
             implementation(libs.kotlinx.serialization.json)
             implementation(libs.kermit)
+            implementation(project(":audio:dsp"))  // LoudnessAggregator + AnalysisError for TrackAnalysisRunner
             // arrow.core is `api` because Either<SourceError, X> + Either<ScanError, X>
             // are part of the public surface of MusicSource and LibraryScanner.
             // App-module consumers need to be able to pattern-match Either.Right /

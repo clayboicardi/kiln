@@ -103,6 +103,8 @@ class TestDb : AutoCloseable {
         playCount: Long = 0L,
         lastPlayedMs: Long? = null,
         dateAddedMs: Long = NOW_MS,
+        replayGainTrackDb: Double? = null,
+        replayGainTrackPeak: Double? = null,
     ): Long {
         db.trackQueries.insert(
             album_id = albumId,
@@ -125,9 +127,9 @@ class TestDb : AutoCloseable {
             file_path = filePath,
             file_size_bytes = fileSizeBytes,
             file_mtime_ms = fileMtimeMs,
-            replay_gain_track_db = null,
+            replay_gain_track_db = replayGainTrackDb,
             replay_gain_album_db = null,
-            replay_gain_track_peak = null,
+            replay_gain_track_peak = replayGainTrackPeak,
             replay_gain_album_peak = null,
             has_embedded_art = if (hasEmbeddedArt) 1L else 0L,
             art_path = artPath,
