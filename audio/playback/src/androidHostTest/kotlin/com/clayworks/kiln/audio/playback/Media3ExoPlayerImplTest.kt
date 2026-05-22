@@ -115,6 +115,24 @@ class Media3ExoPlayerImplTest {
         assertEquals(0, player.queue.value.items.size)
     }
 
+    // ---------- startIndex mismapping when items fail to resolve (U1) ----------
+
+    @Test
+    fun `loadQueue startIndex maps to correct surviving item when earlier items fail to resolve`() = runBlocking {
+        // items = [a, b, c, d, e] (5 items in user-facing list); B and D fail.
+        // Resolved list becomes [a, c, e] (3 items). User clicks "play C" →
+        // startIndex = 2 in the original-list. Post-fix, this maps to resolved
+        // index 1 (where C lives). Pre-fix, coercedStart.coerceIn(0,2) gave 2 → E.
+        val player = newPlayer(source = SelectivelyResolvingSource(resolvableIds = setOf("a", "c", "e")))
+        val items = listOf("a", "b", "c", "d", "e").map { makeMediaItem(it) }
+        player.loadQueue(items, startIndex = 2, autoPlay = false)
+
+        val q = player.queue.value
+        assertEquals(3, q.items.size, "only a, c, e should have survived")
+        assertEquals(1, q.currentIndex, "C is at resolved-list index 1, not 2")
+        assertEquals("c", q.items[q.currentIndex].itemId.value, "currentItem must be C")
+    }
+
     private fun makeMediaItem(id: String): MediaItem = MediaItem(
         itemId = ItemId(id),
         sourceId = SourceId("test"),
