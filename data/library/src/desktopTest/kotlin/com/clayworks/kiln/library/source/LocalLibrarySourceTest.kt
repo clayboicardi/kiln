@@ -232,4 +232,34 @@ class LocalLibrarySourceTest {
         assertTrue(items.all { it.kind == MediaItem.Kind.Track })
         assertEquals(listOf("Recent", "Older"), items.map { it.title })
     }
+
+    @Test
+    fun browse_MostPlayed_filtersAndOrdersByPlayCount() = runTest {
+        // selectMostPlayed filters WHERE play_count > 0 and orders by
+        // play_count DESC. Tracks with play_count = 0 (the table default)
+        // MUST be excluded.
+        //
+        // Per TestDb L143-145 — production model is "if it's been played,
+        // last_played_ms is set". Pass both playCount AND lastPlayedMs so
+        // fixtures mirror reality (and to keep the setPlayStats path
+        // self-consistent: playCount=0 with non-null lastPlayedMs would be
+        // an impossible state for production code).
+        val artistId = testDb.insertArtist("Test Artist", "test artist")
+        testDb.insertTrack(
+            artistId, title = "TopPlayed", filePath = "/m/top.flac",
+            playCount = 5L, lastPlayedMs = TestDb.NOW_MS,
+        )
+        testDb.insertTrack(
+            artistId, title = "MidPlayed", filePath = "/m/mid.flac",
+            playCount = 3L, lastPlayedMs = TestDb.NOW_MS - 1_000L,
+        )
+        testDb.insertTrack(artistId, title = "Unplayed1", filePath = "/m/u1.flac")
+        testDb.insertTrack(artistId, title = "Unplayed2", filePath = "/m/u2.flac")
+
+        val items = snapshot(source.browse(BrowseScope.MostPlayed()))
+
+        assertEquals(2, items.size)
+        assertTrue(items.all { it.kind == MediaItem.Kind.Track })
+        assertEquals(listOf("TopPlayed", "MidPlayed"), items.map { it.title })
+    }
 }
