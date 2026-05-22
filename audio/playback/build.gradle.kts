@@ -38,6 +38,15 @@ kotlin {
             dependencies {
                 implementation(libs.kotlin.test)
                 implementation(libs.kotlinx.coroutines.test)
+                // kotlinx-coroutines-android provides the HandlerDispatcher
+                // that Dispatchers.Main resolves to under Robolectric. Without
+                // it kotlinx-coroutines-test's TestMainDispatcherFactory fails
+                // with "Module with the Main dispatcher is missing" when the
+                // production Media3ExoPlayerImpl ctor touches
+                // Dispatchers.Main.immediate at line 87. :app-android picks
+                // this up transitively via Media3 + AGP deps; this module's
+                // narrower test classpath needs it explicitly.
+                implementation(libs.kotlinx.coroutines.android)
                 implementation(libs.robolectric)
                 implementation(libs.androidx.test.core)            // ApplicationProvider
             }
