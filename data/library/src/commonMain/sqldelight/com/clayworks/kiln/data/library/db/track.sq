@@ -234,3 +234,62 @@ UPDATE track
 SET deleted_at_ms = NULL,
     last_scanned_ms = :scannedAtMs
 WHERE id = ?;
+
+-- Phase 2a Track D-A wrap-up: ReplayGain analyzer worklist + persistence.
+-- The analyzer runs out-of-band of the main scanner (perf math says ≥17 h
+-- for 40k tracks first-pass; a separate trigger from settings UI / background
+-- job is the right surface). All queries assume `track.deleted_at_ms IS NULL`
+-- — analyzer should not touch soft-deleted rows.
+
+-- Worklist enumeration. Paginated so the runner can yield + report progress.
+-- Includes album_id so the runner can group for per-album rollup later.
+selectTracksMissingReplayGain:
+SELECT id, file_path, codec, sample_rate_hz, bit_depth, channels, album_id
+FROM track
+WHERE deleted_at_ms IS NULL
+  AND replay_gain_track_db IS NULL
+ORDER BY id
+LIMIT :pageSize OFFSET :pageOffset;
+
+-- Count for the worklist — used for progress reporting in TrackAnalysisRunner.
+countTracksMissingReplayGain:
+SELECT COUNT(*) FROM track
+WHERE deleted_at_ms IS NULL
+  AND replay_gain_track_db IS NULL;
+
+-- Per-track persist. `peak` is a linear sample amplitude (RG v2 convention);
+-- caller converts from dBTP → linear before invoking.
+updateTrackReplayGain:
+UPDATE track
+SET replay_gain_track_db = :db,
+    replay_gain_track_peak = :peak
+WHERE id = :id;
+
+-- Distinct album_ids with at least one analyzed track but no album-level
+-- aggregate yet. Used at the end of an analyzer pass to drive the rollup.
+selectAlbumsForAggregation:
+SELECT DISTINCT album_id
+FROM track
+WHERE album_id IS NOT NULL
+  AND deleted_at_ms IS NULL
+  AND replay_gain_track_db IS NOT NULL
+  AND replay_gain_album_db IS NULL;
+
+-- Per-album rollup input: track-level gains + peaks for one album.
+-- The rollup math (energy-weighted mean of LUFS, max of linear peaks)
+-- happens in Kotlin in TrackAnalysisRunner.
+selectTrackReplayGainForAlbum:
+SELECT replay_gain_track_db, replay_gain_track_peak
+FROM track
+WHERE album_id = :albumId
+  AND deleted_at_ms IS NULL
+  AND replay_gain_track_db IS NOT NULL;
+
+-- Apply the computed album-level values to all live tracks of the album.
+-- `peak` is a linear sample amplitude per RG v2.
+updateAlbumReplayGainForAlbum:
+UPDATE track
+SET replay_gain_album_db = :db,
+    replay_gain_album_peak = :peak
+WHERE album_id = :albumId
+  AND deleted_at_ms IS NULL;
