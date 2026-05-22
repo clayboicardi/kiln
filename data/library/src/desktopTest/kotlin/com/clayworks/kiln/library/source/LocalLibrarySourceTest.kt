@@ -261,6 +261,34 @@ class LocalLibrarySourceTest {
     }
 
     @Test
+    fun search_sanitizesFts5SpecialCharacters() = runTest {
+        // FTS5 MATCH parses double-quotes, parens, *, :, -, +, ^, ~ as
+        // operators. sanitizeFtsQuery (FtsSanitize.kt) strips those
+        // operator chars and wraps the remaining tokens in double quotes
+        // (apostrophes survive the strip and become phrase-literals inside
+        // the quoted token). Without sanitization, a user typing
+        // `let's` could surface as a syntax error from FTS5 — or worse, a
+        // future query like `foo*` (user thinks "wildcard") would mis-parse.
+        // This test verifies search() does NOT throw on apostrophe input.
+        val artistId = testDb.insertArtist("Foo")
+        testDb.insertTrack(artistId, null, "Let's Go Crazy")
+        testDb.db.track_searchQueries.insertSearchIndex(
+            rowid = 1L,
+            title = "Let's Go Crazy",
+            album_name = "",
+            artist_name = "Foo",
+            album_artist_name = "Foo",
+        )
+
+        // Must not throw — primary assertion is the absence of an FTS5
+        // syntax error. We also assert the row matches, to ensure the
+        // sanitized form isn't producing a no-match query (which would
+        // silently "pass" without actually exercising the sanitizer).
+        val results = snapshot(source.search("let's"))
+        assertEquals(1, results.size)
+    }
+
+    @Test
     fun browse_MostPlayed_filtersAndOrdersByPlayCount() = runTest {
         // selectMostPlayed filters WHERE play_count > 0 and orders by
         // play_count DESC. Tracks with play_count = 0 (the table default)
