@@ -178,4 +178,30 @@ class LocalLibrarySourceTest {
         assertTrue(items.all { it.kind == MediaItem.Kind.Track })
         assertEquals(listOf("C", "A", "B"), items.map { it.title })
     }
+
+    @Test
+    fun browse_RecentlyAdded_orderedByDateAddedDesc() = runTest {
+        // selectRecentlyAdded orders by date_added_ms DESC. Insert three
+        // tracks with explicit dateAddedMs (newest -> oldest is C, B, A);
+        // expect that exact order out.
+        val artistId = testDb.insertArtist("Test Artist", "test artist")
+        testDb.insertTrack(
+            artistId, title = "Older", filePath = "/r/older.flac",
+            dateAddedMs = TestDb.NOW_MS - 2_000L,
+        )
+        testDb.insertTrack(
+            artistId, title = "Newer", filePath = "/r/newer.flac",
+            dateAddedMs = TestDb.NOW_MS,
+        )
+        testDb.insertTrack(
+            artistId, title = "Middle", filePath = "/r/middle.flac",
+            dateAddedMs = TestDb.NOW_MS - 1_000L,
+        )
+
+        val items = snapshot(source.browse(BrowseScope.RecentlyAdded()))
+
+        assertEquals(3, items.size)
+        assertTrue(items.all { it.kind == MediaItem.Kind.Track })
+        assertEquals(listOf("Newer", "Middle", "Older"), items.map { it.title })
+    }
 }
