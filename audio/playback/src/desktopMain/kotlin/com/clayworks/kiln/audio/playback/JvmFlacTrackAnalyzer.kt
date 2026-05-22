@@ -10,6 +10,8 @@ package com.clayworks.kiln.audio.playback
 
 import arrow.core.Either
 import co.touchlab.kermit.Logger
+import com.clayworks.kiln.audio.dsp.AudioFrame
+import com.clayworks.kiln.audio.dsp.SampleFormat
 import com.clayworks.kiln.audio.dsp.replaygain.AnalysisError
 import com.clayworks.kiln.audio.dsp.replaygain.createLoudnessAnalyzer
 import com.clayworks.kiln.library.scan.TrackAnalysisError

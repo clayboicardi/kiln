@@ -36,6 +36,8 @@ package com.clayworks.kiln.audio.playback
 
 import arrow.core.Either
 import co.touchlab.kermit.Logger
+import com.clayworks.kiln.audio.dsp.AudioFrame
+import com.clayworks.kiln.audio.dsp.AudioProcessor
 import com.clayworks.kiln.library.source.MediaItem
 import com.clayworks.kiln.library.source.MusicSource
 import com.clayworks.kiln.library.source.Playable

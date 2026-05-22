@@ -6,6 +6,9 @@
 package com.clayworks.kiln.audio.playback
 
 import arrow.core.Either
+import com.clayworks.kiln.audio.dsp.AudioFrame
+import com.clayworks.kiln.audio.dsp.AudioProcessor
+import com.clayworks.kiln.audio.dsp.DecodedAudioFormat
 import com.clayworks.kiln.library.source.AudioCodec
 import com.clayworks.kiln.library.source.BrowseScope
 import com.clayworks.kiln.library.source.ItemId
