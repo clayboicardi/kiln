@@ -19,6 +19,14 @@ dependencies {
     implementation(libs.kotlinInject.runtime)
     ksp(libs.kotlinInject.compiler)
 
+    // Kermit logging — used directly by app-android code (e.g., SAF picker).
+    // Project deps (:audio:playback, :ui:components, :data:library) declare
+    // Kermit as implementation in their KMP source sets, which puts it on
+    // app-android's runtime classpath but NOT compile classpath. Direct
+    // declaration here is required for any `import co.touchlab.kermit.*`
+    // in app-android sources.
+    implementation(libs.kermit)
+
     // SQLDelight Android driver — graph constructs AndroidSqliteDriver directly.
     implementation(libs.sqldelight.android.driver)
     // Bundled SQLite for Android — Session 10 H8 discovery: Pixel 10 / Android 16
