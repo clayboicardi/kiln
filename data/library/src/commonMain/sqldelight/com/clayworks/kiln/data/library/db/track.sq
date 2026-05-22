@@ -209,6 +209,16 @@ SET play_count = play_count + 1,
     last_played_ms = :playedAtMs
 WHERE id = ?;
 
+-- Test-only deterministic override. Production code should use markPlayed/
+-- markSkipped instead — this exists so TestDb.insertTrack can honor caller-
+-- specified play_count + last_played_ms values without an O(playCount) loop
+-- and without silently incrementing play_count when the caller passed 0.
+setPlayStats:
+UPDATE track
+SET play_count = :playCount,
+    last_played_ms = :lastPlayedMs
+WHERE id = :id;
+
 markSkipped:
 UPDATE track
 SET skip_count = skip_count + 1

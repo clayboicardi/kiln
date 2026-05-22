@@ -95,7 +95,7 @@ class TestDb : AutoCloseable {
         sampleRateHz: Long = 44_100L,
         bitDepth: Long? = 16L,
         channels: Long = 2L,
-        filePath: String = "C:\\test\\${title.lowercase()}.flac",
+        filePath: String = "/test/${title.lowercase()}.flac",
         fileSizeBytes: Long = 4_096L,
         fileMtimeMs: Long = NOW_MS,
         hasEmbeddedArt: Boolean = false,
@@ -137,19 +137,18 @@ class TestDb : AutoCloseable {
             last_scanned_ms = dateAddedMs,
         )
         val id = db.trackQueries.lastInsertRowId().executeAsOne()
-        // Apply post-insert lazy-stats overrides via the dedicated UPDATE
-        // queries. The insert statement intentionally hard-codes
-        // play_count = 0 / last_played_ms = NULL (table DEFAULTs).
-        if (playCount > 0L) {
-            repeat(playCount.toInt()) {
-                db.trackQueries.markPlayed(playedAtMs = lastPlayedMs ?: NOW_MS, id = id)
-            }
-        } else if (lastPlayedMs != null) {
-            // Bump last_played_ms WITHOUT bumping play_count by hand. This
-            // mirrors selectRecentlyPlayed's "any track that's been played"
-            // filter (play_count > 0 is required by selectMostPlayed; the
-            // recently-played view only requires last_played_ms IS NOT NULL).
-            db.trackQueries.markPlayed(playedAtMs = lastPlayedMs, id = id)
+        // Apply lazy-stats overrides via the deterministic setPlayStats query.
+        // The insert statement intentionally hard-codes play_count = 0 /
+        // last_played_ms = NULL (table DEFAULTs); call setPlayStats only when
+        // the caller deviated from those defaults. This avoids markPlayed's
+        // increment-by-1 semantics (which would silently set play_count to 1
+        // when the caller passed 0 with a non-null lastPlayedMs).
+        if (playCount > 0L || lastPlayedMs != null) {
+            db.trackQueries.setPlayStats(
+                playCount = playCount,
+                lastPlayedMs = lastPlayedMs,
+                id = id,
+            )
         }
         return id
     }
