@@ -1522,3 +1522,37 @@ Same gates as Task 6 Steps 1-3.
 ---
 
 End of Phase 2a Track C (scoped) plan. Total: 6 logical tasks, ~6 commits, ~3-5 wall-clock hours with subagent dispatch + two-stage review.
+
+---
+
+## Pixel 7 manual smoke checklist (delegated to Clay at session-close)
+
+Device: Pixel 7 Pro / Tensor G2 / Android 14 / serial 2A261FDH300B1P
+
+1. Launch Kiln (LAUNCHER intent already fired by autonomous Step 3).
+2. **Expected:** Top app bar "Kiln by Clayworks" with gear icon top-right. Bottom NavigationBar shows 3 tabs: Library / Now Playing / Search. Library is the default tab.
+3. **If no tracks scanned yet:** Library shows "No tracks. Run a Library scan from Settings." Tap gear → SettingsScreen → "Add Folder" → pick a folder via SAF (Track B work) → Close → Library still empty until the scan runs (Track C scope doesn't auto-scan).
+4. **If tracks scanned:** Library shows a LazyColumn of tracks.
+5. Tap a track → app should start playing (queue loaded, Media3 player active).
+6. Tap "Now Playing" tab → see current track title + subtitle + position slider + Play/Pause/Skip Prev/Skip Next transport.
+7. Tap Pause → playback stops. Tap Play → resumes.
+8. Tap "Search" tab → input "Search your library" appears. Type a common word (e.g. "the").
+9. **Expected:** After ~300ms debounce, results appear in the list below. Tap a result → playback starts.
+10. Tap gear icon (top-right of any tab) → AndroidSettingsRoute opens. Verify the Track A + B settings UX still works (theme toggle, scan-on-launch, "Add Folder" via SAF).
+11. Cold-kill the app via `adb -s 2A261FDH300B1P shell am force-stop com.clayworks.kiln`.
+12. Relaunch via launcher. **Expected:** opens to Library tab (Voyager doesn't persist tab selection — Track C accepts this).
+13. Gear → Settings persists (Track A); folder list preserved (Track B).
+
+Any deviation from these expectations is a Track C bug to capture in the session-close handoff.
+
+---
+
+## CLAUDE.md gotcha candidates discovered during Track C
+
+Captured here for a future Track C2 / C3 session to fold into CLAUDE.md proper. None of these blocked Track C, but each cost setup time during impl.
+
+- **`compose-material-icons-core` is missing many transport icons.** `Icons.Filled.Pause`, `Icons.Filled.SkipNext`, `Icons.Filled.SkipPrevious`, `Icons.Filled.PlayCircle`, `Icons.Filled.LibraryMusic` are all in `material-icons-extended` only, not in the bundled `core` set. Compose-MP 1.11 inherits this from AndroidX Compose. Workaround: add `org.jetbrains.compose.material:material-icons-extended` (or `androidx.compose.material:material-icons-extended` on Android) to the `:ui:components` deps. Done during Task 2 amend; the dep is now in `gradle/libs.versions.toml` and `:ui:components/build.gradle.kts`.
+- **`NavigationBarItem` is a `RowScope` extension function.** Wrapping it in a helper composable (e.g. `TabNavigationItem`) requires the helper to carry `RowScope` receiver context: `@Composable private fun RowScope.TabNavigationItem(tab: Tab) { ... }`. Without the receiver, the call site `NavigationBar { TabNavigationItem(tab) }` compiles but the helper's call to `NavigationBarItem(...)` fails with "this function can only be called in a RowScope". Solution: hoist the `RowScope` receiver onto the helper signature.
+- **Compose-MP 1.9.0+ Material 3 `TopAppBar` requires `@OptIn(ExperimentalMaterial3Api::class)`.** This is true through Compose-MP 1.11.0 and the matching AndroidX Compose 1.7 series. The opt-in is annotation-level on the enclosing composable. Without it, the build fails with the expected `This material API is experimental and is likely to change or to be removed in the future` error. Applied to `KilnHomeScreen` during Task 4.
+
+These three are stable across Compose-MP 1.11 + AndroidX Compose 1.7 and would have prevented ~20 minutes of compile-feedback loop during Track C. Recommend folding into the "Build/Dep Gotchas" section of `CLAUDE.md` at the next session that touches that file.
