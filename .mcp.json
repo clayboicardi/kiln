@@ -2,6 +2,7 @@
   "_doc": "Workspace-scoped MCP servers for Kiln. See docs/decisions/2026-05-21-tooling-recommendation.md for rationale.",
   "_dbhub_note": "ACTIVE. DSN points at ~/.kiln/kiln.db (user-home convention, NOT %AppData%/kiln/).",
   "_dbhub_v0_21_2_quirks_2026_05_21": "1) --max-rows and --query-timeout were silently dropped from the v0.21.2 release on npm; pass row-limit config via dbhub.toml [[tools]] block when needed. 2) better-sqlite3 is no longer bundled — must be installed into the npx cache dir manually. Procedure if SQLite connector errors with 'driver package better-sqlite3 not installed': locate the npx cache via `ls C:/Users/chawo/AppData/Local/npm-cache/_npx/*/node_modules/@bytebase/dbhub`, cd to the cache root, `npm install --no-save better-sqlite3`.",
+  "_android_mcp_note": "Two pinned entries — Pixel 10 Pro XL (primary daily driver, 58081FDCQ000EB) and Pixel 7 Pro (factory-reset secondary, 2A261FDH300B1P). Each pins --device so concurrent USB attachment doesn't ambiguate adb. If a device is disconnected, that server shows as unavailable in CC; the other still works. PATH points at the canonical SDK location per CLAUDE.md (AppData\\Local\\Android\\Sdk), not C:\\Users\\chawo\\Android\\Sdk.",
   "mcpServers": {
     "kiln-db-desktop": {
       "command": "npx",
@@ -11,6 +12,34 @@
         "--transport", "stdio",
         "--dsn", "sqlite:///C:/Users/chawo/.kiln/kiln.db"
       ]
+    },
+    "android-mcp-pixel10": {
+      "command": "C:\\Users\\chawo\\AppData\\Local\\Python\\pythoncore-3.14-64\\Scripts\\uv.exe",
+      "args": [
+        "--directory",
+        "C:\\Users\\chawo\\android-mcp",
+        "run",
+        "android-mcp",
+        "--device",
+        "58081FDCQ000EB"
+      ],
+      "env": {
+        "PATH": "C:\\Users\\chawo\\AppData\\Local\\Android\\Sdk\\platform-tools;C:\\Users\\chawo\\AppData\\Local\\Python\\pythoncore-3.14-64\\Scripts;C:\\WINDOWS\\system32;C:\\WINDOWS"
+      }
+    },
+    "android-mcp-pixel7": {
+      "command": "C:\\Users\\chawo\\AppData\\Local\\Python\\pythoncore-3.14-64\\Scripts\\uv.exe",
+      "args": [
+        "--directory",
+        "C:\\Users\\chawo\\android-mcp",
+        "run",
+        "android-mcp",
+        "--device",
+        "2A261FDH300B1P"
+      ],
+      "env": {
+        "PATH": "C:\\Users\\chawo\\AppData\\Local\\Android\\Sdk\\platform-tools;C:\\Users\\chawo\\AppData\\Local\\Python\\pythoncore-3.14-64\\Scripts;C:\\WINDOWS\\system32;C:\\WINDOWS"
+      }
     }
   }
 }
