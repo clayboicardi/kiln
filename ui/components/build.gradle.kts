@@ -16,6 +16,10 @@ kotlin {
     sourceSets {
         commonMain.dependencies {
             implementation(libs.bundles.compose.mp.common)
+            implementation(libs.compose.material.icons.extended)
+            // Material 3 extended icon set — core is missing Pause/SkipNext/SkipPrevious/
+            // PlayCircle/LibraryMusic etc., all of which Track C transport UI needs.
+            // ~1-2 MB APK cost; acceptable for a portfolio-oriented audiophile player.
             implementation(libs.bundles.voyager)
             implementation(libs.bundles.circuit)
             implementation(libs.molecule.runtime)

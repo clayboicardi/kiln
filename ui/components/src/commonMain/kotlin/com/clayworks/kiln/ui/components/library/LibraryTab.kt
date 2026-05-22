@@ -2,18 +2,11 @@
 // from MusicSource.browse(AllTracks). For Track C MVP, fetches the first 500
 // tracks via .take(500).toList() inside a LaunchedEffect; real pagination
 // lands at Track C2 along with sort/filter UI.
-//
-// Icon note: Icons.Filled.LibraryMusic ships only in material-icons-extended.
-// We depend on material-icons-core (bundled via Compose-MP bundle) — the
-// extended pack is intentionally excluded for binary-size reasons. Falling
-// back to Icons.AutoMirrored.Filled.List (the non-auto-mirrored Icons.Filled.List
-// is deprecated under -Werror; this variant is the recommended replacement
-// per the Compose deprecation message). Track C2 polish revisits iconography.
 
 package com.clayworks.kiln.ui.components.library
 
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -42,7 +35,7 @@ class LibraryTab(
         get() = TabOptions(
             index = 0u,
             title = "Library",
-            icon = rememberVectorPainter(Icons.AutoMirrored.Filled.List),
+            icon = rememberVectorPainter(Icons.Filled.LibraryMusic),
         )
 
     @Composable
