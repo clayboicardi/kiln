@@ -307,6 +307,10 @@ class AndroidMediaStoreScanner(
     // folders (Downloads, sideloaded SD), not the full MediaStore-scale 27k
     // library. Batching is a Phase 2a polish target if real-world scans hit
     // perf issues with deeply-nested user picks.
+    //
+    // SAF and MediaStore entries are NOT deduped at Track B — UNIQUE(file_path)
+    // keeps both rows distinct (content:// URI ≠ /storage/... path even for
+    // the same physical file). Dedup is Phase 2a follow-up; see CLAUDE.md.
     private fun scanSafTrees(
         safTreeUris: List<String>,
         scanStartedMs: Long,
@@ -341,6 +345,10 @@ class AndroidMediaStoreScanner(
                     existing.deleted_at_ms == null
                 ) {
                     db.trackQueries.touchLastScanned(scannedAtMs = scanStartedMs, filePath = filePath)
+                    // NB: SAF "unchanged" hits aren't accumulated into the parent unchanged
+                    // counter — scanSafTrees returns Triple(added, updated, parseErrors)
+                    // only. The omission is deliberate at Track B; if SAF tree sizes become
+                    // a UX concern, return a Quadruple and merge.
                     continue
                 }
 
@@ -353,6 +361,11 @@ class AndroidMediaStoreScanner(
 
                 val codec = detectCodecFromMime(doc.mimeType)
 
+                // SafTrackMetadata does NOT surface MusicBrainz sort variants
+                // (TITLE_SORT, ARTIST_SORT, ALBUM_ARTIST_SORT). MediaMetadataRetriever
+                // doesn't expose them; jaudiotagger (desktop) does. Curator-tagged
+                // sort names are LOST for SAF tracks at Track B — Phase 2a polish
+                // could add a jaudiotagger-based fallback path.
                 val artistId = upsertArtist(metadata.artist, toSortName(metadata.artist), mbid = null)
                 val albumArtistId = metadata.albumArtist?.let { albumArtist ->
                     upsertArtist(albumArtist, toSortName(albumArtist), mbid = null)
