@@ -79,7 +79,17 @@ The execution plan (`docs/superpowers/plans/2026-05-18-kiln-execution-plan.md`) 
 
 **Why now:** Gates Track B (the SAF picker needs a place to live). Also gates real-user testing — without it, every fresh-clone machine and every non-Clay user is stuck with `D:\tiddl`.
 
-**Effort:** ~6-10 hrs. Touches `:ui:components`, new Settings table in `:data:library`, plumbing through both AppGraphs.
+**Effort (revised 2026-05-21 post-review):** ~10-16 hrs. Plan §3.2 Sessions 26-28
+budgeted 12-20 hrs for "Settings, preferences, polish" — Track A is the
+subset minus EQ preset UI. Recommended split:
+- A1 (4-6 h): schema migration to user_version 2 + Settings table + repository +
+  DI rewire from value-class constructor params to flow-driven providers.
+- A2 (6-10 h): Material3 settings screen + folder-picker integration (Android
+  SAF or desktop file dialog) + theming toggle + debug logs surface.
+Original 6-10 hr estimate was ~½ of plan §3.2's; the gap is the from-zero
+UI-component scaffolding cost (first Compose surface in `:ui:components`).
+Touches `:ui:components`, new Settings table in `:data:library`, plumbing
+through both AppGraphs.
 
 **Spec / scaffold pointers:**
 - `docs/superpowers/plans/2026-05-18-kiln-execution-plan.md` §3 (MVP Sessions 26-28)
