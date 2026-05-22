@@ -92,9 +92,16 @@ abstract class AndroidAppGraph(
     @Provides
     protected fun mediaStoreScanner(
         context: Context,
+        settings: SettingsRepository,
         db: KilnDatabase,
         driver: SqlDriver,
-    ): LibraryScanner = AndroidMediaStoreScanner(context, db, driver, Dispatchers.IO)
+    ): LibraryScanner = AndroidMediaStoreScanner(
+        context = context,
+        safTreeUrisFlow = settings.scanFolders,
+        db = db,
+        driver = driver,
+        ioDispatcher = Dispatchers.IO,
+    )
 
     /**
      * Media3ExoPlayerImpl owns native resources (ExoPlayer + MediaSession);

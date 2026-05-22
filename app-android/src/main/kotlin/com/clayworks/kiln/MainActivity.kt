@@ -15,7 +15,6 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
-import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -57,6 +56,7 @@ import com.clayworks.kiln.library.scan.ScanError
 import com.clayworks.kiln.library.scan.ScanResult
 import com.clayworks.kiln.library.settings.ThemeMode
 import com.clayworks.kiln.library.source.BrowseScope
+import com.clayworks.kiln.saf.rememberSafFolderPicker
 import com.clayworks.kiln.ui.components.settings.SettingsScreen
 import com.clayworks.kiln.ui.components.settings.SettingsState
 import com.clayworks.kiln.ui.theme.KilnTheme
@@ -93,20 +93,31 @@ class MainActivity : ComponentActivity() {
 /**
  * Phase 2a Track A: Settings route on Android. Hoists the three SettingsRepository
  * flows into Compose state, routes the four SettingsScreen callbacks back to the
- * repo's suspend setters via a rememberCoroutineScope. Folder picker is stubbed —
- * Toast pointing at Track B's SAF-tree picker; the exact wording is contract for
- * the Pixel 7 smoke test that verifies the route renders.
+ * repo's suspend setters via a rememberCoroutineScope.
+ *
+ * Phase 2a Track B: folder picker swapped from a Track A Toast stub to a real
+ * SAF launcher (rememberSafFolderPicker). On a successful pick the URI is
+ * appended to scanFolders (dedup against the current list); the scanner picks
+ * up the new entry on the next scan via AndroidMediaStoreScanner's
+ * safTreeUrisFlow constructor param.
  */
 @Composable
 private fun AndroidSettingsRoute(
     graph: AndroidAppGraph,
     onClose: () -> Unit,
 ) {
-    val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     val themeMode by graph.settings.themeMode.collectAsState(initial = ThemeMode.System)
     val scanOnLaunch by graph.settings.scanOnLaunch.collectAsState(initial = false)
     val scanFolders by graph.settings.scanFolders.collectAsState(initial = emptyList())
+
+    val launchSafPicker = rememberSafFolderPicker(onPicked = { uri ->
+        if (uri !in scanFolders) {
+            coroutineScope.launch {
+                graph.settings.setScanFolders(scanFolders + uri)
+            }
+        }
+    })
 
     Column(modifier = Modifier.fillMaxSize()) {
         Row(
@@ -129,18 +140,7 @@ private fun AndroidSettingsRoute(
             onScanOnLaunchChange = { enabled ->
                 coroutineScope.launch { graph.settings.setScanOnLaunch(enabled) }
             },
-            onPickFolder = {
-                // Track A stub. Track B replaces this with an
-                // ActivityResultContracts.OpenDocumentTree launcher that persists
-                // a tree URI permission grant + writes the URI string into
-                // SettingsRepository.scanFolders. Exact string is contract for the
-                // Pixel 7 smoke test that verifies the route renders.
-                Toast.makeText(
-                    context,
-                    "SAF folder picker arrives in Phase 2a Track B",
-                    Toast.LENGTH_LONG,
-                ).show()
-            },
+            onPickFolder = launchSafPicker,
             onRemoveFolder = { folder ->
                 coroutineScope.launch {
                     graph.settings.setScanFolders(scanFolders - folder)
