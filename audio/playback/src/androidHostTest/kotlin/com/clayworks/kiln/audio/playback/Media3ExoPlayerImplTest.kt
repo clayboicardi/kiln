@@ -148,6 +148,20 @@ class Media3ExoPlayerImplTest {
         assertEquals("e", q.items[q.currentIndex].itemId.value, "currentItem must be E")
     }
 
+    @Test
+    fun `loadQueue falls back to last when no resolved item exists at or after startIndex`() = runBlocking {
+        // items = [a, b, c, d, e]; only a and b resolve. User clicks "play D"
+        // (startIndex=3), but C, D, E all failed. Fall back to last surviving (B).
+        val player = newPlayer(source = SelectivelyResolvingSource(resolvableIds = setOf("a", "b")))
+        val items = listOf("a", "b", "c", "d", "e").map { makeMediaItem(it) }
+        player.loadQueue(items, startIndex = 3, autoPlay = false)
+
+        val q = player.queue.value
+        assertEquals(2, q.items.size, "only a and b survived")
+        assertEquals(1, q.currentIndex, "fell back to B (last surviving = resolved index 1)")
+        assertEquals("b", q.items[q.currentIndex].itemId.value, "currentItem must be B")
+    }
+
     private fun makeMediaItem(id: String): MediaItem = MediaItem(
         itemId = ItemId(id),
         sourceId = SourceId("test"),
