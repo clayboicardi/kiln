@@ -105,6 +105,16 @@ class Media3ExoPlayerImplTest {
         assertEquals(-1, player.queue.value.currentIndex)
     }
 
+    @Test
+    fun `loadQueue with items but source always fails — stays Idle, queue is empty`() = runBlocking {
+        val player = newPlayer(source = AlwaysFailingSource())
+        val items = listOf(makeMediaItem("a"), makeMediaItem("b"))
+        player.loadQueue(items, startIndex = 0, autoPlay = true)
+        // All items skipped by the source → queue ends up empty → state Idle.
+        assertEquals(PlayerState.Idle, player.state.value)
+        assertEquals(0, player.queue.value.items.size)
+    }
+
     private fun makeMediaItem(id: String): MediaItem = MediaItem(
         itemId = ItemId(id),
         sourceId = SourceId("test"),
