@@ -21,6 +21,12 @@ kotlin {
         compileSdk = 36
         minSdk = 23
         namespace = "com.clayworks.kiln${project.path.replace(":", ".")}"
+        // AGP 9 KMP host-side test opt-in. Without this, the androidHostTest
+        // source set is not created and commonTest is not executed on the
+        // Android target. (Gradle emits a warning when commonTest exists but
+        // host tests aren't enabled.) Task name: testAndroidHostTest.
+        // androidUnitTest (AGP 8.x) was renamed to androidHostTest in AGP 9.
+        withHostTest { }
     }
     jvm("desktop")
 }

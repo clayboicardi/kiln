@@ -67,6 +67,13 @@ jaudiotagger = "3.0.1"                  # net.jthink:jaudiotagger; verify via Ma
 # === Logging ===
 kermit = "2.1.0"                        # latest stable 2026-03-02
 
+# === Android host-side testing (Robolectric on JVM, no device required) ===
+# Aligned to Slack circuit's 4.16.1 (Phase 5 androidHostTest wiring).
+robolectric = "4.16.1"
+# androidx.test:core supplies ApplicationProvider — Robolectric strongly
+# recommends declaring this explicitly (per robolectric.org/androidx_test/).
+androidx-test-core = "1.7.0"
+
 # === Utility ===
 appdirs = "1.5.0"                       # Slack-aligned; Desktop user-data-dir resolution
 
@@ -140,6 +147,10 @@ mokkery-runtime = { module = "dev.mokkery:mokkery-runtime", version.ref = "mokke
 roborazzi = { module = "io.github.takahirom.roborazzi:roborazzi", version.ref = "roborazzi" }
 roborazzi-compose = { module = "io.github.takahirom.roborazzi:roborazzi-compose", version.ref = "roborazzi" }
 roborazzi-junit-rule = { module = "io.github.takahirom.roborazzi:roborazzi-junit-rule", version.ref = "roborazzi" }
+
+# === Android host-side testing (Robolectric) ===
+robolectric = { module = "org.robolectric:robolectric", version.ref = "robolectric" }
+androidx-test-core = { module = "androidx.test:core", version.ref = "androidx-test-core" }
 
 # === Native FLAC bridge (Item 9 addendum) ===
 jna = { module = "net.java.dev.jna:jna", version.ref = "jna" }

@@ -51,5 +51,20 @@ kotlin {
                 implementation(libs.sqldelight.sqlite.driver)
             }
         }
+        // Android host-side tests (Robolectric on JVM). Verifies KilnDatabase
+        // schema + FTS5 creates cleanly with bundled SQLite — the exact gap
+        // that let the Pixel FTS5 surprise go latent for 5 sessions (P1-3).
+        // AGP 9 KMP renamed androidUnitTest → androidHostTest; the matching
+        // Gradle task is testAndroidHostTest (NOT testDebugUnitTest).
+        getByName("androidHostTest") {
+            dependencies {
+                implementation(libs.kotlin.test)
+                implementation(libs.kotlinx.coroutines.test)
+                implementation(libs.sqldelight.android.driver)
+                implementation(libs.requery.sqlite.android)
+                implementation(libs.robolectric)
+                implementation(libs.androidx.test.core)            // ApplicationProvider
+            }
+        }
     }
 }
