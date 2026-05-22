@@ -175,6 +175,19 @@ class Media3ExoPlayerImplTest {
         assertEquals("a", q.items[q.currentIndex].itemId.value)
     }
 
+    @Test
+    fun `setRepeatMode + setShuffleMode update queue flow without playback`() = runBlocking {
+        val player = newPlayer()
+        player.setRepeatMode(RepeatMode.All)
+        assertEquals(RepeatMode.All, player.queue.value.repeatMode)
+        player.setShuffleMode(true)
+        assertEquals(true, player.queue.value.shuffleEnabled)
+        player.setRepeatMode(RepeatMode.Off)
+        player.setShuffleMode(false)
+        assertEquals(RepeatMode.Off, player.queue.value.repeatMode)
+        assertEquals(false, player.queue.value.shuffleEnabled)
+    }
+
     private fun makeMediaItem(id: String): MediaItem = MediaItem(
         itemId = ItemId(id),
         sourceId = SourceId("test"),
