@@ -97,6 +97,7 @@ compose-runtime-saveable = { module = "org.jetbrains.compose.runtime:runtime-sav
 compose-foundation = { module = "org.jetbrains.compose.foundation:foundation", version.ref = "jb-compose" }
 compose-material3 = { module = "org.jetbrains.compose.material3:material3", version.ref = "jb-compose-material3" }
 compose-material-icons = { module = "org.jetbrains.compose.material:material-icons-core", version.ref = "jb-compose-material-icons-core" }
+compose-material-icons-extended = { module = "org.jetbrains.compose.material:material-icons-extended", version.ref = "jb-compose-material-icons-core" }
 compose-ui = { module = "org.jetbrains.compose.ui:ui", version.ref = "jb-compose" }
 compose-ui-tooling = { module = "org.jetbrains.compose.ui:ui-tooling", version.ref = "jb-compose" }
 compose-ui-tooling-preview = { module = "org.jetbrains.compose.ui:ui-tooling-preview", version.ref = "jb-compose" }
