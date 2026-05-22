@@ -28,6 +28,9 @@ jobs:
       - name: Run JVM tests on Ubuntu (data:library only — audio:playback FLAC tests are Windows-only)
         run: ./gradlew :data:library:desktopTest
 
+      - name: Run androidHostTest + androidUnitTest (Robolectric host-side)
+        run: ./gradlew :data:library:testAndroidHostTest :audio:playback:testAndroidHostTest :app-android:testDebugUnitTest
+
       - name: Build APK
         run: ./gradlew :app-android:assembleDebug
 
