@@ -443,13 +443,11 @@ internal class JavaSoundPlayerImpl(
             var lastTickedMs = 0L
             try {
                 stream.frames.collect { frame ->
-                    // Apply processors in order. Each may return a new (or
-                    // mutated) AudioFrame; we chain them so the final write
-                    // reflects the cumulative pipeline. Currently
-                    // `_processors.value` is always empty (no concrete
-                    // processors land before :audio:dsp Sessions 16-22), so
-                    // this fold is a no-op — but wiring it now is the
-                    // load-bearing prep for when EQ / ReplayGain / etc. arrive.
+                    // Apply processors in order. Each may mutate the AudioFrame's bytes
+                    // (typically returning the same instance). D-B Session 15 added
+                    // ReplayGainProcessor to the chain at init; future EQ, room correction,
+                    // etc. will join the same list via DI wiring. The processor implementations
+                    // themselves live in :audio:dsp per Concentric Modules.
                     var processedFrame = frame
                     _processors.value.forEach { processor ->
                         processedFrame = processor.process(processedFrame)
