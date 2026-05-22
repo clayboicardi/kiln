@@ -32,4 +32,13 @@ dependencies {
     implementation(project(":data:library"))
     implementation(project(":ui:components"))
     implementation(project(":ui:theme"))
+
+    // === Desktop host-side tests (pure JVM JUnit 4) ===
+    // :app-desktop is com.android.application's JVM counterpart (kiln.desktop.app
+    // → org.jetbrains.kotlin.jvm). The default `test` source set lives at
+    // src/test/kotlin/... and runs via `./gradlew :app-desktop:test`. JUnit 4
+    // is the project's standard runner (matches :app-android + audio:playback
+    // desktopTest). No Robolectric — desktop tests run on a real JVM.
+    testImplementation(libs.kotlin.test)
+    testImplementation(libs.junit4)
 }
