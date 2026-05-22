@@ -1230,3 +1230,28 @@ Same gates as Task 7 Steps 1-3.
 - **`compose-material-icons-extended`** — the gear icon and delete icon come from the core set already bundled. No new icon dep needed.
 
 End of Phase 2a Track B plan. Total: 7 logical tasks, ~7 commits, ~4-7 wall-clock hours with subagent dispatch + two-stage review.
+
+---
+
+## Pixel 7 manual smoke checklist (delegated to Clay at session-close)
+
+Device: Pixel 7 Pro / Tensor G2 / Android 14 / serial 2A261FDH300B1P
+
+1. Launch Kiln (LAUNCHER intent already fired by autonomous Step 3).
+2. Tap the gear icon (top-right of PlayFirstTrackScreen).
+3. SettingsScreen renders; "Library folders" section is empty.
+4. Tap "Add Folder".
+5. **Expected:** Android SAF system file picker opens (NOT a Toast — the Toast was Track A's stub, replaced in Task 5).
+6. Navigate to a folder containing audio files (e.g., `/sdcard/Music`).
+7. Tap "Use this folder" / "Allow" / equivalent.
+8. **Expected:** the folder URI (e.g., `content://com.android.externalstorage.documents/tree/primary:Music`) appears in the SettingsScreen's folder list.
+9. Tap "Close" to return to PlayFirstTrackScreen.
+10. Tap "Scan Library".
+11. **Expected:** scan completes; the result counter shows `+N added` where N includes both MediaStore entries AND files from the SAF tree.
+12. Cold-kill the app via `adb -s 2A261FDH300B1P shell am force-stop com.clayworks.kiln`.
+13. Relaunch via the launcher.
+14. Tap gear icon → Settings → **Expected:** the previously-picked folder URI is STILL in the list (persistent URI permission survived).
+15. Tap the delete icon next to the URI → **Expected:** folder removed from list.
+16. Tap "Scan Library" → **Expected:** scan completes; files previously found via SAF are now soft-deleted (next scan would re-find them if a new picker invocation re-adds the tree).
+
+If any step fails as something other than its expected behavior, that's the gap to surface in the session-close handoff for the next Track A/B/C session.
