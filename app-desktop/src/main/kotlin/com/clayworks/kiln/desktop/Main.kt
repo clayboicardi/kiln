@@ -1,9 +1,9 @@
-// Desktop H7 vertical-slice entry point. Mirrors MainActivity's
-// PlayFirstTrackScreen but without the Android permission flow.
-//
-// The graph is instantiated once at process start. userDataDir defaults to
-// ~/.kiln; scanFolders defaults to Clay's D:\tiddl per CLAUDE.md gotcha.
-// Settings UI (MVP Sessions 26-28) will read these from a Settings table.
+// Desktop entry point. Graph instantiated once at process start; userDataDir
+// is injected directly (DB must exist before settings can be read). Scan
+// folders now flow from SettingsRepository (Phase 2a Track A rewire): on
+// first launch (empty settings.scanFolders), seed D:\tiddl so Clay's existing
+// workflow keeps working. Subsequent launches read the persisted list; the
+// SettingsScreen (Task 9, forthcoming) edits it via the gear icon.
 
 package com.clayworks.kiln.desktop
 
@@ -29,7 +29,6 @@ import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import arrow.core.Either
 import com.clayworks.kiln.desktop.di.DesktopAppGraph
-import com.clayworks.kiln.desktop.di.ScanFolders
 import com.clayworks.kiln.desktop.di.UserDataDir
 import com.clayworks.kiln.desktop.di.create
 import com.clayworks.kiln.library.scan.LibraryScanner
@@ -37,9 +36,11 @@ import com.clayworks.kiln.library.scan.ScanError
 import com.clayworks.kiln.library.scan.ScanResult
 import com.clayworks.kiln.library.source.BrowseScope
 import java.nio.file.Path
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 
 fun main() {
     // Process-lifetime graph — hoisted OUTSIDE application { } so its scope is
@@ -51,8 +52,28 @@ fun main() {
     // KilnApplication ownership pattern.
     val graph = DesktopAppGraph::class.create(
         userDataDir = UserDataDir(Path.of(System.getProperty("user.home"), ".kiln")),
-        scanFolders = ScanFolders(listOf(Path.of("D:\\tiddl"))),
     )
+
+    // First-launch seed: if no scan_folders row exists yet, populate
+    // D:\tiddl as the default (Clay's library root per CLAUDE.md). After
+    // the first write — including a deliberate empty save once the
+    // SettingsScreen is wired in Task 9 — this is a no-op because
+    // SettingsRepository.scanFolders.first() returns the persisted value.
+    //
+    // Known Track A limit: an empty-list save and "no row yet" are
+    // currently indistinguishable. The conflation is documented in the
+    // Phase 2a Track A plan §Task 7 and revisited if/when a "clear all
+    // folders" flow ships — a bootstrap_complete=true setting key is the
+    // expected differentiation. SettingsRepository.scanFolders.first()
+    // emits the current value immediately from SQLDelight's asFlow(), so
+    // this completes in <50ms on cold start.
+    runBlocking {
+        val existing = graph.settings.scanFolders.first()
+        if (existing.isEmpty()) {
+            graph.settings.setScanFolders(listOf("D:\\tiddl"))
+        }
+    }
+
     application {
         Window(
             onCloseRequest = ::exitApplication,

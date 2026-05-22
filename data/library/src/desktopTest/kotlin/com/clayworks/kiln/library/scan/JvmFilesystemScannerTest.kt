@@ -11,6 +11,7 @@ import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import arrow.core.Either
 import com.clayworks.kiln.data.library.db.KilnDatabase
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -80,7 +81,7 @@ class JvmFilesystemScannerTest {
         try {
             val sentinelId = insertSentinelTrack(db, scanStartedMs = 1_000L)
             val scanner = JvmFilesystemScanner(
-                scanFolders = emptyList(),
+                scanFoldersFlow = flowOf(emptyList()),
                 db = db,
                 driver = driver,
                 ioDispatcher = Dispatchers.Unconfined,
@@ -122,7 +123,7 @@ class JvmFilesystemScannerTest {
             val originalScanMs = 5_000L
             val sentinelId = insertSentinelTrack(db, scanStartedMs = originalScanMs)
             val scanner = JvmFilesystemScanner(
-                scanFolders = emptyList(),
+                scanFoldersFlow = flowOf(emptyList()),
                 db = db,
                 driver = driver,
                 ioDispatcher = Dispatchers.Unconfined,
@@ -153,7 +154,7 @@ class JvmFilesystemScannerTest {
         val (driver, db) = inMemoryDb()
         try {
             val scanner = JvmFilesystemScanner(
-                scanFolders = emptyList(),
+                scanFoldersFlow = flowOf(emptyList()),
                 db = db,
                 driver = driver,
                 ioDispatcher = Dispatchers.Unconfined,

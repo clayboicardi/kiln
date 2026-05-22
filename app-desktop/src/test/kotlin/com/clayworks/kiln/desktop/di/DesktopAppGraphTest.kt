@@ -9,6 +9,10 @@
 // already happens for :audio:playback's desktopTest task, so wiring it
 // here for :app-desktop's `test` task confirms the path also works when
 // invoked from a separate module's test classpath.
+//
+// Track A change: dropped the ScanFolders ctor arg (scanner now reads scan
+// folders from SettingsRepository on demand). Added a settings-resolution
+// assertion so the new graph surface is pinned by a test.
 
 package com.clayworks.kiln.desktop.di
 
@@ -21,11 +25,9 @@ class DesktopAppGraphTest {
     @Test
     fun graph_provides_full_chain() {
         val tempDir = Files.createTempDirectory("kiln-graph-test-")
-        val scanRoot = Files.createTempDirectory(tempDir, "scan-")
         try {
             val graph = DesktopAppGraph::class.create(
                 userDataDir = UserDataDir(tempDir),
-                scanFolders = ScanFolders(listOf(scanRoot)),
             )
             assertNotNull(graph.musicSource)
             assertNotNull(graph.scanner)
@@ -36,21 +38,19 @@ class DesktopAppGraphTest {
     }
 
     @Test
-    fun graph_value_class_type_tags_disambiguate_path_params() {
-        // UserDataDir + ScanFolders both wrap Path; the value-class tags let
-        // kotlin-inject route them to distinct providers. Regression for the
-        // CLAUDE.md gotcha "Value-class type-tags distinguish ambiguous JVM-
-        // type DI bindings."
+    fun graph_exposes_settings_repository() {
+        // Track A surface contract: graph.settings resolves to the singleton
+        // SettingsRepository instance backed by the SQLDelight settings table.
+        // Other consumers (Main.kt's first-launch seed, SettingsScreen route)
+        // depend on this binding existing on the graph surface; a regression
+        // would surface as a KSP error at compile time, but the assertion
+        // pins the runtime contract too.
         val tempDir = Files.createTempDirectory("kiln-graph-test-")
         try {
             val graph = DesktopAppGraph::class.create(
-                userDataDir = UserDataDir(tempDir.resolve("home")),
-                scanFolders = ScanFolders(listOf(tempDir.resolve("music"))),
+                userDataDir = UserDataDir(tempDir),
             )
-            // If the type tags were broken, kotlin-inject's KSP would have
-            // failed compilation, not runtime. But this test pins the contract
-            // so a future refactor doesn't silently merge the types.
-            assertNotNull(graph)
+            assertNotNull(graph.settings)
         } finally {
             tempDir.toFile().deleteRecursively()
         }

@@ -19,6 +19,8 @@ import com.clayworks.kiln.library.scan.internal.parseReplayGainDb
 import com.clayworks.kiln.library.scan.internal.rebuildFtsIndex
 import com.clayworks.kiln.library.scan.internal.toSortName
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import org.jaudiotagger.audio.AudioFileIO
 import org.jaudiotagger.tag.FieldKey
@@ -36,7 +38,7 @@ private val log = Logger.withTag("JvmFilesystemScanner")
 private val AUDIO_EXTENSIONS = setOf("flac", "wav", "mp3", "alac", "ogg", "opus", "m4a")
 
 class JvmFilesystemScanner(
-    private val scanFolders: List<Path>,
+    private val scanFoldersFlow: Flow<List<Path>>,
     private val db: KilnDatabase,
     private val driver: SqlDriver,
     private val ioDispatcher: CoroutineDispatcher,
@@ -53,8 +55,9 @@ class JvmFilesystemScanner(
     override suspend fun scanFull(): Either<ScanError, ScanResult> =
         withContext(ioDispatcher) { runScan(forceFullRescan = true) }
 
-    private fun runScan(forceFullRescan: Boolean): Either<ScanError, ScanResult> =
+    private suspend fun runScan(forceFullRescan: Boolean): Either<ScanError, ScanResult> =
         Either.catch {
+            val scanFolders = scanFoldersFlow.first()
             val scanStartedMs = System.currentTimeMillis()
 
             // GUARD: empty scanFolders is a data-loss bomb. Without this, the
@@ -102,7 +105,7 @@ class JvmFilesystemScanner(
                 )
             }
 
-            val files = discoverAudioFiles()
+            val files = discoverAudioFiles(scanFolders)
             log.i { "discovered ${files.size} candidate file(s) across ${scanFolders.size} folder(s)" }
 
             // ONE transaction wrapping the whole scan loop (Session 10 Gemini G2).
@@ -157,7 +160,7 @@ class JvmFilesystemScanner(
         else -> ScanError.IoError(e)
     }
 
-    private fun discoverAudioFiles(): List<Path> = scanFolders.flatMap { root ->
+    private fun discoverAudioFiles(scanFolders: List<Path>): List<Path> = scanFolders.flatMap { root ->
         if (!Files.exists(root)) {
             log.w { "scan folder does not exist: $root" }
             return@flatMap emptyList<Path>()
