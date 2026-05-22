@@ -43,7 +43,7 @@
 | Path | Responsibility |
 |------|---------------|
 | `data/library/src/commonMain/sqldelight/com/clayworks/kiln/data/library/db/settings.sq` | Settings table (key/value TEXT/TEXT) + CRUD queries |
-| `data/library/src/commonMain/sqldelight/com/clayworks/kiln/data/library/db/migrations/2.sqm` | v1→v2 migration: CREATE TABLE settings |
+| `data/library/src/commonMain/sqldelight/com/clayworks/kiln/data/library/db/migrations/1.sqm` | v1→v2 migration: CREATE TABLE settings (SQLDelight names `.sqm` by **source** version, not target) |
 | `data/library/src/commonMain/sqldelight/databases/1.db` | SQLDelight v1 schema snapshot (generated, committed) |
 | `data/library/src/commonMain/sqldelight/databases/2.db` | SQLDelight v2 schema snapshot (generated, committed) |
 | `data/library/src/commonMain/kotlin/com/clayworks/kiln/library/settings/SettingsRepository.kt` | Public interface + ThemeMode enum + default values |
@@ -232,19 +232,21 @@ EOF
 
 ---
 
-### Task 3: 2.sqm migration + v2 snapshot
+### Task 3: 1.sqm migration + v2 snapshot
+
+**SQLDelight naming gotcha (corrected post-empirical discovery 2026-05-22):** SQLDelight `.sqm` files are named by the **source** schema version they migrate FROM, not the target version they migrate TO. So the v1→v2 migration file is `1.sqm` (not `2.sqm`). Running with `2.sqm` was empirically observed to produce `databases/3.db` because SQLDelight interpreted `2.sqm` as v2→v3 against a phantom v2. The 1.sqm form produces `2.db` as expected. Source: https://sqldelight.github.io/sqldelight/latest/multiplatform_sqlite/migrations.
 
 **Why standalone:** Pairing the migration with its snapshot generation in one commit keeps the schema-version state consistent on every checkout. Splitting these would leave `main` in a state where verifyMigrations fails between commits.
 
 **Files:**
-- Create: `data/library/src/commonMain/sqldelight/com/clayworks/kiln/data/library/db/migrations/2.sqm`
+- Create: `data/library/src/commonMain/sqldelight/com/clayworks/kiln/data/library/db/migrations/1.sqm`
 - Create: `data/library/src/commonMain/sqldelight/databases/2.db` (generated, committed)
 
 **Steps:**
 
-- [ ] **Step 1: Create 2.sqm**
+- [ ] **Step 1: Create 1.sqm** (the v1→v2 migration — named by source version per SQLDelight convention)
 
-Path: `data/library/src/commonMain/sqldelight/com/clayworks/kiln/data/library/db/migrations/2.sqm`
+Path: `data/library/src/commonMain/sqldelight/com/clayworks/kiln/data/library/db/migrations/1.sqm`
 
 ```sql
 -- v1 → v2: add settings table.
