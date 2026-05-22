@@ -16,15 +16,20 @@ package com.clayworks.kiln.library.scan
 
 import android.content.Context
 import android.database.Cursor
+import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
 import app.cash.sqldelight.db.SqlDriver
 import arrow.core.Either
 import co.touchlab.kermit.Logger
 import com.clayworks.kiln.data.library.db.KilnDatabase
+import com.clayworks.kiln.library.scan.internal.SafTagReader
+import com.clayworks.kiln.library.scan.internal.SafTreeWalker
 import com.clayworks.kiln.library.scan.internal.rebuildFtsIndex
 import com.clayworks.kiln.library.scan.internal.toSortName
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 
 private val log = Logger.withTag("AndroidMediaStoreScanner")
@@ -36,6 +41,7 @@ private const val UNKNOWN_PLACEHOLDER = "<unknown>"  // MediaStore literal
 
 class AndroidMediaStoreScanner(
     private val context: Context,
+    private val safTreeUrisFlow: Flow<List<String>>,
     private val db: KilnDatabase,
     private val driver: SqlDriver,
     private val ioDispatcher: CoroutineDispatcher,
@@ -47,9 +53,10 @@ class AndroidMediaStoreScanner(
     override suspend fun scanFull(): Either<ScanError, ScanResult> =
         withContext(ioDispatcher) { runScan(forceFullRescan = true) }
 
-    private fun runScan(forceFullRescan: Boolean): Either<ScanError, ScanResult> =
+    private suspend fun runScan(forceFullRescan: Boolean): Either<ScanError, ScanResult> =
         Either.catch {
             val scanStartedMs = System.currentTimeMillis()
+            val safTreeUris = safTreeUrisFlow.first()
             var added = 0
             var updated = 0
             var unchanged = 0
@@ -96,6 +103,16 @@ class AndroidMediaStoreScanner(
                     }
                 }
             }
+
+            // Phase 2a Track B: walk SAF-picked tree URIs from settings.scanFolders.
+            // These augment the system-wide MediaStore pass above — Android users
+            // who picked a folder via the SAF picker want files MediaStore doesn't
+            // know about (Downloads, sideloaded SD, etc.). Same upsert + soft-delete
+            // semantics; counts accumulate.
+            val (safAdded, safUpdated, safParseErrors) = scanSafTrees(safTreeUris, scanStartedMs)
+            added += safAdded
+            updated += safUpdated
+            parseErrors += safParseErrors
 
             val softDeleteCount = db.trackQueries.countUnscanned(scanStartedMs)
                 .executeAsOne().toInt()
@@ -281,6 +298,158 @@ class AndroidMediaStoreScanner(
             compilation = 0L,
         )
         return db.albumQueries.lastInsertRowId().executeAsOne()
+    }
+
+    // ---------- Phase 2a Track B: SAF tree pass ----------
+    //
+    // Each SAF upsert runs OUTSIDE the main db.transaction { } block — per-row
+    // transactions here are acceptable because SAF scans are typically small
+    // folders (Downloads, sideloaded SD), not the full MediaStore-scale 27k
+    // library. Batching is a Phase 2a polish target if real-world scans hit
+    // perf issues with deeply-nested user picks.
+    //
+    // SAF and MediaStore entries are NOT deduped at Track B — UNIQUE(file_path)
+    // keeps both rows distinct (content:// URI ≠ /storage/... path even for
+    // the same physical file). Dedup is Phase 2a follow-up; see CLAUDE.md.
+    private fun scanSafTrees(
+        safTreeUris: List<String>,
+        scanStartedMs: Long,
+    ): Triple<Int, Int, Int> {
+        if (safTreeUris.isEmpty()) return Triple(0, 0, 0)
+
+        var added = 0
+        var updated = 0
+        var parseErrors = 0
+
+        for (uriString in safTreeUris) {
+            val treeUri = try {
+                Uri.parse(uriString)
+            } catch (e: Exception) {
+                log.w(e) { "skipped malformed SAF URI: $uriString" }
+                continue
+            }
+            // Skip non-SAF URIs (filesystem paths from Desktop wouldn't appear on
+            // Android, but defensive in case a shared scan_folders setting is set
+            // by some future cross-platform sync flow).
+            if (treeUri.scheme != "content") continue
+
+            for (doc in SafTreeWalker.walk(context.contentResolver, treeUri)) {
+                val filePath = doc.documentUri.toString()
+                val mtime = doc.lastModified.takeIf { it > 0 } ?: scanStartedMs
+                val size = doc.size.coerceAtLeast(0L)
+
+                val existing = db.trackQueries.selectByFilePath(filePath).executeAsOneOrNull()
+                if (existing != null &&
+                    existing.file_mtime_ms == mtime &&
+                    existing.file_size_bytes == size &&
+                    existing.deleted_at_ms == null
+                ) {
+                    db.trackQueries.touchLastScanned(scannedAtMs = scanStartedMs, filePath = filePath)
+                    // NB: SAF "unchanged" hits aren't accumulated into the parent unchanged
+                    // counter — scanSafTrees returns Triple(added, updated, parseErrors)
+                    // only. The omission is deliberate at Track B; if SAF tree sizes become
+                    // a UX concern, return a Quadruple and merge.
+                    continue
+                }
+
+                val metadata = SafTagReader.read(context.contentResolver, doc.documentUri, doc.displayName)
+                if (metadata == null) {
+                    parseErrors++
+                    log.w { "SafTagReader returned null for ${doc.displayName} ($filePath); skipping" }
+                    continue
+                }
+
+                val codec = detectCodecFromMime(doc.mimeType)
+
+                // SafTrackMetadata does NOT surface MusicBrainz sort variants
+                // (TITLE_SORT, ARTIST_SORT, ALBUM_ARTIST_SORT). MediaMetadataRetriever
+                // doesn't expose them; jaudiotagger (desktop) does. Curator-tagged
+                // sort names are LOST for SAF tracks at Track B — Phase 2a polish
+                // could add a jaudiotagger-based fallback path.
+                val artistId = upsertArtist(metadata.artist, toSortName(metadata.artist), mbid = null)
+                val albumArtistId = metadata.albumArtist?.let { albumArtist ->
+                    upsertArtist(albumArtist, toSortName(albumArtist), mbid = null)
+                } ?: artistId
+                val albumId = metadata.album?.let { albumName ->
+                    upsertAlbum(
+                        albumArtistId = albumArtistId,
+                        albumName = albumName,
+                        albumNameSort = toSortName(albumName),
+                        year = metadata.year,
+                    )
+                }
+
+                if (existing == null) {
+                    db.trackQueries.insert(
+                        album_id = albumId,
+                        artist_id = artistId,
+                        title = metadata.title,
+                        title_sort = toSortName(metadata.title),
+                        duration_ms = metadata.durationMs,
+                        track_number = metadata.trackNumber,
+                        disc_number = null,
+                        year = metadata.year,
+                        date = null,
+                        genre = metadata.genre,
+                        composer = metadata.composer,
+                        bpm = null,
+                        codec = codec,
+                        bitrate_kbps = metadata.bitrateKbps,
+                        sample_rate_hz = DEFAULT_SAMPLE_RATE_HZ,
+                        bit_depth = null,
+                        channels = DEFAULT_CHANNELS,
+                        file_path = filePath,
+                        file_size_bytes = size,
+                        file_mtime_ms = mtime,
+                        replay_gain_track_db = null,
+                        replay_gain_album_db = null,
+                        replay_gain_track_peak = null,
+                        replay_gain_album_peak = null,
+                        has_embedded_art = 0L,
+                        art_path = null,
+                        source = "local",
+                        date_added_ms = scanStartedMs,
+                        date_modified_ms = scanStartedMs,
+                        last_scanned_ms = scanStartedMs,
+                    )
+                    added++
+                } else {
+                    db.trackQueries.updateForRescan(
+                        album_id = albumId,
+                        artist_id = artistId,
+                        title = metadata.title,
+                        title_sort = toSortName(metadata.title),
+                        duration_ms = metadata.durationMs,
+                        track_number = metadata.trackNumber,
+                        disc_number = null,
+                        year = metadata.year,
+                        date = null,
+                        genre = metadata.genre,
+                        composer = metadata.composer,
+                        bpm = null,
+                        codec = codec,
+                        bitrate_kbps = metadata.bitrateKbps,
+                        sample_rate_hz = DEFAULT_SAMPLE_RATE_HZ,
+                        bit_depth = null,
+                        channels = DEFAULT_CHANNELS,
+                        file_size_bytes = size,
+                        file_mtime_ms = mtime,
+                        replay_gain_track_db = null,
+                        replay_gain_album_db = null,
+                        replay_gain_track_peak = null,
+                        replay_gain_album_peak = null,
+                        has_embedded_art = 0L,
+                        art_path = null,
+                        modifiedAtMs = scanStartedMs,
+                        scannedAtMs = scanStartedMs,
+                        filePath = filePath,
+                    )
+                    updated++
+                }
+            }
+        }
+
+        return Triple(added, updated, parseErrors)
     }
 
     private fun readTagsFromCursor(cursor: Cursor, cols: MediaCols, filePath: String): TrackTags {
