@@ -204,4 +204,32 @@ class LocalLibrarySourceTest {
         assertTrue(items.all { it.kind == MediaItem.Kind.Track })
         assertEquals(listOf("Newer", "Middle", "Older"), items.map { it.title })
     }
+
+    @Test
+    fun browse_RecentlyPlayed_filtersAndOrdersByLastPlayed() = runTest {
+        // selectRecentlyPlayed filters WHERE last_played_ms IS NOT NULL and
+        // orders by last_played_ms DESC. Tracks with NULL last_played_ms
+        // (the table default) MUST be excluded.
+        //
+        // TestDb.insertTrack: setting playCount alone no longer auto-populates
+        // last_played_ms; must pass BOTH playCount AND lastPlayedMs to make a
+        // row eligible for RecentlyPlayed (mirrors markPlayed semantics).
+        val artistId = testDb.insertArtist("Test Artist", "test artist")
+        testDb.insertTrack(
+            artistId, title = "Recent", filePath = "/p/recent.flac",
+            playCount = 1L, lastPlayedMs = TestDb.NOW_MS,
+        )
+        testDb.insertTrack(
+            artistId, title = "Older", filePath = "/p/older.flac",
+            playCount = 1L, lastPlayedMs = TestDb.NOW_MS - 1_000L,
+        )
+        testDb.insertTrack(artistId, title = "NeverPlayed1", filePath = "/p/np1.flac")
+        testDb.insertTrack(artistId, title = "NeverPlayed2", filePath = "/p/np2.flac")
+
+        val items = snapshot(source.browse(BrowseScope.RecentlyPlayed()))
+
+        assertEquals(2, items.size)
+        assertTrue(items.all { it.kind == MediaItem.Kind.Track })
+        assertEquals(listOf("Recent", "Older"), items.map { it.title })
+    }
 }
