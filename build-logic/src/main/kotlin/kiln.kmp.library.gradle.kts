@@ -26,6 +26,14 @@ kotlin {
         // Android target. (Gradle emits a warning when commonTest exists but
         // host tests aren't enabled.) Task name: testAndroidHostTest.
         // androidUnitTest (AGP 8.x) was renamed to androidHostTest in AGP 9.
+        //
+        // Side-effect: enabling host tests causes commonTest classes to ALSO
+        // execute on the Android target's testAndroidHostTest task (per-target
+        // test multiplication is standard KMP behavior — the same test runs on
+        // every target that has a test source set). This is welcome free
+        // Android-target coverage for platform-neutral commonTest classes, but
+        // can surprise a maintainer wondering why one test name appears in two
+        // task reports (e.g. desktopTest + testAndroidHostTest).
         withHostTest { }
     }
     jvm("desktop")
