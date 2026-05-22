@@ -336,4 +336,24 @@ class LocalLibrarySourceTest {
             is Either.Left -> fail("Expected Right but got Left: ${result.value}")
         }
     }
+
+    @Test
+    fun getPlayable_returnsLeftItemNotFound_forAlbumNamespaceId() = runTest {
+        // Namespace contract: only tracks (bare-numeric ItemIds) are playable.
+        // Container kinds (album:/artist:/playlist: prefixes) must yield
+        // Either.Left(ItemNotFound) — toLongOrNull() returns null on the
+        // colon-prefixed form, triggering the non-local return at L110 of
+        // LocalLibrarySource.getPlayable. A future bug that loosened this
+        // contract (e.g., stripping the prefix and looking up by id) would
+        // fail this assertion.
+        val artistId = testDb.insertArtist("Foo")
+        val albumId = testDb.insertAlbum(artistId, "Bar")
+
+        val result = source.getPlayable(ItemId("album:$albumId"))
+
+        when (result) {
+            is Either.Left -> assertTrue(result.value is SourceError.ItemNotFound)
+            is Either.Right -> fail("Expected Left(ItemNotFound) but got Right: ${result.value}")
+        }
+    }
 }
