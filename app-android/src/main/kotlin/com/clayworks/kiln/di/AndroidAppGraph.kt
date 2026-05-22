@@ -21,6 +21,8 @@ import com.clayworks.kiln.audio.playback.PlatformPlayer
 import com.clayworks.kiln.data.library.db.KilnDatabase
 import com.clayworks.kiln.library.scan.AndroidMediaStoreScanner
 import com.clayworks.kiln.library.scan.LibraryScanner
+import com.clayworks.kiln.library.settings.SettingsRepository
+import com.clayworks.kiln.library.settings.SettingsRepositoryImpl
 import com.clayworks.kiln.library.source.LocalLibrarySource
 import com.clayworks.kiln.library.source.MusicSource
 import kotlinx.coroutines.Dispatchers
@@ -35,6 +37,7 @@ abstract class AndroidAppGraph(
     abstract val musicSource: MusicSource
     abstract val scanner: LibraryScanner
     abstract val player: PlatformPlayer
+    abstract val settings: SettingsRepository
 
     /**
      * AndroidSqliteDriver auto-creates/migrates the schema via PRAGMA
@@ -68,6 +71,17 @@ abstract class AndroidAppGraph(
     @Singleton
     @Provides
     protected fun database(driver: SqlDriver): KilnDatabase = KilnDatabase(driver)
+
+    /**
+     * SettingsRepository binds the impl-returning provider to the interface
+     * type at the graph surface. Mirrors DesktopAppGraph's pattern: kotlin-inject
+     * routes the interface consumers (MainActivity's KilnTheme wrap +
+     * AndroidSettingsRoute composable) to this single instance.
+     */
+    @Singleton
+    @Provides
+    protected fun settingsRepository(db: KilnDatabase): SettingsRepository =
+        SettingsRepositoryImpl(db, Dispatchers.IO)
 
     @Singleton
     @Provides
