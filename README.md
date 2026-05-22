@@ -4,7 +4,7 @@ A from-scratch Android + Windows Desktop music player. Personal-use audiophile p
 
 ## Status
 
-**Status as of 2026-05-22:** MVP vertical slice + library + DI graphs complete (Sessions 1-12). Pre-Phase-2a stabilization shipped — every P1 finding from the 2026-05-21 tooling-armed review is closed. **91 tests + 1 skipped pass on the canonical `kiln-verify-build` 5-target suite; +15 host-side Android tests via the new `androidHostTest` source sets.** CI green on every push (Ubuntu Android job + Windows Desktop job).
+**Status as of 2026-05-22:** MVP vertical slice + library + DI graphs complete (Sessions 1-12). Pre-Phase-2a stabilization shipped — every P1 finding from the 2026-05-21 tooling-armed review is closed. **91 tests + 1 skipped pass on the canonical `kiln-verify-build` 5-target suite; +15 host-side Android tests via the new `androidHostTest` source sets.** CI green on every push (Ubuntu Android job + Windows Desktop job). **Vertical slice empirically verified on Pixel 7 Pro / Android 14** — clean launch, permission gate works, post-grant UI renders correctly. **kotlin-lsp is now operational for cross-module symbol navigation** (v262.4739.0; the prior deferral is lifted).
 
 **Next:** Phase 2a track-picker session — see [`docs/sessions/2026-05-22-session-13-handoff.md`](docs/sessions/2026-05-22-session-13-handoff.md). Six tracks on the menu: Settings UI (A), SAF folder-picker (B), Proper UI (C), full Kiln-internal ReplayGain (D, scope pivoted to ~30-66h analyzer), MediaSession (E). Track F (CI gate) shipped during stabilization.
 
