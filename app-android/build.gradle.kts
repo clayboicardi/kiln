@@ -35,4 +35,21 @@ dependencies {
     implementation(project(":data:library"))
     implementation(project(":ui:components"))
     implementation(project(":ui:theme"))
+
+    // === Android host-side tests (Robolectric) ===
+    // :app-android uses com.android.application (legacy), not the KMP
+    // library plugin. The legacy convention places host-side unit tests
+    // under src/test/kotlin/... wired via testImplementation; the Gradle
+    // task is testDebugUnitTest (NOT testAndroidHostTest — that's the
+    // AGP 9 KMP form, used in :data:library + :audio:playback).
+    //
+    // junit4 must be declared explicitly here — unlike the KMP plugin's
+    // androidHostTest source set, com.android.application's
+    // testImplementation doesn't surface JUnit 4 transitively via
+    // Robolectric. Confirmed empirically Phase 5.
+    testImplementation(libs.kotlin.test)
+    testImplementation(libs.junit4)
+    testImplementation(libs.robolectric)
+    testImplementation(libs.androidx.test.core)                 // ApplicationProvider
+    testImplementation(libs.requery.sqlite.android)             // bundled SQLite parity with production
 }

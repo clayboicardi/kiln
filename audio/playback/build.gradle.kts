@@ -30,5 +30,17 @@ kotlin {
             implementation(libs.jaudiotagger)
             implementation(libs.kotlinx.coroutines.swing)
         }
+        // Android host-side tests (Robolectric on JVM). Phase-5 source-set
+        // scaffolding only; the Media3 instantiation test lands in Phase 7
+        // (Media3ExoPlayerImpl coverage). AGP 9 KMP renamed androidUnitTest
+        // → androidHostTest; the matching Gradle task is testAndroidHostTest.
+        getByName("androidHostTest") {
+            dependencies {
+                implementation(libs.kotlin.test)
+                implementation(libs.kotlinx.coroutines.test)
+                implementation(libs.robolectric)
+                implementation(libs.androidx.test.core)            // ApplicationProvider
+            }
+        }
     }
 }

@@ -73,6 +73,11 @@ robolectric = "4.16.1"
 # androidx.test:core supplies ApplicationProvider — Robolectric strongly
 # recommends declaring this explicitly (per robolectric.org/androidx_test/).
 androidx-test-core = "1.7.0"
+# JUnit 4 — required for :app-android testImplementation (legacy
+# com.android.application plugin doesn't pull JUnit transitively even
+# via Robolectric, unlike the AGP 9 KMP androidHostTest source set).
+# Matches Slack circuit's pin.
+junit4 = "4.13.2"
 
 # === Utility ===
 appdirs = "1.5.0"                       # Slack-aligned; Desktop user-data-dir resolution
@@ -151,6 +156,7 @@ roborazzi-junit-rule = { module = "io.github.takahirom.roborazzi:roborazzi-junit
 # === Android host-side testing (Robolectric) ===
 robolectric = { module = "org.robolectric:robolectric", version.ref = "robolectric" }
 androidx-test-core = { module = "androidx.test:core", version.ref = "androidx-test-core" }
+junit4 = { module = "junit:junit", version.ref = "junit4" }
 
 # === Native FLAC bridge (Item 9 addendum) ===
 jna = { module = "net.java.dev.jna:jna", version.ref = "jna" }
