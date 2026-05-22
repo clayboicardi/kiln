@@ -356,4 +356,19 @@ class LocalLibrarySourceTest {
             is Either.Right -> fail("Expected Left(ItemNotFound) but got Right: ${result.value}")
         }
     }
+
+    @Test
+    fun getPlayable_returnsLeftItemNotFound_forUnknownTrackId() = runTest {
+        // Numeric-but-unknown id: toLongOrNull() succeeds, selectById returns
+        // null (no row), and L112's non-local return yields
+        // Either.Left(ItemNotFound). 99999 is well above any auto-increment
+        // value reachable in this isolated test (DB is fresh, no inserts).
+        // A future bug returning Right for an unknown id would fail here.
+        val result = source.getPlayable(ItemId("99999"))
+
+        when (result) {
+            is Either.Left -> assertTrue(result.value is SourceError.ItemNotFound)
+            is Either.Right -> fail("Expected Left(ItemNotFound) but got Right: ${result.value}")
+        }
+    }
 }
