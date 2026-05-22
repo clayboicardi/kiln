@@ -15,6 +15,12 @@ sqldelight {
     databases {
         create("KilnDatabase") {
             packageName.set("com.clayworks.kiln.data.library.db")
+            // Migration infrastructure baked in Phase 2a Track A. The .db snapshots
+            // committed under databases/ let CI's verifyCommonMainKilnDatabaseMigration
+            // task diff target schema (current .sq files) against
+            // initial-snapshot + sequential .sqm migrations. Catches drift before merge.
+            schemaOutputDirectory.set(file("src/commonMain/sqldelight/databases"))
+            verifyMigrations.set(true)
         }
     }
 }
