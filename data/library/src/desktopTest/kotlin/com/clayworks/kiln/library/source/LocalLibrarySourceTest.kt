@@ -64,4 +64,17 @@ class LocalLibrarySourceTest {
         assertEquals(2, items.size)
         assertTrue(items.all { it.kind == MediaItem.Kind.Track })
     }
+
+    @Test
+    fun browse_AllAlbums_returnsInsertedAlbums() = runTest {
+        // selectAllOrderedByArtistThenAlbum JOINs album with artist, so the
+        // artist row must exist for the album to surface.
+        val artistId = testDb.insertArtist("Pink Floyd", "pink floyd")
+        testDb.insertAlbum(artistId, "The Wall", year = 1979)
+
+        val items = snapshot(source.browse(BrowseScope.AllAlbums()))
+
+        assertEquals(1, items.size)
+        assertTrue(items.all { it.kind == MediaItem.Kind.Album })
+    }
 }
