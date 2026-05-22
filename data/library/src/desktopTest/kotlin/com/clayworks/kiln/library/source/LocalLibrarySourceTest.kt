@@ -77,4 +77,14 @@ class LocalLibrarySourceTest {
         assertEquals(1, items.size)
         assertTrue(items.all { it.kind == MediaItem.Kind.Album })
     }
+
+    @Test
+    fun browse_AllArtists_returnsInsertedArtists() = runTest {
+        testDb.insertArtist("Pink Floyd", "pink floyd")
+
+        val items = snapshot(source.browse(BrowseScope.AllArtists()))
+
+        assertEquals(1, items.size)
+        assertTrue(items.all { it.kind == MediaItem.Kind.Artist })
+    }
 }
