@@ -13,10 +13,11 @@ enum class ThemeMode { Light, Dark, System }
  * ReplayGain consumer-side gain mode. Track applies the per-track gain;
  * Album applies the per-album rollup; Off bypasses RG entirely.
  *
- * The setting is persisted by Track D-C; consumer-side application lands
- * in Track D-B (Media3 AudioProcessor on Android, JavaSoundPlayerImpl
- * multiplier on Desktop). Until D-B ships, this setting has no audible
- * effect — the value is round-tripped for future use.
+ * The setting is persisted by Track D-C. Consumer-side application landed
+ * in Track D-B: JavaSoundPlayerImpl multiplier on Desktop (PR #13) and
+ * Media3 AudioProcessor via KilnRenderersFactory on Android (this branch's
+ * PR). Per-track RG values come from the analyzer (Track D-A); tracks
+ * without analyzed values silently fall back to gain = 1.0.
  */
 enum class ReplayGainMode { Off, Track, Album }
 
