@@ -87,4 +87,18 @@ class LocalLibrarySourceTest {
         assertEquals(1, items.size)
         assertTrue(items.all { it.kind == MediaItem.Kind.Artist })
     }
+
+    @Test
+    fun browse_AllPlaylists_returnsInsertedPlaylists() = runTest {
+        // Empty case: snapshot of zero rows must collect cleanly (validates
+        // the snapshot helper handles the empty-result code path).
+        val empty = snapshot(source.browse(BrowseScope.AllPlaylists))
+        assertEquals(0, empty.size)
+
+        testDb.insertPlaylist("Favorites")
+
+        val items = snapshot(source.browse(BrowseScope.AllPlaylists))
+        assertEquals(1, items.size)
+        assertTrue(items.all { it.kind == MediaItem.Kind.Playlist })
+    }
 }
