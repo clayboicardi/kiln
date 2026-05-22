@@ -234,6 +234,33 @@ class LocalLibrarySourceTest {
     }
 
     @Test
+    fun search_findsTrackByTitle() = runTest {
+        // FTS5 happy path. The track_search virtual table is contentless and
+        // application-managed (see track_search.sq §4.2) — production code
+        // populates it via the scanner's end-of-scan FTS5 rebuild. In tests
+        // we populate it directly via insertSearchIndex. The rowid MUST
+        // equal track.id (the INNER JOIN in searchTracks: rowid = track.id);
+        // since this is a fresh in-memory DB and the track is the first
+        // inserted, track.id = 1L (AUTOINCREMENT starts at 1; inserts into
+        // artist/album do not bump track.id's sequence).
+        val artistId = testDb.insertArtist("Foo")
+        val albumId = testDb.insertAlbum(artistId, "Bar")
+        testDb.insertTrack(artistId, albumId, "Specific Title Here")
+        testDb.db.track_searchQueries.insertSearchIndex(
+            rowid = 1L,
+            title = "Specific Title Here",
+            album_name = "Bar",
+            artist_name = "Foo",
+            album_artist_name = "Foo",
+        )
+
+        val results = snapshot(source.search("Specific Title"))
+
+        assertEquals(1, results.size)
+        assertEquals("Specific Title Here", results.first().item.title)
+    }
+
+    @Test
     fun browse_MostPlayed_filtersAndOrdersByPlayCount() = runTest {
         // selectMostPlayed filters WHERE play_count > 0 and orders by
         // play_count DESC. Tracks with play_count = 0 (the table default)
