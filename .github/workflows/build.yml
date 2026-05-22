@@ -25,6 +25,9 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      - name: Run JVM tests on Ubuntu (data:library + audio:playback)
+        run: ./gradlew :data:library:desktopTest :audio:playback:desktopTest
+
       - name: Build APK
         run: ./gradlew :app-android:assembleDebug
 
@@ -51,8 +54,21 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      - name: Run desktop tests
+        run: ./gradlew :data:library:desktopTest :audio:playback:desktopTest
+
       - name: Build Desktop JAR
         run: ./gradlew :app-desktop:assemble
+
+      - name: Upload test reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kiln-desktop-test-reports
+          path: |
+            data/library/build/reports/tests/desktopTest/**
+            audio/playback/build/reports/tests/desktopTest/**
+          if-no-files-found: ignore
 
       - name: Upload Desktop JAR
         uses: actions/upload-artifact@v4
