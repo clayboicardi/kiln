@@ -16,6 +16,7 @@
 
 package com.clayworks.kiln.library.source
 
+import arrow.core.Either
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -29,6 +30,7 @@ import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+import kotlin.test.fail
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class LocalLibrarySourceTest {
@@ -316,5 +318,22 @@ class LocalLibrarySourceTest {
         assertEquals(2, items.size)
         assertTrue(items.all { it.kind == MediaItem.Kind.Track })
         assertEquals(listOf("TopPlayed", "MidPlayed"), items.map { it.title })
+    }
+
+    @Test
+    fun getPlayable_returnsRight_forValidTrackId() = runTest {
+        // Happy path: bare-numeric ItemId resolves to a track row, returning
+        // Either.Right(Playable). The resulting Playable.itemId.value MUST
+        // equal the inserted trackId stringified — the namespace contract
+        // (LocalLibrarySourceMappers) emits tracks as bare numerics.
+        val artistId = testDb.insertArtist("Foo")
+        val trackId = testDb.insertTrack(artistId, null, "Track")
+
+        val result = source.getPlayable(ItemId(trackId.toString()))
+
+        when (result) {
+            is Either.Right -> assertEquals(trackId.toString(), result.value.itemId.value)
+            is Either.Left -> fail("Expected Right but got Left: ${result.value}")
+        }
     }
 }
