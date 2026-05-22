@@ -16,6 +16,10 @@ kotlin {
     sourceSets {
         commonMain.dependencies {
             implementation(libs.bundles.compose.mp.common)
+            implementation(libs.compose.material.icons.extended)
+            // Material 3 extended icon set — core is missing Pause/SkipNext/SkipPrevious/
+            // PlayCircle/LibraryMusic etc., all of which Track C transport UI needs.
+            // ~1-2 MB APK cost; acceptable for a portfolio-oriented audiophile player.
             implementation(libs.bundles.voyager)
             implementation(libs.bundles.circuit)
             implementation(libs.molecule.runtime)
@@ -23,6 +27,10 @@ kotlin {
             // ThemeMode + (future) shared types — SettingsScreen consumes the
             // ThemeMode enum from :data:library:settings.
             implementation(project(":data:library"))
+            // PlatformPlayer + PlayerState/QueueState consumed by Voyager Tab
+            // wrappers (LibraryTab → loadQueue, NowPlayingTab → state flows +
+            // transport, SearchTab → loadQueue). Phase 2a Track C addition.
+            implementation(project(":audio:playback"))
             // KilnTheme for previews + (future) Compose-UI tests. Adds the
             // theme module here so test code can wrap SettingsScreen in the
             // real theme rather than a bare MaterialTheme.
