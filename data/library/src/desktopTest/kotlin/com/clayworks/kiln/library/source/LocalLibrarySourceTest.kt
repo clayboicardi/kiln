@@ -155,4 +155,27 @@ class LocalLibrarySourceTest {
         val titles = items.map { it.title }.toSet()
         assertEquals(setOf("The Wall", "Animals"), titles)
     }
+
+    @Test
+    fun browse_TracksOfPlaylist_returnsInPlaylistOrder() = runTest {
+        // selectTracksOfPlaylist orders by playlist_track.position (NOT track
+        // title-alphabetical). Insert tracks A/B/C; add to playlist in order
+        // [C, A, B] so positions are C=0, A=1, B=2 (maxPositionInPlaylist
+        // returns -1 on empty, then +1 → 0; subsequent appends → 1, 2).
+        // Expected browse order: C, A, B (playlist position, not alphabetical).
+        val artistId = testDb.insertArtist("Test Artist", "test artist")
+        val trackA = testDb.insertTrack(artistId, title = "A", filePath = "/p/a.flac")
+        val trackB = testDb.insertTrack(artistId, title = "B", filePath = "/p/b.flac")
+        val trackC = testDb.insertTrack(artistId, title = "C", filePath = "/p/c.flac")
+        val playlistId = testDb.insertPlaylist("Custom Order")
+        testDb.insertPlaylistTrack(playlistId, trackC)  // position = 0
+        testDb.insertPlaylistTrack(playlistId, trackA)  // position = 1
+        testDb.insertPlaylistTrack(playlistId, trackB)  // position = 2
+
+        val items = snapshot(source.browse(BrowseScope.TracksOfPlaylist(PlaylistId(playlistId))))
+
+        assertEquals(3, items.size)
+        assertTrue(items.all { it.kind == MediaItem.Kind.Track })
+        assertEquals(listOf("C", "A", "B"), items.map { it.title })
+    }
 }
