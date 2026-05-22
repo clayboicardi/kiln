@@ -201,6 +201,27 @@ class Media3ExoPlayerImplTest {
         assertEquals(false, player.volume.value.muted)
     }
 
+    @Test
+    fun `addAudioProcessor + removeAudioProcessor mutate processors flow`() {
+        // NOTE: Media3ExoPlayerImpl.addAudioProcessor stores into the
+        // _processors MutableStateFlow but does NOT yet inject the processor
+        // into the audio pipeline — the chain hot-apply is deferred to MVP
+        // Sessions 16-22 (custom RenderersFactory wrapping AudioSink). The
+        // flow surface IS the testable contract today: Compose surfaces can
+        // observe the list of registered processors even though the actual
+        // audio path doesn't run them yet.
+        val player = newPlayer()
+        val processor = object : AudioProcessor {
+            override val id = "test"
+            override fun onFormatChange(format: DecodedAudioFormat) = Unit
+            override fun process(frame: AudioFrame): AudioFrame = frame
+        }
+        player.addAudioProcessor(processor)
+        assertEquals(1, player.processors.value.size)
+        player.removeAudioProcessor(processor)
+        assertEquals(0, player.processors.value.size)
+    }
+
     private fun makeMediaItem(id: String): MediaItem = MediaItem(
         itemId = ItemId(id),
         sourceId = SourceId("test"),
