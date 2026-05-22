@@ -41,4 +41,14 @@ interface PlatformPlayer {
 
     /** Release platform resources. After release the player is unusable. */
     suspend fun release()
+
+    /**
+     * Open a measurement-mode session. MVP returns `null` from both impls
+     * (the seam exists; Phase 3 wires capture). Consumers should treat null
+     * as "measurement not supported on this platform" and surface gracefully.
+     *
+     * Per spec §6.1 architectural-seam list — the seam is the MVP commitment;
+     * the impl lands at Phase 3 room correction.
+     */
+    suspend fun enterMeasurementMode(): MeasurementSession?
 }

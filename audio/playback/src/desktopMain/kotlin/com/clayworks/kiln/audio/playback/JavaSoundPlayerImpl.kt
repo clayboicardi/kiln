@@ -298,6 +298,8 @@ internal class JavaSoundPlayerImpl(
         scope.cancel()
     }
 
+    override suspend fun enterMeasurementMode(): MeasurementSession? = null
+
     // ---------- internals ----------
 
     /**

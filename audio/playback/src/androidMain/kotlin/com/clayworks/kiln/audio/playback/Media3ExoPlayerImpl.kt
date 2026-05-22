@@ -337,6 +337,8 @@ class Media3ExoPlayerImpl(
         exo.release()
         scope.cancel()
     }
+
+    override suspend fun enterMeasurementMode(): MeasurementSession? = null
 }
 
 // ---------- mapping helpers ----------
