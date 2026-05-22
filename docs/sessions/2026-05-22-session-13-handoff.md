@@ -112,6 +112,14 @@ If baseline is dirty or build red — STOP, diagnose, surface to Clay.
 - **`setPlayStats` query** in track.sq (test-only) — let's test authors deterministically set play_count + last_played_ms.
 - **CI uploads test reports on Android-job failure** — debugging CI failures no longer requires local repro.
 - **Plan + cookbook drift on `.toList()` and `androidUnitTest` are known** — next plan-touching session can land the corrections in passing.
+- **kotlin-lsp is OPERATIONAL** (Session 12 resolution). The 2026-05-21 deferral lifted — `LSP documentSymbol/hover/findReferences/goToDefinition/workspaceSymbol` all work against the existing v262.4739.0 install (heap-bumped 6144MB, hard-linked `kotlin-lsp.exe`). Use `LSP` tool calls instead of grep for symbol-level navigation:
+  - "What's in this file?" → `LSP documentSymbol filePath=... line=1 character=1`
+  - "Where is X used?" → `LSP findReferences` from a use-site (NOT from a declaration — see decisions doc addendum)
+  - "What's X's signature?" → `LSP hover` on the identifier
+  - "Where is X defined?" → `LSP goToDefinition` from a use-site
+  - "Find symbol matching X anywhere in the 8-module workspace" → `LSP workspaceSymbol` (warning: returns large output)
+  
+  See `docs/decisions/2026-05-21-tooling-recommendation.md` "Addendum 2026-05-22" for the full empirical-verification table + re-test playbook if LSP starts failing.
 
 ---
 
