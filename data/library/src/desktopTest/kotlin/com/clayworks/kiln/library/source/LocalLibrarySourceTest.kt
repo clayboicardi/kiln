@@ -137,4 +137,22 @@ class LocalLibrarySourceTest {
         val titles = items.map { it.title }.toSet()
         assertEquals(setOf("Comfortably Numb", "Wish You Were Here"), titles)
     }
+
+    @Test
+    fun browse_AlbumsOfArtist_filtersByArtistId() = runTest {
+        // album.artist_id is the album-artist (per album.sq:43 selectByArtist).
+        // Albums whose artist_id matches the queried artist surface; others do not.
+        val artist1 = testDb.insertArtist("Pink Floyd", "pink floyd")
+        val artist2 = testDb.insertArtist("Led Zeppelin", "led zeppelin")
+        testDb.insertAlbum(artist1, "The Wall", year = 1979)
+        testDb.insertAlbum(artist1, "Animals", year = 1977)
+        testDb.insertAlbum(artist2, "IV", year = 1971)
+
+        val items = snapshot(source.browse(BrowseScope.AlbumsOfArtist(ArtistId(artist1))))
+
+        assertEquals(2, items.size)
+        assertTrue(items.all { it.kind == MediaItem.Kind.Album })
+        val titles = items.map { it.title }.toSet()
+        assertEquals(setOf("The Wall", "Animals"), titles)
+    }
 }
