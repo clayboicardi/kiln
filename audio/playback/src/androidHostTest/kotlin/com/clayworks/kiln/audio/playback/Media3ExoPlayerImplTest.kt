@@ -27,6 +27,7 @@ import com.clayworks.kiln.library.source.SourceId
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.runBlocking
+import org.junit.After
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import kotlin.test.Test
@@ -34,6 +35,21 @@ import kotlin.test.assertEquals
 
 @RunWith(RobolectricTestRunner::class)
 class Media3ExoPlayerImplTest {
+
+    // Track every player constructed by newPlayer() so @After can release()
+    // them. Media3's MediaSession registry forbids duplicate session IDs
+    // within a process — without explicit release between tests, the second
+    // @Test's MediaSession.Builder.build() throws
+    // "IllegalStateException: Session ID must be unique. ID=".
+    // JavaSoundPlayerImplTest has no equivalent need because JavaSound has
+    // no process-singleton registry.
+    private val players: MutableList<Media3ExoPlayerImpl> = mutableListOf()
+
+    @After
+    fun tearDown() = runBlocking {
+        players.forEach { it.release() }
+        players.clear()
+    }
 
     // Stub MusicSource — returns Left for any getPlayable call.
     private class AlwaysFailingSource(override val id: SourceId = SourceId("test")) : MusicSource {
@@ -78,7 +94,7 @@ class Media3ExoPlayerImplTest {
 
     private fun newPlayer(source: MusicSource = AlwaysFailingSource()): Media3ExoPlayerImpl {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
-        return Media3ExoPlayerImpl(context, source)
+        return Media3ExoPlayerImpl(context, source).also { players.add(it) }
     }
 
     @Test
@@ -233,6 +249,24 @@ class Media3ExoPlayerImplTest {
         player.stop()
         // State stays Idle.
         assertEquals(PlayerState.Idle, player.state.value)
+    }
+
+    @Test
+    fun `release marks the player unusable — subsequent ops are no-ops`() = runBlocking {
+        val player = newPlayer()
+        val stateBeforeRelease = player.state.value
+        player.release()
+        // Further suspend calls should be safe no-ops (no crash, no state
+        // mutation). The `released` volatile flag short-circuits each entry
+        // point at Media3ExoPlayerImpl.kt:188/246/251/etc.
+        player.play()
+        player.pause()
+        player.loadQueue(listOf(makeMediaItem("z")), 0, true)
+        assertEquals(
+            stateBeforeRelease,
+            player.state.value,
+            "post-release state should remain whatever it was at release time",
+        )
     }
 
     private fun makeMediaItem(id: String): MediaItem = MediaItem(
