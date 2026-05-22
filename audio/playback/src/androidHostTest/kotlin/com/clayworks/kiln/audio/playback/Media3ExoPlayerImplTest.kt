@@ -133,6 +133,21 @@ class Media3ExoPlayerImplTest {
         assertEquals("c", q.items[q.currentIndex].itemId.value, "currentItem must be C")
     }
 
+    @Test
+    fun `loadQueue falls forward when the requested item itself fails to resolve`() = runBlocking {
+        // items = [a, b, c, d, e]; only a and e resolve. User clicks "play C"
+        // (startIndex=2), but C failed. Should fall forward to E (the first
+        // surviving item at or after original index 2).
+        val player = newPlayer(source = SelectivelyResolvingSource(resolvableIds = setOf("a", "e")))
+        val items = listOf("a", "b", "c", "d", "e").map { makeMediaItem(it) }
+        player.loadQueue(items, startIndex = 2, autoPlay = false)
+
+        val q = player.queue.value
+        assertEquals(2, q.items.size, "only a and e survived")
+        assertEquals(1, q.currentIndex, "fell forward from missing-C to E (resolved index 1)")
+        assertEquals("e", q.items[q.currentIndex].itemId.value, "currentItem must be E")
+    }
+
     private fun makeMediaItem(id: String): MediaItem = MediaItem(
         itemId = ItemId(id),
         sourceId = SourceId("test"),
