@@ -9,6 +9,7 @@
 plugins {
     id("kiln.kmp.library")
     alias(libs.plugins.sqldelight)
+    alias(libs.plugins.kotlin.plugin.serialization)
 }
 
 sqldelight {
@@ -30,6 +31,7 @@ kotlin {
         commonMain.dependencies {
             implementation(libs.bundles.sqldelight.common)
             implementation(libs.kotlinx.coroutines.core)
+            implementation(libs.kotlinx.serialization.json)
             implementation(libs.kermit)
             // arrow.core is `api` because Either<SourceError, X> + Either<ScanError, X>
             // are part of the public surface of MusicSource and LibraryScanner.
