@@ -9,10 +9,16 @@
 // log warning; the published queue reflects only the resolved items so that
 // QueueState.currentIndex remains aligned with ExoPlayer's media-item indices.
 //
-// What's still STUBBED: KilnRenderersFactory injecting the AudioProcessor chain
-// (lands when :audio:dsp gets its first concrete processor at MVP Sessions
-// 16-22), and the MediaSessionService surface (deferred — MediaSession instance
-// is constructed but service binding is a separate file).
+// Audio chain (Phase 2a Track D-B Android): KilnRenderersFactory wraps Media3's
+// DefaultAudioSink with Kiln's AudioProcessor chain. MediaProcessorAdapter
+// bridges Kiln AudioProcessor (single-call process(frame)) to Media3
+// AudioProcessor (queueInput/getOutput rotation). ReplayGainProcessor is wired
+// at construction; its gain updates flow from the settings repository via a
+// scope-launched collector and from per-track Playable resolution via
+// onMediaItemTransition's playablesById lookup.
+//
+// What's still STUBBED: the MediaSessionService surface (deferred — MediaSession
+// instance is constructed but service binding is a separate file).
 //
 // All ExoPlayer methods are called via Dispatchers.Main.immediate per the
 // "ExoPlayer is single-thread accessed via its application looper" contract.
@@ -29,8 +35,14 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.MediaSession
 import arrow.core.Either
 import co.touchlab.kermit.Logger
+import com.clayworks.kiln.audio.dsp.replaygain.ReplayGainPipelineMode
+import com.clayworks.kiln.audio.dsp.replaygain.ReplayGainProcessor
+import com.clayworks.kiln.audio.dsp.replaygain.resolveGainLinear
+import com.clayworks.kiln.library.settings.ReplayGainMode
+import com.clayworks.kiln.library.settings.SettingsRepository
 import com.clayworks.kiln.library.source.MediaItem
 import com.clayworks.kiln.library.source.MusicSource
+import com.clayworks.kiln.library.source.Playable
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -40,6 +52,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -51,6 +66,8 @@ private const val POSITION_TICK_MS = 250L
 class Media3ExoPlayerImpl(
     context: Context,
     private val source: MusicSource,
+    private val settings: SettingsRepository,
+    private val rgProcessor: ReplayGainProcessor,
 ) : PlatformPlayer {
 
     private val _state = MutableStateFlow<PlayerState>(PlayerState.Idle)
@@ -82,12 +99,43 @@ class Media3ExoPlayerImpl(
     // racing with shutdown).
     @Volatile private var released: Boolean = false
 
+    /**
+     * Per-track Playable cache. Populated during loadQueue's resolution loop;
+     * keyed by Media3 MediaItem.mediaId (we set that to itemId.value when
+     * building the androidx.media3.common.MediaItem). Read by
+     * onMediaItemTransition to recompute RG gain on track change.
+     *
+     * Map is rebuilt on each loadQueue (previous queue's entries are cleared).
+     * Lookup is single-threaded — onMediaItemTransition runs on Main per
+     * ExoPlayer's single-thread-access contract; loadQueue also runs on Main
+     * via withContext(Dispatchers.Main.immediate).
+     */
+    private val playablesById: MutableMap<String, Playable> = mutableMapOf()
+
+    /**
+     * The currently-playing Playable, set on every onMediaItemTransition
+     * and cleared on release. The settings-flow collector closes over this
+     * to recompute gain when the user changes mode / pre-amp during playback.
+     */
+    @Volatile private var currentPlayable: Playable? = null
+
     // Player methods must run on the looper Exo was built on. Default is the
     // main looper; we marshal suspend entry points through Main.immediate to
     // match.
     private val scope = CoroutineScope(Dispatchers.Main.immediate + SupervisorJob())
 
+    /**
+     * Kiln's AudioProcessor chain — built once at construction. Currently
+     * holds [MediaProcessorAdapter] wrapping [rgProcessor]; future processors
+     * (EQ, room correction, visualizer fanout) join the array via DI when
+     * they ship. The order in the array IS the processing order.
+     */
+    private val mediaAudioProcessors: Array<androidx.media3.common.audio.AudioProcessor> = arrayOf(
+        MediaProcessorAdapter(rgProcessor),
+    )
+
     private val exo: ExoPlayer = ExoPlayer.Builder(context)
+        .setRenderersFactory(KilnRenderersFactory(context, mediaAudioProcessors))
         .setAudioAttributes(
             // USAGE_MEDIA + CONTENT_TYPE_MUSIC per spec §6.1 / vetting Item 11.
             // handleAudioFocus = true lets Media3 manage ducking + transient loss.
@@ -143,6 +191,33 @@ class Media3ExoPlayerImpl(
             if (newIndex != current.currentIndex) {
                 _queue.value = current.copy(currentIndex = newIndex)
             }
+
+            // Update currentPlayable + apply RG gain for the new track. The
+            // mediaId is itemId.value (set explicitly during loadQueue's
+            // resolution loop below); playablesById is keyed by that.
+            val mediaId = mediaItem?.mediaId
+            val playable = mediaId?.let { playablesById[it] }
+            currentPlayable = playable
+            if (playable != null) {
+                // Settings reads are suspend — launch a one-shot child coroutine
+                // on the player's scope. We re-read currentPlayable inside the
+                // launch body so a rapid track-skip sequence applies the LATEST
+                // track's gain, not whichever transition's launch completes
+                // first. @Volatile on currentPlayable provides the cross-coroutine
+                // visibility this read needs.
+                scope.launch {
+                    val mode = settings.replayGainMode.first()
+                    val preAmpDb = settings.replayGainPreAmpDb.first()
+                    val latest = currentPlayable ?: return@launch
+                    applyRgGain(latest, mode, preAmpDb)
+                }
+            } else {
+                // Unknown mediaId or end-of-queue: zero the gain so a settings
+                // change between tracks doesn't leave a stale multiplier on the
+                // processor. The next onMediaItemTransition with a known playable
+                // re-applies the correct gain before audio output resumes.
+                rgProcessor.setLinearGain(1.0)
+            }
         }
 
         override fun onRepeatModeChanged(repeatMode: Int) {
@@ -179,6 +254,50 @@ class Media3ExoPlayerImpl(
 
     init {
         exo.addListener(playerListener)
+
+        // Surface the Kiln processor in the public flow so Compose surfaces
+        // can render the chain (mirror desktop). The Media3-side injection
+        // already happened above via KilnRenderersFactory; this is the
+        // observation surface only.
+        _processors.value = _processors.value + rgProcessor
+
+        // Observe settings changes; recompute + apply RG gain whenever mode
+        // or pre-amp changes (while a track is playing). Mirrors
+        // JavaSoundPlayerImpl.init's collector — desktop precedent.
+        scope.launch {
+            combine(
+                settings.replayGainMode.distinctUntilChanged(),
+                settings.replayGainPreAmpDb.distinctUntilChanged(),
+            ) { mode, preAmp -> mode to preAmp }
+                .collect { (mode, preAmp) ->
+                    val playable = currentPlayable ?: return@collect
+                    applyRgGain(playable, mode, preAmp)
+                }
+        }
+    }
+
+    /**
+     * Resolve [playable]'s RG values + current settings into a linear gain
+     * and apply it to [rgProcessor]. Translates :data:library's ReplayGainMode
+     * to :audio:dsp's ReplayGainPipelineMode at the seam (the two enums are
+     * isomorphic; see desktop precedent in JavaSoundPlayerImpl).
+     */
+    private fun applyRgGain(playable: Playable, mode: ReplayGainMode, preAmpDb: Double) {
+        val rg = playable.replayGain
+        val pipelineMode = when (mode) {
+            ReplayGainMode.Off -> ReplayGainPipelineMode.Off
+            ReplayGainMode.Track -> ReplayGainPipelineMode.Track
+            ReplayGainMode.Album -> ReplayGainPipelineMode.Album
+        }
+        val gain = resolveGainLinear(
+            trackDb = rg?.trackDb,
+            trackPeak = rg?.trackPeak,
+            albumDb = rg?.albumDb,
+            albumPeak = rg?.albumPeak,
+            mode = pipelineMode,
+            preAmpDb = preAmpDb,
+        )
+        rgProcessor.setLinearGain(gain)
     }
 
     override suspend fun loadQueue(
@@ -189,18 +308,24 @@ class Media3ExoPlayerImpl(
         if (released) return@withContext
         _state.value = PlayerState.Loading
 
+        // Clear the previous queue's Playable cache before re-populating.
+        playablesById.clear()
+
         // Resolve each MediaItem to a Playable via the Source Protocol. Items
         // that fail to resolve (file deleted, transient I/O error, etc.) are
         // skipped — the published queue reflects only the items that will
         // actually play, keeping currentIndex aligned with ExoPlayer's
         // media-item indices.
         //
-        // Triple(originalIndex, item, uri) preserves the mapping from user's
+        // Triple(originalIndex, item, playable) preserves the mapping from user's
         // pre-filter items list to the post-filter resolved list — see
         // JavaSoundPlayerImpl for the analogous fix (U1) and rationale.
-        val resolved: List<Triple<Int, MediaItem, String>> = items.mapIndexedNotNull { idx, item ->
+        val resolved: List<Triple<Int, MediaItem, Playable>> = items.mapIndexedNotNull { idx, item ->
             when (val r = source.getPlayable(item.itemId)) {
-                is Either.Right -> Triple(idx, item, r.value.uri)
+                is Either.Right -> {
+                    playablesById[item.itemId.value] = r.value
+                    Triple(idx, item, r.value)
+                }
                 is Either.Left -> {
                     log.w { "loadQueue: skipping ${item.itemId.value}: ${r.value}" }
                     null
@@ -208,8 +333,21 @@ class Media3ExoPlayerImpl(
             }
         }
 
-        val media3Items = resolved.map { (_, _, uri) ->
-            androidx.media3.common.MediaItem.fromUri(uri)
+        // Build Media3 MediaItems with explicit mediaId = itemId.value so
+        // onMediaItemTransition can look the Playable up in playablesById.
+        // Default Builder.setUri(...) sets mediaId = uri, which would alias
+        // across two ItemIds pointing to the same URI (defensive — current
+        // scanner doesn't produce that but it's cheap insurance).
+        //
+        // Future MediaSessionService note: when service binding lands, the
+        // service's onGetItem(mediaId) handler must resolve via playablesById
+        // (or re-query the Source Protocol) rather than treating mediaId as a
+        // URI. itemId.value is the Kiln-internal ID, NOT a URI.
+        val media3Items = resolved.map { (_, item, playable) ->
+            androidx.media3.common.MediaItem.Builder()
+                .setUri(playable.uri)
+                .setMediaId(item.itemId.value)
+                .build()
         }
 
         val resolvedItems = resolved.map { it.second }
@@ -316,11 +454,17 @@ class Media3ExoPlayerImpl(
 
     override fun addAudioProcessor(processor: AudioProcessor) {
         if (released) return
-        // TODO(MVP Sessions 16-22): inject the chain into ExoPlayer via a custom
-        // RenderersFactory that wraps AudioSink with a kiln-controlled
-        // AudioProcessor pipeline. Until :audio:dsp ships its first concrete
-        // processor, the chain is observed-only — Compose surfaces can render the
-        // list but processors aren't actually invoked on audio frames.
+        // The Media3 audio chain is fixed at construction time via
+        // KilnRenderersFactory + DefaultAudioSink.Builder.setAudioProcessors.
+        // Adding a processor here only updates the observation flow — the
+        // actual audio path runs the chain built in init.
+        //
+        // To add a new processor dynamically (e.g., a future EQ that the user
+        // toggles on/off), the right shape is either: (1) tear down + rebuild
+        // the player with the new chain, or (2) make individual processors
+        // toggleable via a setEnabled(Boolean) method that doesn't change the
+        // chain shape. ReplayGainProcessor uses approach (2) — gain == 1.0
+        // is a hard-coded passthrough fast-path in the impl itself.
         _processors.value = _processors.value + processor
     }
 
@@ -333,6 +477,12 @@ class Media3ExoPlayerImpl(
         if (released) return@withContext  // idempotent: repeat-release is a safe no-op
         released = true
         positionTicker.cancel()
+        // playablesById and currentPlayable are written by loadQueue +
+        // onMediaItemTransition, both on Main. release() also runs on Main via
+        // withContext(Dispatchers.Main.immediate), so these mutations are
+        // sequenced — no synchronization needed.
+        playablesById.clear()
+        currentPlayable = null
         exo.removeListener(playerListener)
         mediaSession.release()
         exo.release()
