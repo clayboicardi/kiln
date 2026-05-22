@@ -85,4 +85,40 @@ class SettingsRepositoryImplTest {
         testDb.db.settingsQueries.upsert(key = SettingKey.THEME_MODE, value_ = "FUCHSIA_NEON")
         assertEquals(ThemeMode.System, repo.themeMode.first())
     }
+
+    @Test
+    fun replay_gain_mode_default_is_off() = runTest {
+        assertEquals(ReplayGainMode.Off, repo.replayGainMode.first())
+    }
+
+    @Test
+    fun replay_gain_mode_round_trip() = runTest {
+        repo.setReplayGainMode(ReplayGainMode.Track)
+        assertEquals(ReplayGainMode.Track, repo.replayGainMode.first())
+        repo.setReplayGainMode(ReplayGainMode.Album)
+        assertEquals(ReplayGainMode.Album, repo.replayGainMode.first())
+        repo.setReplayGainMode(ReplayGainMode.Off)
+        assertEquals(ReplayGainMode.Off, repo.replayGainMode.first())
+    }
+
+    @Test
+    fun replay_gain_pre_amp_db_default_is_zero() = runTest {
+        assertEquals(0.0, repo.replayGainPreAmpDb.first(), 1e-9)
+    }
+
+    @Test
+    fun replay_gain_pre_amp_db_round_trip() = runTest {
+        repo.setReplayGainPreAmpDb(-3.5)
+        assertEquals(-3.5, repo.replayGainPreAmpDb.first(), 1e-9)
+        repo.setReplayGainPreAmpDb(6.0)
+        assertEquals(6.0, repo.replayGainPreAmpDb.first(), 1e-9)
+    }
+
+    @Test
+    fun replay_gain_pre_amp_db_clamped_on_read() = runTest {
+        repo.setReplayGainPreAmpDb(99.0)
+        assertEquals(12.0, repo.replayGainPreAmpDb.first(), 1e-9)
+        repo.setReplayGainPreAmpDb(-99.0)
+        assertEquals(-12.0, repo.replayGainPreAmpDb.first(), 1e-9)
+    }
 }

@@ -10,6 +10,17 @@ import kotlinx.coroutines.flow.Flow
 enum class ThemeMode { Light, Dark, System }
 
 /**
+ * ReplayGain consumer-side gain mode. Track applies the per-track gain;
+ * Album applies the per-album rollup; Off bypasses RG entirely.
+ *
+ * The setting is persisted by Track D-C; consumer-side application lands
+ * in Track D-B (Media3 AudioProcessor on Android, JavaSoundPlayerImpl
+ * multiplier on Desktop). Until D-B ships, this setting has no audible
+ * effect — the value is round-tripped for future use.
+ */
+enum class ReplayGainMode { Off, Track, Album }
+
+/**
  * Phase 2a Track A: persistent user preferences. Implementations back to the
  * `settings` SQLDelight table (key/value). Flows emit defaults until a value
  * is written, then emit each write. Consumers call .first() for one-shot
@@ -32,4 +43,15 @@ interface SettingsRepository {
      */
     val scanFolders: Flow<List<String>>
     suspend fun setScanFolders(folders: List<String>)
+
+    /** ReplayGain mode; default Off. */
+    val replayGainMode: Flow<ReplayGainMode>
+    suspend fun setReplayGainMode(mode: ReplayGainMode)
+
+    /**
+     * Pre-amp dB applied on top of the ReplayGain value. Range: -12.0..+12.0.
+     * Default 0.0. Reads clamp to range; writes accept any Double.
+     */
+    val replayGainPreAmpDb: Flow<Double>
+    suspend fun setReplayGainPreAmpDb(db: Double)
 }

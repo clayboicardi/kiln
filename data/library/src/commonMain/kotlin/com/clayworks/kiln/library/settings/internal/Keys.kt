@@ -1,6 +1,7 @@
 package com.clayworks.kiln.library.settings.internal
 
 import co.touchlab.kermit.Logger
+import com.clayworks.kiln.library.settings.ReplayGainMode
 import com.clayworks.kiln.library.settings.ThemeMode
 import kotlinx.serialization.json.Json
 
@@ -15,6 +16,8 @@ internal object SettingKey {
     const val THEME_MODE = "theme_mode"
     const val SCAN_ON_LAUNCH = "scan_on_launch"
     const val SCAN_FOLDERS = "scan_folders"
+    const val REPLAY_GAIN_MODE = "replay_gain_mode"
+    const val REPLAY_GAIN_PRE_AMP_DB = "replay_gain_pre_amp_db"
 }
 
 /**
@@ -53,4 +56,27 @@ internal fun scanFoldersFromJson(stored: String?): List<String> {
         log.w(e) { "Corrupt scan_folders value '$stored'; falling back to empty list" }
         emptyList()
     }
+}
+
+internal const val PRE_AMP_DB_MIN = -12.0
+internal const val PRE_AMP_DB_MAX = 12.0
+
+internal fun parseReplayGainMode(stored: String?): ReplayGainMode = when (stored) {
+    null -> ReplayGainMode.Off
+    else -> try {
+        ReplayGainMode.valueOf(stored)
+    } catch (e: IllegalArgumentException) {
+        log.w { "Unknown ReplayGainMode value '$stored'; falling back to Off" }
+        ReplayGainMode.Off
+    }
+}
+
+internal fun parsePreAmpDb(stored: String?): Double {
+    if (stored.isNullOrBlank()) return 0.0
+    val raw = stored.toDoubleOrNull()
+    if (raw == null) {
+        log.w { "Unparseable pre-amp dB value '$stored'; falling back to 0.0" }
+        return 0.0
+    }
+    return raw.coerceIn(PRE_AMP_DB_MIN, PRE_AMP_DB_MAX)
 }
