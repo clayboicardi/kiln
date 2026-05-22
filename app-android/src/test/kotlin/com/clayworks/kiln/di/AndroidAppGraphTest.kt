@@ -43,4 +43,17 @@ class AndroidAppGraphTest {
         assertNotNull(graph.scanner)
         assertNotNull(graph.player)   // touches the eager-init path
     }
+
+    @Test
+    fun graph_exposes_settings_repository() {
+        // Track A surface contract: graph.settings resolves to the singleton
+        // SettingsRepository instance backed by the SQLDelight settings table.
+        // Mirrors DesktopAppGraphTest's pattern; pins the runtime binding so
+        // a future graph regression surfaces as a test failure (KSP would
+        // catch missing providers at compile time, but the assertion also
+        // pins that the interface→impl wiring resolves at runtime).
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val graph = AndroidAppGraph::class.create(context)
+        assertNotNull(graph.settings)
+    }
 }

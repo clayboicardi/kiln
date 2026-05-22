@@ -15,17 +15,26 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -36,6 +45,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -45,7 +55,11 @@ import com.clayworks.kiln.di.AndroidAppGraph
 import com.clayworks.kiln.library.scan.LibraryScanner
 import com.clayworks.kiln.library.scan.ScanError
 import com.clayworks.kiln.library.scan.ScanResult
+import com.clayworks.kiln.library.settings.ThemeMode
 import com.clayworks.kiln.library.source.BrowseScope
+import com.clayworks.kiln.ui.components.settings.SettingsScreen
+import com.clayworks.kiln.ui.components.settings.SettingsState
+import com.clayworks.kiln.ui.theme.KilnTheme
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
@@ -55,9 +69,21 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         val graph = (application as KilnApplication).graph
         setContent {
-            MaterialTheme {
+            val themeMode by graph.settings.themeMode.collectAsState(initial = ThemeMode.System)
+            KilnTheme(themeMode = themeMode) {
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    PlayFirstTrackScreen(graph)
+                    var showSettings by remember { mutableStateOf(false) }
+                    if (showSettings) {
+                        AndroidSettingsRoute(
+                            graph = graph,
+                            onClose = { showSettings = false },
+                        )
+                    } else {
+                        PlayFirstTrackScreen(
+                            graph = graph,
+                            onOpenSettings = { showSettings = true },
+                        )
+                    }
                 }
             }
         }
@@ -65,13 +91,73 @@ class MainActivity : ComponentActivity() {
 }
 
 /**
- * H7 vertical-slice surface. Single composable, no navigation — Settings UI
- * lands at MVP Sessions 26-28. The three buttons cover the smoke path:
- * Grant Permission → Scan Library → Play First Track. State display below
- * shows player state, position, and current item.
+ * Phase 2a Track A: Settings route on Android. Hoists the three SettingsRepository
+ * flows into Compose state, routes the four SettingsScreen callbacks back to the
+ * repo's suspend setters via a rememberCoroutineScope. Folder picker is stubbed —
+ * Toast pointing at Track B's SAF-tree picker; the exact wording is contract for
+ * the Pixel 7 smoke test that verifies the route renders.
  */
 @Composable
-private fun PlayFirstTrackScreen(graph: AndroidAppGraph) {
+private fun AndroidSettingsRoute(
+    graph: AndroidAppGraph,
+    onClose: () -> Unit,
+) {
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+    val themeMode by graph.settings.themeMode.collectAsState(initial = ThemeMode.System)
+    val scanOnLaunch by graph.settings.scanOnLaunch.collectAsState(initial = false)
+    val scanFolders by graph.settings.scanFolders.collectAsState(initial = emptyList())
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("Kiln by Clayworks", style = MaterialTheme.typography.headlineMedium)
+            OutlinedButton(onClick = onClose) { Text("Close") }
+        }
+        SettingsScreen(
+            state = SettingsState(
+                themeMode = themeMode,
+                scanOnLaunch = scanOnLaunch,
+                scanFolders = scanFolders,
+            ),
+            onThemeModeChange = { mode ->
+                coroutineScope.launch { graph.settings.setThemeMode(mode) }
+            },
+            onScanOnLaunchChange = { enabled ->
+                coroutineScope.launch { graph.settings.setScanOnLaunch(enabled) }
+            },
+            onPickFolder = {
+                // Track A stub. Track B replaces this with an
+                // ActivityResultContracts.OpenDocumentTree launcher that persists
+                // a tree URI permission grant + writes the URI string into
+                // SettingsRepository.scanFolders. Exact string is contract for the
+                // Pixel 7 smoke test that verifies the route renders.
+                Toast.makeText(
+                    context,
+                    "SAF folder picker arrives in Phase 2a Track B",
+                    Toast.LENGTH_LONG,
+                ).show()
+            },
+            onRemoveFolder = { folder ->
+                coroutineScope.launch {
+                    graph.settings.setScanFolders(scanFolders - folder)
+                }
+            },
+        )
+    }
+}
+
+/**
+ * H7 vertical-slice surface, augmented with the Phase 2a Track A gear-icon
+ * entry point. Three buttons still cover the smoke path: Grant Permission →
+ * Scan Library → Play First Track. The gear icon at top-right swaps the
+ * route to AndroidSettingsRoute via the hoisted onOpenSettings callback.
+ */
+@Composable
+private fun PlayFirstTrackScreen(graph: AndroidAppGraph, onOpenSettings: () -> Unit) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     val playerState by graph.player.state.collectAsState()
@@ -103,10 +189,19 @@ private fun PlayFirstTrackScreen(graph: AndroidAppGraph) {
     }
 
     Column(modifier = Modifier.fillMaxSize().padding(24.dp)) {
-        Text(
-            text = "Kiln by Clayworks",
-            style = MaterialTheme.typography.headlineMedium,
-        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "Kiln by Clayworks",
+                style = MaterialTheme.typography.headlineMedium,
+            )
+            IconButton(onClick = onOpenSettings) {
+                Icon(Icons.Filled.Settings, contentDescription = "Settings")
+            }
+        }
         Spacer(modifier = Modifier.height(24.dp))
 
         if (!permissionGranted) {

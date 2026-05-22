@@ -1,0 +1,9 @@
+-- v1 → v2: add settings table.
+-- Mirrors the CREATE TABLE in settings.sq exactly. SQLDelight runs this
+-- migration on existing v1 databases (e.g. Clay's 27k-track desktop DB)
+-- before the app touches the new table.
+
+CREATE TABLE settings (
+    key   TEXT NOT NULL PRIMARY KEY,
+    value TEXT NOT NULL
+);

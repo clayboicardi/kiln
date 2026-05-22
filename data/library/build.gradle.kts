@@ -9,12 +9,19 @@
 plugins {
     id("kiln.kmp.library")
     alias(libs.plugins.sqldelight)
+    alias(libs.plugins.kotlin.plugin.serialization)
 }
 
 sqldelight {
     databases {
         create("KilnDatabase") {
             packageName.set("com.clayworks.kiln.data.library.db")
+            // Migration infrastructure baked in Phase 2a Track A. The .db snapshots
+            // committed under databases/ let CI's verifyCommonMainKilnDatabaseMigration
+            // task diff target schema (current .sq files) against
+            // initial-snapshot + sequential .sqm migrations. Catches drift before merge.
+            schemaOutputDirectory.set(file("src/commonMain/sqldelight/databases"))
+            verifyMigrations.set(true)
         }
     }
 }
@@ -24,6 +31,7 @@ kotlin {
         commonMain.dependencies {
             implementation(libs.bundles.sqldelight.common)
             implementation(libs.kotlinx.coroutines.core)
+            implementation(libs.kotlinx.serialization.json)
             implementation(libs.kermit)
             // arrow.core is `api` because Either<SourceError, X> + Either<ScanError, X>
             // are part of the public surface of MusicSource and LibraryScanner.

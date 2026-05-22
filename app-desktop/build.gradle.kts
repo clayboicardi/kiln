@@ -25,6 +25,11 @@ dependencies {
     // SQLDelight JVM driver — graph constructs JdbcSqliteDriver directly.
     implementation(libs.sqldelight.sqlite.driver)
 
+    // Swing dispatcher — JFileChooser folder picker in Main.kt's
+    // DesktopSettingsRoute runs on Dispatchers.Swing (EDT). Required by
+    // kotlinx.coroutines.swing import / Dispatchers.Swing access.
+    implementation(libs.kotlinx.coroutines.swing)
+
     implementation(libs.bundles.jna)
 
     implementation(project(":audio:dsp"))

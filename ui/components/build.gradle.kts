@@ -20,6 +20,13 @@ kotlin {
             implementation(libs.bundles.circuit)
             implementation(libs.molecule.runtime)
             implementation(libs.kermit)
+            // ThemeMode + (future) shared types — SettingsScreen consumes the
+            // ThemeMode enum from :data:library:settings.
+            implementation(project(":data:library"))
+            // KilnTheme for previews + (future) Compose-UI tests. Adds the
+            // theme module here so test code can wrap SettingsScreen in the
+            // real theme rather than a bare MaterialTheme.
+            implementation(project(":ui:theme"))
             // coil-core-jvm:3.4.0 declares skiko:0.9.22.2; Compose-MP 1.11 brings
             // 0.144.6. The JetBrains checkDesktopMainComposeLibrariesCompatibility
             // task inspects requested-vs-resolved edges and warns on the major.minor
@@ -32,6 +39,17 @@ kotlin {
         commonTest.dependencies {
             implementation(libs.kotlin.test)
             implementation(libs.turbine)
+        }
+        // Desktop-only Compose-UI tests (Phase 2a Track A — first tests in
+        // :ui:components). compose-ui-test-junit4 provides createComposeRule()
+        // + finders (onNodeWithText, performClick). compose.desktop.currentOs
+        // pulls the platform-specific Skia + window toolkit jars Compose needs
+        // for headless rendering on the JVM target.
+        val desktopTest by getting {
+            dependencies {
+                implementation(libs.compose.ui.test.junit4)
+                implementation(compose.desktop.currentOs)
+            }
         }
     }
 }

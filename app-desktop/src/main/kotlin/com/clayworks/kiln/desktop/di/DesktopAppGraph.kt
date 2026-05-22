@@ -1,10 +1,11 @@
 // DesktopAppGraph — root kotlin-inject component for :app-desktop. Wires
-// the Source Protocol + LibraryScanner + PlatformPlayer for the Desktop app.
+// the Source Protocol + LibraryScanner + PlatformPlayer + SettingsRepository
+// for the Desktop app.
 //
-// Per Session 8 handoff H3 + Session 9 H5. KSP generates a
-// `DesktopAppGraph::class.create(userDataDir, scanFolders)` extension function
-// that returns a concrete implementation. Main.kt (at H7) instantiates the
-// graph once and holds it for the process lifetime.
+// Per Session 8 handoff H3 + Session 9 H5 + Phase 2a Track A Task 7. KSP
+// generates a `DesktopAppGraph::class.create(userDataDir)` extension function
+// that returns a concrete implementation. Main.kt instantiates the graph
+// once and holds it for the process lifetime.
 //
 // PlatformPlayer is JavaSoundPlayerImpl: javax.sound.sampled SourceDataLine
 // fed by Decoder→DecodedStream→AudioFrame Flow. Decoder is JvmFlacDecoderImpl
@@ -12,6 +13,11 @@
 // single-thread MAX_PRIORITY executor — JavaSound's SourceDataLine isn't
 // documented as thread-safe; constraining all line ops to one thread is the
 // safe choice. Per spec §3.4 Concentric Modules.
+//
+// Track A change: scan folders are no longer a static value-class constructor
+// param. They flow from SettingsRepository.scanFolders, which the scanner
+// reads via .first() at scan time. Main.kt seeds D:\tiddl on first launch
+// when the repo has no row; subsequent launches respect the persisted value.
 
 package com.clayworks.kiln.desktop.di
 
@@ -24,6 +30,8 @@ import com.clayworks.kiln.audio.playback.createJvmFlacDecoder
 import com.clayworks.kiln.data.library.db.KilnDatabase
 import com.clayworks.kiln.library.scan.JvmFilesystemScanner
 import com.clayworks.kiln.library.scan.LibraryScanner
+import com.clayworks.kiln.library.settings.SettingsRepository
+import com.clayworks.kiln.library.settings.SettingsRepositoryImpl
 import com.clayworks.kiln.library.source.LocalLibrarySource
 import com.clayworks.kiln.library.source.MusicSource
 import java.nio.file.Path
@@ -32,35 +40,29 @@ import java.util.concurrent.Executors
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
 import me.tatarka.inject.annotations.Component
 import me.tatarka.inject.annotations.Provides
 
 /**
- * Type-tag for the user data directory (where kiln.db lives). Distinguishes
- * from the music scan folders below — both are `Path`-typed, kotlin-inject
- * needs them as distinct bindings.
+ * Type-tag for the user data directory (where kiln.db lives). Kept as a
+ * value class even though it's the only Path-typed constructor param now —
+ * future graph additions may reintroduce ambiguity, and the tag also makes
+ * the Main.kt call-site read intentionally at the seam.
  */
 @JvmInline
 value class UserDataDir(val path: Path)
-
-/**
- * Type-tag for the list of music-library scan folders. Default is Clay's
- * D:\tiddl per the project gotcha; a future Settings UI replaces this at
- * runtime by constructing a new graph (or by reading from a Settings table
- * inside the existing DB before instantiating downstream consumers).
- */
-@JvmInline
-value class ScanFolders(val paths: List<Path>)
 
 @Singleton
 @Component
 abstract class DesktopAppGraph(
     @get:Provides protected val userDataDir: UserDataDir,
-    @get:Provides protected val scanFolders: ScanFolders,
 ) {
     abstract val musicSource: MusicSource
     abstract val scanner: LibraryScanner
     abstract val player: PlatformPlayer
+    abstract val settings: SettingsRepository
 
     /**
      * JdbcSqliteDriver with `schema = KilnDatabase.Schema` auto-creates the
@@ -86,18 +88,48 @@ abstract class DesktopAppGraph(
     @Provides
     protected fun database(driver: SqlDriver): KilnDatabase = KilnDatabase(driver)
 
+    /**
+     * SettingsRepository binds the impl-returning provider to the interface
+     * type at the graph surface. Existing pattern mirrored from
+     * localLibrarySource → MusicSource: kotlin-inject routes the interface
+     * consumers (scanner provider below, future UI graph members) to this
+     * single instance.
+     */
+    @Singleton
+    @Provides
+    protected fun settingsRepository(db: KilnDatabase): SettingsRepository =
+        SettingsRepositoryImpl(db, Dispatchers.IO)
+
     @Singleton
     @Provides
     protected fun localLibrarySource(db: KilnDatabase): MusicSource =
         LocalLibrarySource(db, Dispatchers.IO)
 
+    /**
+     * Track A: scan folders come from SettingsRepository.scanFolders, mapped
+     * String→Path at the seam. The repo Flow emits its current value
+     * immediately (defaults to empty when no row exists, otherwise the
+     * persisted list); JvmFilesystemScanner reads via .first() at each scan
+     * invocation so changes propagate without graph reconstruction.
+     *
+     * "Empty list" is honored as the user's intent — the scanner's
+     * empty-guard short-circuits rather than soft-deleting the library.
+     * First-launch seeding (default = D:\tiddl) lives in Main.kt, not here,
+     * so the user can legitimately have zero folders post-Task-9 once they
+     * clear the list via the SettingsScreen.
+     */
     @Singleton
     @Provides
     protected fun filesystemScanner(
-        scanFolders: ScanFolders,
+        settings: SettingsRepository,
         db: KilnDatabase,
         driver: SqlDriver,
-    ): LibraryScanner = JvmFilesystemScanner(scanFolders.paths, db, driver, Dispatchers.IO)
+    ): LibraryScanner {
+        val scanFoldersFlow: Flow<List<Path>> = settings.scanFolders.map { stored ->
+            stored.map(Path::of)
+        }
+        return JvmFilesystemScanner(scanFoldersFlow, db, driver, Dispatchers.IO)
+    }
 
     /**
      * Single-thread MAX_PRIORITY executor backing the audio output pipeline.
