@@ -29,6 +29,9 @@ dependencies {
 
     // SQLDelight Android driver — graph constructs AndroidSqliteDriver directly.
     implementation(libs.sqldelight.android.driver)
+    // SQLDelight coroutines extensions — asFlow() + mapToOne() used in
+    // AndroidSettingsRoute to reactively observe countTracksMissingReplayGain.
+    implementation(libs.bundles.sqldelight.common)
     // Bundled SQLite for Android — Session 10 H8 discovery: Pixel 10 / Android 16
     // system SQLite reported "no such module: fts5" at schema-creation time,
     // blocking the whole DB. requery's library bundles SQLite 3.49.x with FTS5

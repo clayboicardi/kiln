@@ -41,6 +41,8 @@ abstract class AndroidAppGraph(
     abstract val scanner: LibraryScanner
     abstract val player: PlatformPlayer
     abstract val settings: SettingsRepository
+    abstract val kilnDatabase: KilnDatabase
+    abstract val analysisRunner: TrackAnalysisRunner
 
     /**
      * AndroidSqliteDriver auto-creates/migrates the schema via PRAGMA

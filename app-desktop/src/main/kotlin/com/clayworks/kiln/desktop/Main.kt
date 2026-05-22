@@ -28,6 +28,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -39,11 +40,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
+import app.cash.sqldelight.coroutines.asFlow
+import app.cash.sqldelight.coroutines.mapToOne
 import com.clayworks.kiln.desktop.di.DesktopAppGraph
 import com.clayworks.kiln.desktop.di.UserDataDir
 import com.clayworks.kiln.desktop.di.create
+import com.clayworks.kiln.library.scan.AnalysisProgress
+import com.clayworks.kiln.library.settings.ReplayGainMode
 import com.clayworks.kiln.library.settings.ThemeMode
 import com.clayworks.kiln.ui.components.home.KilnHomeScreen
+import com.clayworks.kiln.ui.components.settings.BackfillUiState
 import com.clayworks.kiln.ui.components.settings.SettingsScreen
 import com.clayworks.kiln.ui.components.settings.SettingsState
 import com.clayworks.kiln.ui.theme.KilnTheme
@@ -51,6 +57,7 @@ import java.nio.file.Path
 import javax.swing.JFileChooser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.swing.Swing
@@ -116,12 +123,10 @@ fun main() {
 }
 
 /**
- * Phase 2a Track A: Settings route on Desktop. Mirrors the Android shape from
- * AndroidSettingsRoute exactly — three SettingsRepository flows hoisted into
- * Compose state, four SettingsScreen callbacks routed back to the repo's
- * suspend setters via a rememberCoroutineScope. The only divergence: the
- * folder-picker callback launches a real JFileChooser via pickFolderDialog()
- * (Swing EDT-scoped suspend helper) instead of the Android Toast stub.
+ * Phase 2a Track A+D-C: Settings route on Desktop. Hoists five SettingsRepository
+ * flows into Compose state, derives a reactive `missingCount` from the
+ * `countTracksMissingReplayGain` query, and drives a `BackfillUiState` state
+ * machine from `TrackAnalysisRunner.runOnceWithProgress()` emissions.
  *
  * The picker guard (`picked !in scanFolders`) prevents adding the same folder
  * twice — JFileChooser doesn't expose a "preselected disabled paths" feature,
@@ -136,6 +141,23 @@ private fun DesktopSettingsRoute(
     val themeMode by graph.settings.themeMode.collectAsState(initial = ThemeMode.System)
     val scanOnLaunch by graph.settings.scanOnLaunch.collectAsState(initial = false)
     val scanFolders by graph.settings.scanFolders.collectAsState(initial = emptyList())
+    val replayGainMode by graph.settings.replayGainMode.collectAsState(initial = ReplayGainMode.Off)
+    val replayGainPreAmpDb by graph.settings.replayGainPreAmpDb.collectAsState(initial = 0.0)
+
+    val missingCountFlow = remember(graph) {
+        graph.kilnDatabase.trackQueries.countTracksMissingReplayGain()
+            .asFlow()
+            .mapToOne(Dispatchers.IO)
+            .map { it.toInt() }
+    }
+    val missingCount by missingCountFlow.collectAsState(initial = 0)
+
+    var backfillState: BackfillUiState by remember { mutableStateOf<BackfillUiState>(BackfillUiState.Idle(0)) }
+    LaunchedEffect(missingCount) {
+        if (backfillState is BackfillUiState.Idle) {
+            backfillState = BackfillUiState.Idle(missingCount)
+        }
+    }
 
     Column(modifier = Modifier.fillMaxSize()) {
         Row(
@@ -151,6 +173,9 @@ private fun DesktopSettingsRoute(
                 themeMode = themeMode,
                 scanOnLaunch = scanOnLaunch,
                 scanFolders = scanFolders,
+                replayGainMode = replayGainMode,
+                replayGainPreAmpDb = replayGainPreAmpDb,
+                backfill = backfillState,
             ),
             onThemeModeChange = { mode ->
                 coroutineScope.launch { graph.settings.setThemeMode(mode) }
@@ -169,6 +194,32 @@ private fun DesktopSettingsRoute(
             onRemoveFolder = { folder ->
                 coroutineScope.launch {
                     graph.settings.setScanFolders(scanFolders - folder)
+                }
+            },
+            onReplayGainModeChange = { mode ->
+                coroutineScope.launch { graph.settings.setReplayGainMode(mode) }
+            },
+            onReplayGainPreAmpDbChange = { db ->
+                coroutineScope.launch { graph.settings.setReplayGainPreAmpDb(db) }
+            },
+            onTriggerBackfill = {
+                coroutineScope.launch {
+                    graph.analysisRunner.runOnceWithProgress().collect { progress ->
+                        backfillState = when (progress) {
+                            is AnalysisProgress.Started ->
+                                BackfillUiState.InProgress(0, 0, progress.total)
+                            is AnalysisProgress.Progress ->
+                                BackfillUiState.InProgress(progress.analyzed, progress.skipped, progress.total)
+                            is AnalysisProgress.Complete ->
+                                BackfillUiState.Complete(
+                                    analyzed = progress.result.tracksAnalyzed,
+                                    skipped = progress.result.tracksSkipped,
+                                    total = progress.result.tracksAnalyzed + progress.result.tracksSkipped,
+                                    albumsAggregated = progress.result.albumsAggregated,
+                                    durationMs = progress.result.durationMs,
+                                )
+                        }
+                    }
                 }
             },
         )

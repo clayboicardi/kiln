@@ -66,6 +66,8 @@ abstract class DesktopAppGraph(
     abstract val scanner: LibraryScanner
     abstract val player: PlatformPlayer
     abstract val settings: SettingsRepository
+    abstract val kilnDatabase: KilnDatabase
+    abstract val analysisRunner: TrackAnalysisRunner
 
     /**
      * JdbcSqliteDriver with `schema = KilnDatabase.Schema` auto-creates the
