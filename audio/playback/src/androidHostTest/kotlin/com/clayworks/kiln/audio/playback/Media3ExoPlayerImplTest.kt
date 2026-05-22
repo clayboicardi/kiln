@@ -162,6 +162,19 @@ class Media3ExoPlayerImplTest {
         assertEquals("b", q.items[q.currentIndex].itemId.value, "currentItem must be B")
     }
 
+    @Test
+    fun `loadQueue startIndex zero with all items resolving picks index zero`() = runBlocking {
+        // Sanity check that the new mapping logic doesn't regress the happy path.
+        val player = newPlayer(source = SelectivelyResolvingSource(resolvableIds = setOf("a", "b", "c")))
+        val items = listOf("a", "b", "c").map { makeMediaItem(it) }
+        player.loadQueue(items, startIndex = 0, autoPlay = false)
+
+        val q = player.queue.value
+        assertEquals(3, q.items.size)
+        assertEquals(0, q.currentIndex, "startIndex=0 must always map to resolved index 0")
+        assertEquals("a", q.items[q.currentIndex].itemId.value)
+    }
+
     private fun makeMediaItem(id: String): MediaItem = MediaItem(
         itemId = ItemId(id),
         sourceId = SourceId("test"),
