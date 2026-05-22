@@ -180,4 +180,75 @@ class TrackAnalysisRunnerTest {
         assertEquals(4.2, rowPre.replay_gain_track_db!!, 1e-9)
         assertEquals(0.95, rowPre.replay_gain_track_peak!!, 1e-9)
     }
+
+    @Test
+    fun `large library with all-skipping analyzer terminates without infinite loop`() = runBlocking {
+        // I1 fix verification: 105 tracks (above PAGE_SIZE=100), all returning
+        // Left, must terminate. Pre-fix, the runner would loop forever because
+        // skipped rows stay in the worklist and naive offset-advance wouldn't
+        // scroll past them across pages.
+        val artistId = testDb.insertArtist("Test Artist")
+        val albumId = testDb.insertAlbum(artistId, "Test Album")
+        val filePaths = (1..105).map { "/test/track-$it.mp3" }
+        filePaths.forEach { path ->
+            testDb.insertTrack(artistId, albumId, title = path.substringAfterLast('/'), filePath = path)
+        }
+
+        val analyzer = FakeTrackAnalyzer(
+            results = filePaths.associateWith {
+                Either.Left(TrackAnalysisError.CodecUnsupported("MP3"))
+            },
+        )
+        val runner = TrackAnalysisRunner(testDb.db, analyzer, Dispatchers.Unconfined)
+
+        val result = runner.runOnce()
+        assertEquals(0, result.tracksAnalyzed)
+        assertEquals(105, result.tracksSkipped)
+        assertEquals(0, result.albumsAggregated)
+    }
+
+    @Test
+    fun `partial-pass run 1 then run 2 finalizes album_db with all tracks`() = runBlocking {
+        // I2 fix verification: an album where run 1 analyzed 2 of 3 tracks leaves
+        // album_db set to a partial aggregate. Run 2 (when the 3rd track gets
+        // analyzed) must re-aggregate the album with all 3 tracks, not skip it
+        // because album_db is non-null.
+        val artistId = testDb.insertArtist("Test Artist")
+        val albumId = testDb.insertAlbum(artistId, "Test Album")
+        val t1 = testDb.insertTrack(artistId, albumId, "T1", filePath = "/test/t1.flac")
+        val t2 = testDb.insertTrack(artistId, albumId, "T2", filePath = "/test/t2.flac")
+        val t3 = testDb.insertTrack(artistId, albumId, "T3", filePath = "/test/t3.flac")
+
+        val analyzer1 = FakeTrackAnalyzer(mapOf(
+            "/test/t1.flac" to Either.Right(TrackLoudness(-23.0, -1.0)),
+            "/test/t2.flac" to Either.Right(TrackLoudness(-18.0,  0.0)),
+        ))
+        val runner1 = TrackAnalysisRunner(testDb.db, analyzer1, Dispatchers.Unconfined)
+        val r1 = runner1.runOnce()
+        assertEquals(2, r1.tracksAnalyzed)
+        assertEquals(1, r1.tracksSkipped)
+        assertEquals(1, r1.albumsAggregated)
+
+        val albumDbAfterRun1 = testDb.db.trackQueries.selectById(t1).executeAsOne()
+            .replay_gain_album_db
+        assertNotNull(albumDbAfterRun1)
+
+        val analyzer2 = FakeTrackAnalyzer(mapOf(
+            "/test/t3.flac" to Either.Right(TrackLoudness(-28.0, -3.0)),
+        ))
+        val runner2 = TrackAnalysisRunner(testDb.db, analyzer2, Dispatchers.Unconfined)
+        val r2 = runner2.runOnce()
+        assertEquals(1, r2.tracksAnalyzed)
+        assertEquals(0, r2.tracksSkipped)
+        assertEquals(1, r2.albumsAggregated)
+
+        val albumDbAfterRun2 = testDb.db.trackQueries.selectById(t1).executeAsOne()
+            .replay_gain_album_db
+        assertNotNull(albumDbAfterRun2)
+        assertTrue(
+            kotlin.math.abs(albumDbAfterRun1!! - albumDbAfterRun2!!) > 0.1,
+            "album_db should differ between 2-track ($albumDbAfterRun1) and 3-track " +
+                "($albumDbAfterRun2) aggregates by at least 0.1 dB",
+        )
+    }
 }

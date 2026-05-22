@@ -40,6 +40,14 @@ private const val PAGE_SIZE = 100L
  * past them. Without this offset advance, an all-skipping analyzer would
  * re-query page 0 forever.
  *
+ * Touched-album tracking: the runner tracks `album_id` values of all
+ * successfully-analyzed tracks in an in-memory `Set<Long>`. The per-album
+ * rollup iterates this set rather than re-querying `selectAlbumsForAggregation`,
+ * which would filter `replay_gain_album_db IS NULL` and miss albums that were
+ * partially aggregated in a previous run. `selectAlbumsForAggregation` is
+ * retained for a future "recover incomplete albums" code path but is not the
+ * primary driver of rollup.
+ *
  * Atomicity: each per-track persist is its own write (no enclosing
  * transaction). The per-album rollup IS wrapped in a transaction so all
  * tracks of an album receive the same album-level values atomically.
@@ -61,6 +69,7 @@ class TrackAnalysisRunner(
         var analyzed = 0
         var skipped = 0
         var skippedTotal = 0L
+        val touchedAlbumIds = mutableSetOf<Long>()
 
         while (true) {
             val page = db.trackQueries
@@ -87,6 +96,7 @@ class TrackAnalysisRunner(
                             peak = peakLinear,
                         )
                         analyzed++
+                        row.album_id?.let { touchedAlbumIds.add(it) }
                     }
                 }
             }
@@ -99,12 +109,13 @@ class TrackAnalysisRunner(
             if (pageSkippedDelta == page.size && page.size < PAGE_SIZE.toInt()) break
         }
 
-        // Per-album rollup. selectAlbumsForAggregation only returns album_ids
-        // whose `replay_gain_album_db IS NULL` AND at least one track was
-        // analyzed — so it's idempotent for albums that already aggregated.
-        val albumIds = db.trackQueries.selectAlbumsForAggregation().executeAsList()
+        // Per-album rollup. (I2 fix) Use touchedAlbumIds rather than
+        // selectAlbumsForAggregation — the latter filters
+        // `replay_gain_album_db IS NULL` which causes the partial-pass
+        // finalization gap (run 1 sets album_db non-null after partial track
+        // coverage; run 2's newly-analyzed tracks never re-aggregate).
         var albumsAggregated = 0
-        for (albumId in albumIds) {
+        for (albumId in touchedAlbumIds) {
             val perTrack = db.trackQueries.selectTrackReplayGainForAlbum(albumId).executeAsList()
             if (perTrack.isEmpty()) continue
 
