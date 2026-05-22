@@ -140,10 +140,41 @@ if ($RepoRoot) {
     }
 }
 
+# Aggregate test counts across ALL modules (not just the explicitly requested
+# :desktopTest target). The canonical session-validation build only lists
+# `:data:library:desktopTest` as an explicit target, but `:audio:playback:build`
+# transitively runs `:audio:playback:desktopTest` — those results are emitted to
+# `audio/playback/build/test-results/desktopTest/` and were previously invisible
+# to this parser, causing a ~40% undercount in reported test scope.
+#
+# Recursive glob from $RepoRoot picks up every module's desktopTest XML reports.
+$totalTests = 0; $totalSkipped = 0; $totalFailures = 0; $totalErrors = 0
+if ($RepoRoot) {
+    $allReports = Get-ChildItem -Path $RepoRoot -Recurse -Filter 'TEST-*.xml' -ErrorAction SilentlyContinue |
+        Where-Object { $_.FullName -match '[\\/]build[\\/]test-results[\\/]desktopTest[\\/]' }
+    foreach ($xf in $allReports) {
+        try {
+            [xml]$doc = Get-Content -Path $xf.FullName -Encoding UTF8
+            if ($doc.testsuite) {
+                $totalTests    += [int]$doc.testsuite.tests
+                $totalSkipped  += [int]$doc.testsuite.skipped
+                $totalFailures += [int]$doc.testsuite.failures
+                $totalErrors   += [int]$doc.testsuite.errors
+            }
+        } catch {
+            # Skip malformed XML — don't blow up the parser
+        }
+    }
+}
+
 # Return result as a single hashtable.
 return @{
     build = $buildVerdict
     duration_ms = $Duration
     targets = @($Targets | ForEach-Object { $targetResults[$_] })
     errors = $errors.ToArray()
+    total_tests = $totalTests
+    total_skipped = $totalSkipped
+    total_failures = $totalFailures
+    total_errors = $totalErrors
 }

@@ -144,6 +144,13 @@ if ($Json) {
         }
         Write-Host ("{0}{1}{2}" -f $tag, $t.name, $suffix)
     }
+    if ($null -ne $parsed.total_tests -and $parsed.total_tests -gt 0) {
+        $aggParts = @("{0} tests" -f $parsed.total_tests)
+        if ($parsed.total_skipped -gt 0)  { $aggParts += "{0} skipped"  -f $parsed.total_skipped }
+        if ($parsed.total_failures -gt 0) { $aggParts += "{0} failures" -f $parsed.total_failures }
+        if ($parsed.total_errors -gt 0)   { $aggParts += "{0} errors"   -f $parsed.total_errors }
+        Write-Host ("Tests:      {0} (all modules)" -f ($aggParts -join ', '))
+    }
     Write-Host ("Errors: {0}" -f @($parsed.errors).Count)
     if (@($parsed.errors).Count -gt 0) {
         Write-Host ''
