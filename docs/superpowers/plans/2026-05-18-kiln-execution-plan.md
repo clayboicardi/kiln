@@ -535,3 +535,33 @@ The next concrete action after this plan is reviewed and approved: Pre-MVP Resea
 ---
 
 End of plan.
+
+---
+
+## Addendum 2026-05-21: Phase 2a structure reconciliation (plan §4 ↔ Session 11 handoff)
+
+The session-11 handoff at `docs/sessions/2026-05-21-session-11-handoff.md`
+introduced a 6-track framing (A Settings UI, B SAF picker, C Proper UI,
+D ReplayGain, E MediaSession, F CI test gate) that does not map 1:1 to
+plan §4's 5 flights (A theming, B blurred art, C EQ refinements,
+D search, E FFT visualizer). Mapping for the cold reader:
+
+| Session-11 Track | Maps to plan §4 flight | Notes |
+|---|---|---|
+| **A Settings UI** | partially Flight A theming + new scope | Track A absorbed MVP Sessions 26-28's Settings + acts as gating prereq for Track B and Track C |
+| **B SAF folder-picker** | not in plan §4 (Android-specific scan extension) | Surfaced 2026-05-21 from Session 10 H8 Pixel discovery; banked for Phase 2a |
+| **C Proper UI** | Flight A theming + Flight B blurred art (subset) | The "Fluid Canvas FFT visualizer" reference in the handoff is the bridge to plan §4 Flight E — actual FFT work still belongs in Flight E |
+| **D ReplayGain** | implicit in MVP spec §6.1 (deferred from MVP-1.0 close) | Track D consumer-side work + scanner fix per review P1-1 |
+| **E MediaSession** | implicit in MVP spec §6.1 + vetting Item 11 (deferred from MVP-1.0 close) | Media3 instance already constructed; Service binding is the work |
+| **F CI test gate** | structural — not in plan §4 | Closes Session 10 U5 structural gap |
+| Flight C EQ refinements | NOT in Session-11 track menu | Still applies; lands at MVP Sessions 16-22 (EQ port) per plan §3.2 |
+| Flight D search sectioning | NOT in Session-11 track menu | Still applies at later Phase 2a session |
+| Flight E FFT visualizer | partially overlaps Track C | The visualizer is the load-bearing part of Flight E |
+
+**Net effect:** Session 11's track menu is a re-shuffling of plan §4
+flights with Track B (SAF picker) added and CI gate (Track F) called
+out. Plan §4's flights C/D/E still gate v1.1.0-jamz-parity per the
+original sequencing. Future sessions that pick tracks should consult
+both this addendum and §4 when scoping.
+
+— Addendum authored 2026-05-21 by the pre-Phase-2a-stabilization session.
