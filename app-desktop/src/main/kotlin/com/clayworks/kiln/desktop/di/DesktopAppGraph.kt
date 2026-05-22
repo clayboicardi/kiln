@@ -27,6 +27,9 @@ import com.clayworks.kiln.audio.playback.Decoder
 import com.clayworks.kiln.audio.playback.PlatformPlayer
 import com.clayworks.kiln.audio.playback.createJavaSoundPlayer
 import com.clayworks.kiln.audio.playback.createJvmFlacDecoder
+import com.clayworks.kiln.audio.playback.createJvmFlacTrackAnalyzer
+import com.clayworks.kiln.library.scan.TrackAnalysisRunner
+import com.clayworks.kiln.library.scan.TrackAnalyzer
 import com.clayworks.kiln.data.library.db.KilnDatabase
 import com.clayworks.kiln.library.scan.JvmFilesystemScanner
 import com.clayworks.kiln.library.scan.LibraryScanner
@@ -166,4 +169,17 @@ abstract class DesktopAppGraph(
         decoder: Decoder,
         source: MusicSource,
     ): PlatformPlayer = createJavaSoundPlayer(audioDispatcher, decoder, source)
+
+    @Provides
+    protected fun trackAnalyzer(): TrackAnalyzer = createJvmFlacTrackAnalyzer()
+
+    @Provides
+    protected fun analysisRunner(
+        db: KilnDatabase,
+        analyzer: TrackAnalyzer,
+    ): TrackAnalysisRunner = TrackAnalysisRunner(
+        db = db,
+        analyzer = analyzer,
+        ioDispatcher = Dispatchers.IO,
+    )
 }
