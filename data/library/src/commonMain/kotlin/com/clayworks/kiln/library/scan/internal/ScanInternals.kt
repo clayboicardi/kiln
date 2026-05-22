@@ -33,7 +33,7 @@ internal fun parseChannels(channels: String?): Long = when {
     channels.equals("Stereo", ignoreCase = true) -> 2L
     channels.contains("5.1") -> 6L
     channels.contains("7.1") -> 8L
-    else -> channels.trim().toLongOrNull() ?: 2L
+    else -> channels.trim().toLongOrNull()?.takeIf { it in 1..32 } ?: 2L
 }
 
 /**

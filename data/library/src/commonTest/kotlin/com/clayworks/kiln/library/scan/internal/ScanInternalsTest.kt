@@ -71,6 +71,39 @@ class ScanInternalsTest {
         assertEquals(2L, parseChannels(""))
     }
 
+    @Test
+    fun parseChannels_rejectsNegativeValues_fallsBackToStereo() {
+        // jaudiotagger AAC code path was observed returning "-14" — see review P1-2.
+        assertEquals(2L, parseChannels("-14"))
+    }
+
+    @Test
+    fun parseChannels_rejectsZero_fallsBackToStereo() {
+        assertEquals(2L, parseChannels("0"))
+    }
+
+    @Test
+    fun parseChannels_rejectsAbsurdlyLarge_fallsBackToStereo() {
+        // Anything > 32 channels is presumed garbage (Dolby Atmos object beds run 64,
+        // but those don't surface as a numeric channel count via jaudiotagger).
+        assertEquals(2L, parseChannels("999"))
+    }
+
+    @Test
+    fun parseChannels_acceptsValidStereo() {
+        assertEquals(2L, parseChannels("2"))
+    }
+
+    @Test
+    fun parseChannels_acceptsValidMono() {
+        assertEquals(1L, parseChannels("1"))
+    }
+
+    @Test
+    fun parseChannels_acceptsValid71Surround() {
+        assertEquals(8L, parseChannels("8"))
+    }
+
     // ---------- String.parseLeadingLong ----------
 
     @Test fun parseLeadingLong_plainInteger() {
