@@ -121,10 +121,12 @@ abstract class AndroidAppGraph(
         source: MusicSource,
     ): PlatformPlayer = Media3ExoPlayerImpl(context, source)
 
+    @Singleton
     @Provides
     protected fun trackAnalyzer(context: Context): TrackAnalyzer =
         createAndroidMediaTrackAnalyzer(context)
 
+    @Singleton
     @Provides
     protected fun analysisRunner(
         db: KilnDatabase,

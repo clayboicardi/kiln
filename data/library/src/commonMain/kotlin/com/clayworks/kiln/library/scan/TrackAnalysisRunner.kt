@@ -7,6 +7,7 @@ import com.clayworks.kiln.data.library.db.KilnDatabase
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.withContext
 import kotlin.math.pow
 
@@ -248,6 +249,10 @@ class TrackAnalysisRunner(
         }
 
         val durationMs = System.currentTimeMillis() - startedMs
+        log.i {
+            "analysis pass complete (progress flow): +$analyzed analyzed, " +
+                "$skipped skipped, $albumsAggregated albums aggregated in ${durationMs}ms"
+        }
         emit(
             AnalysisProgress.Complete(
                 result = AnalysisPassResult(
@@ -258,7 +263,7 @@ class TrackAnalysisRunner(
                 ),
             ),
         )
-    }
+    }.flowOn(ioDispatcher)
 
     private fun dbtpToLinear(dbtp: Double): Double = 10.0.pow(dbtp / 20.0)
 }

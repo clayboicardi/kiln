@@ -171,17 +171,20 @@ private fun AndroidSettingsRoute(
             },
             onTriggerBackfill = {
                 coroutineScope.launch {
+                    var startedTotal = 0
                     graph.analysisRunner.runOnceWithProgress().collect { progress ->
                         backfillState = when (progress) {
-                            is AnalysisProgress.Started ->
+                            is AnalysisProgress.Started -> {
+                                startedTotal = progress.total
                                 BackfillUiState.InProgress(0, 0, progress.total)
+                            }
                             is AnalysisProgress.Progress ->
                                 BackfillUiState.InProgress(progress.analyzed, progress.skipped, progress.total)
                             is AnalysisProgress.Complete ->
                                 BackfillUiState.Complete(
                                     analyzed = progress.result.tracksAnalyzed,
                                     skipped = progress.result.tracksSkipped,
-                                    total = progress.result.tracksAnalyzed + progress.result.tracksSkipped,
+                                    total = startedTotal,
                                     albumsAggregated = progress.result.albumsAggregated,
                                     durationMs = progress.result.durationMs,
                                 )

@@ -287,4 +287,41 @@ class TrackAnalysisRunnerTest {
         assertTrue(emissions.last() is AnalysisProgress.Complete)
         assertEquals(0, (emissions.last() as AnalysisProgress.Complete).result.tracksAnalyzed)
     }
+
+    @Test
+    fun `runOnceWithProgress runs analyzer on ioDispatcher not collector dispatcher`() = runBlocking {
+        // Regression test for the Android-ANR bug: without flowOn(ioDispatcher),
+        // the analyzer's analyze() method would run on the collector's
+        // dispatcher (Dispatchers.Main in production), blocking the UI.
+        val artistId = testDb.insertArtist("Test Artist")
+        val albumId = testDb.insertAlbum(artistId, "Test Album")
+        testDb.insertTrack(artistId, albumId, "T1", filePath = "/test/t1.flac")
+
+        // Custom dispatcher that records the thread name at the analyzer call.
+        val ioDispatcher = kotlinx.coroutines.Dispatchers.IO
+        val analyzerThreadNames = mutableListOf<String>()
+        val analyzer = object : TrackAnalyzer {
+            override suspend fun analyze(filePath: String, codec: String): arrow.core.Either<TrackAnalysisError, TrackLoudness> {
+                analyzerThreadNames += Thread.currentThread().name
+                return arrow.core.Either.Right(TrackLoudness(-20.0, -1.0))
+            }
+        }
+        val runner = TrackAnalysisRunner(testDb.db, analyzer, ioDispatcher)
+
+        // Collect on the test's runBlocking thread (= main-thread in production analog).
+        val mainThreadName = Thread.currentThread().name
+        runner.runOnceWithProgress().toList()
+
+        assertTrue(analyzerThreadNames.isNotEmpty(), "analyzer should have been called")
+        val analyzerThread = analyzerThreadNames.first()
+        assertTrue(
+            analyzerThread != mainThreadName,
+            "analyzer ran on $analyzerThread which matches collector thread $mainThreadName — flowOn(ioDispatcher) is missing",
+        )
+        // Bonus: confirm it's a Dispatchers.IO thread (name pattern "DefaultDispatcher-worker-N" or similar)
+        assertTrue(
+            analyzerThread.contains("worker") || analyzerThread.contains("DefaultDispatcher"),
+            "expected an IO worker thread, got '$analyzerThread'",
+        )
+    }
 }

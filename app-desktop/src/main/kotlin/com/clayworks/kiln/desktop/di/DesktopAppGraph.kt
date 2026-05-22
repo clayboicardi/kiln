@@ -172,9 +172,11 @@ abstract class DesktopAppGraph(
         source: MusicSource,
     ): PlatformPlayer = createJavaSoundPlayer(audioDispatcher, decoder, source)
 
+    @Singleton
     @Provides
     protected fun trackAnalyzer(): TrackAnalyzer = createJvmFlacTrackAnalyzer()
 
+    @Singleton
     @Provides
     protected fun analysisRunner(
         db: KilnDatabase,
