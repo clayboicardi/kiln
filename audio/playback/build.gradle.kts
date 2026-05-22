@@ -17,6 +17,7 @@ kotlin {
             implementation(libs.kermit)
             implementation(libs.arrow.core)  // Either<DecoderError, DecodedStream> in Decoder
             implementation(project(":data:library"))  // MediaItem type used in Queue + PlatformPlayer
+            implementation(project(":audio:dsp"))  // LoudnessAnalyzer for TrackAnalyzer impls
         }
         commonTest.dependencies {
             implementation(libs.kotlin.test)
