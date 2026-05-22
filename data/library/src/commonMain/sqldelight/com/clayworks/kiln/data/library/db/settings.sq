@@ -1,0 +1,30 @@
+-- Settings — generic key/value store, single primary key. TEXT/TEXT keeps
+-- migrations cheap: future settings need no schema change, just new
+-- well-known keys at the SettingsRepository layer. JSON encoding handles
+-- list/struct values; primitive values are TEXT-as-toString. Reads are
+-- low-frequency (one Flow per consumer) so the lookup cost is negligible.
+
+CREATE TABLE settings (
+    key   TEXT NOT NULL PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
+selectByKey:
+SELECT value FROM settings WHERE key = ?;
+
+selectAll:
+SELECT * FROM settings
+ORDER BY key;
+
+-- INSERT OR REPLACE rather than ON CONFLICT(key) DO UPDATE: the default
+-- SQLDelight dialect is sqlite-3-18 (see data/library/build.gradle.kts);
+-- upsert syntax needs sqlite-3-24. Observationally equivalent for a
+-- single-column-PK TEXT/TEXT table with no triggers or FK dependents.
+upsert:
+INSERT OR REPLACE INTO settings(key, value) VALUES (?, ?);
+
+delete:
+DELETE FROM settings WHERE key = ?;
+
+deleteAll:
+DELETE FROM settings;
