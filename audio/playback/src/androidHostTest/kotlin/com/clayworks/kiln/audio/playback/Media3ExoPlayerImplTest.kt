@@ -26,6 +26,7 @@ import com.clayworks.kiln.library.source.SourceError
 import com.clayworks.kiln.library.source.SourceId
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.runBlocking
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import kotlin.test.Test
@@ -93,6 +94,15 @@ class Media3ExoPlayerImplTest {
         assertEquals(1.0f, player.volume.value.linear)
         assertEquals(false, player.volume.value.muted)
         assertEquals(0, player.processors.value.size)
+    }
+
+    @Test
+    fun `loadQueue with empty list — stays Idle, queue is empty`() = runBlocking {
+        val player = newPlayer()
+        player.loadQueue(items = emptyList(), startIndex = 0, autoPlay = true)
+        assertEquals(PlayerState.Idle, player.state.value)
+        assertEquals(0, player.queue.value.items.size)
+        assertEquals(-1, player.queue.value.currentIndex)
     }
 
     private fun makeMediaItem(id: String): MediaItem = MediaItem(
