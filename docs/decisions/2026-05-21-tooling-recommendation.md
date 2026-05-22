@@ -733,3 +733,41 @@ When kotlin-lsp ships a release that resolves the analyzer bug, recommended re-t
 - Three real commits land the install + diagnosis: `7628685` (hard link), the dbhub activation `c5a69a9`, and this addendum.
 
 **For now, dev continues without kotlin-lsp.** Read/Grep/Glob plus the active dbhub MCP carry the day; Phase 2a + skill authoring + project review are unblocked.
+
+---
+
+## Addendum 2026-05-21 (later same day): tooling gaps surfaced by tooling-armed project review
+
+Authored during the holistic project review at
+`docs/reviews/2026-05-21-tooling-armed-review.md`. Two skill bugs and
+four new tools/skills proposed.
+
+### Skill bug fixes (addressed by pre-Phase-2a stabilization sweep)
+
+- **`kiln-verify-build` test counting**: `parse-gradle.ps1` now globs
+  `**/build/test-results/desktopTest/TEST-*.xml` across all modules,
+  fixing the ~40% undercount (review P2-5).
+- **`kiln-flac-golden` CI integration**: when Track F lands the test
+  step in `.github/workflows/build.yml`, the golden corpus will run
+  via `-Pkiln.golden.corpus=<dir>` (review P2-6).
+
+### Tier-2-bis: promote from Tier 3 (install when Track B or E scheduled)
+
+- **mobile-mcp** v0.0.55 — H7/H8 trigger fired in Session 10; future
+  Pixel UI inspection cycles will use it. `claude mcp add mobile-mcp
+  -- npx -y @mobilenext/mobile-mcp@latest` with env
+  `MOBILEMCP_DISABLE_TELEMETRY=1`.
+
+### Tier 3 additions (skill candidates — author when use case arrives)
+
+- **`kiln-scan-validate` skill**: probe a known-RG-tagged FLAC + diff
+  scanner output against `metaflac` / `mediainfo` ground truth. Would
+  have caught Track D's 0% RG coverage gap before H8. ~3-4 h author
+  effort.
+- **`kiln-dep-freshness` skill**: walk `libs.versions.toml`, query
+  `gh api repos/<owner>/<repo>/releases?per_page=N` per dependency,
+  surface stale pins. Runs in <30 s for ~20 deps. ~2-3 h author effort.
+- **androidUnitTest source set + bundled SQLite test fixture** (NOT a
+  skill — structural test-infra investment). Session 10 recap §12
+  anti-pattern #2 still active. ~6-10 h initial setup. **Addressed by
+  Phase 5 of `docs/superpowers/plans/2026-05-21-pre-phase-2a-stabilization.md`.**
