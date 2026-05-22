@@ -23,6 +23,10 @@ kotlin {
             // ThemeMode + (future) shared types — SettingsScreen consumes the
             // ThemeMode enum from :data:library:settings.
             implementation(project(":data:library"))
+            // PlatformPlayer + PlayerState/QueueState consumed by Voyager Tab
+            // wrappers (LibraryTab → loadQueue, NowPlayingTab → state flows +
+            // transport, SearchTab → loadQueue). Phase 2a Track C addition.
+            implementation(project(":audio:playback"))
             // KilnTheme for previews + (future) Compose-UI tests. Adds the
             // theme module here so test code can wrap SettingsScreen in the
             // real theme rather than a bare MaterialTheme.
