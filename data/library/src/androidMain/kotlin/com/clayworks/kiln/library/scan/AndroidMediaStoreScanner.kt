@@ -56,6 +56,12 @@ class AndroidMediaStoreScanner(
             var parseErrors = 0
 
             if (forceFullRescan) {
+                // INTENTIONAL: this UPDATE runs OUTSIDE the loop transaction below.
+                // A mid-scan crash leaves last_scanned_ms = 0 for all rows; the
+                // next scan's softDeleteUnscanned(scanStartedMs) only soft-deletes
+                // rows that the NEW scan loop did not touch — so the library is
+                // recoverable. /ultrareview flagged this in Session 10 and the
+                // refute is in docs/sessions/2026-05-19-session-10-addendum-re-review-fixes.md.
                 driver.execute(
                     identifier = null,
                     sql = "UPDATE track SET last_scanned_ms = 0",
