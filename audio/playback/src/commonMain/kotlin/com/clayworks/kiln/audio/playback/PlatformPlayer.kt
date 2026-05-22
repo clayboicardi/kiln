@@ -7,6 +7,7 @@
 
 package com.clayworks.kiln.audio.playback
 
+import com.clayworks.kiln.audio.dsp.AudioProcessor
 import com.clayworks.kiln.library.source.MediaItem
 import kotlinx.coroutines.flow.StateFlow
 

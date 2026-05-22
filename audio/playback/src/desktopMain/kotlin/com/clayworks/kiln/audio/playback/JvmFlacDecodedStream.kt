@@ -14,6 +14,9 @@
 
 package com.clayworks.kiln.audio.playback
 
+import com.clayworks.kiln.audio.dsp.AudioFrame
+import com.clayworks.kiln.audio.dsp.DecodedAudioFormat
+import com.clayworks.kiln.audio.dsp.SampleFormat
 import com.clayworks.kiln.audio.playback.nativeio.ErrorCallback
 import com.clayworks.kiln.audio.playback.nativeio.FlacDecodeException
 import com.clayworks.kiln.audio.playback.nativeio.FlacFrameReader

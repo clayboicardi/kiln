@@ -23,6 +23,7 @@ package com.clayworks.kiln.desktop.di
 
 import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
+import com.clayworks.kiln.audio.dsp.replaygain.ReplayGainProcessor
 import com.clayworks.kiln.audio.playback.Decoder
 import com.clayworks.kiln.audio.playback.PlatformPlayer
 import com.clayworks.kiln.audio.playback.createJavaSoundPlayer
@@ -166,11 +167,23 @@ abstract class DesktopAppGraph(
 
     @Singleton
     @Provides
+    protected fun replayGainProcessor(): ReplayGainProcessor = ReplayGainProcessor()
+
+    @Singleton
+    @Provides
     protected fun player(
         audioDispatcher: CoroutineDispatcher,
         decoder: Decoder,
         source: MusicSource,
-    ): PlatformPlayer = createJavaSoundPlayer(audioDispatcher, decoder, source)
+        settings: SettingsRepository,
+        rgProcessor: ReplayGainProcessor,
+    ): PlatformPlayer = createJavaSoundPlayer(
+        audioDispatcher = audioDispatcher,
+        decoder = decoder,
+        source = source,
+        settings = settings,
+        rgProcessor = rgProcessor,
+    )
 
     @Singleton
     @Provides
