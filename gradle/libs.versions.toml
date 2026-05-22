@@ -51,7 +51,7 @@ mokkery = "3.3.0"                       # latest stable 2026-03-18; KMP-friendly
 roborazzi = "1.61.0"                    # Pre-MVP-pinned; one tick newer than Slack's 1.60.0
 
 # === Audio (Item 9 — Pre-MVP locked) ===
-jna = "5.14.0"                          # JVM ↔ libFLAC bridge; pinned per Item 9 addendum
+jna = "5.17.0"                          # JVM ↔ libFLAC bridge; bumped from 5.14.0 (2023-12) to 5.17.0 (2025-03-16) per review P1-4. Verified parity via FlacDecodeSmokeTest.
 # Native libFLAC 1.5.0 vendored under :audio:playback/src/jvmMain/resources/native/win-x64/ (lands at MVP Session 4-7)
 
 # === Android Media3 (Item 11 + Item 13 PlatformPlayer Android adapter) ===
