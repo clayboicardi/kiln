@@ -188,6 +188,19 @@ class Media3ExoPlayerImplTest {
         assertEquals(false, player.queue.value.shuffleEnabled)
     }
 
+    @Test
+    fun `setVolume + setMuted update volume flow without playback`() = runBlocking {
+        val player = newPlayer()
+        player.setVolume(0.5f)
+        assertEquals(0.5f, player.volume.value.linear)
+        player.setMuted(true)
+        assertEquals(true, player.volume.value.muted)
+        player.setVolume(1.0f)
+        player.setMuted(false)
+        assertEquals(1.0f, player.volume.value.linear)
+        assertEquals(false, player.volume.value.muted)
+    }
+
     private fun makeMediaItem(id: String): MediaItem = MediaItem(
         itemId = ItemId(id),
         sourceId = SourceId("test"),
