@@ -118,4 +118,23 @@ class LocalLibrarySourceTest {
         val titles = items.map { it.title }.toSet()
         assertEquals(setOf("Comfortably Numb", "Another Brick in the Wall"), titles)
     }
+
+    @Test
+    fun browse_TracksOfArtist_filtersByArtistId() = runTest {
+        // track.artist_id is the *per-track* artist (not album-artist). Tracks
+        // filed under artist1 should surface; tracks under artist2 should not.
+        val artist1 = testDb.insertArtist("Pink Floyd", "pink floyd")
+        val artist2 = testDb.insertArtist("Led Zeppelin", "led zeppelin")
+        testDb.insertTrack(artist1, albumId = null, title = "Comfortably Numb", filePath = "/pf/01.flac")
+        testDb.insertTrack(artist1, albumId = null, title = "Wish You Were Here", filePath = "/pf/02.flac")
+        testDb.insertTrack(artist2, albumId = null, title = "Stairway to Heaven", filePath = "/lz/01.flac")
+        testDb.insertTrack(artist2, albumId = null, title = "Black Dog", filePath = "/lz/02.flac")
+
+        val items = snapshot(source.browse(BrowseScope.TracksOfArtist(ArtistId(artist1))))
+
+        assertEquals(2, items.size)
+        assertTrue(items.all { it.kind == MediaItem.Kind.Track })
+        val titles = items.map { it.title }.toSet()
+        assertEquals(setOf("Comfortably Numb", "Wish You Were Here"), titles)
+    }
 }
