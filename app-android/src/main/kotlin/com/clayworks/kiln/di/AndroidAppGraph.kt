@@ -41,6 +41,8 @@ abstract class AndroidAppGraph(
     abstract val scanner: LibraryScanner
     abstract val player: PlatformPlayer
     abstract val settings: SettingsRepository
+    abstract val kilnDatabase: KilnDatabase
+    abstract val analysisRunner: TrackAnalysisRunner
 
     /**
      * AndroidSqliteDriver auto-creates/migrates the schema via PRAGMA
@@ -119,10 +121,12 @@ abstract class AndroidAppGraph(
         source: MusicSource,
     ): PlatformPlayer = Media3ExoPlayerImpl(context, source)
 
+    @Singleton
     @Provides
     protected fun trackAnalyzer(context: Context): TrackAnalyzer =
         createAndroidMediaTrackAnalyzer(context)
 
+    @Singleton
     @Provides
     protected fun analysisRunner(
         db: KilnDatabase,

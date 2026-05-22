@@ -29,6 +29,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -40,13 +41,20 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import app.cash.sqldelight.coroutines.asFlow
+import app.cash.sqldelight.coroutines.mapToOne
 import com.clayworks.kiln.di.AndroidAppGraph
+import com.clayworks.kiln.library.scan.AnalysisProgress
+import com.clayworks.kiln.library.settings.ReplayGainMode
 import com.clayworks.kiln.library.settings.ThemeMode
 import com.clayworks.kiln.saf.rememberSafFolderPicker
 import com.clayworks.kiln.ui.components.home.KilnHomeScreen
+import com.clayworks.kiln.ui.components.settings.BackfillUiState
 import com.clayworks.kiln.ui.components.settings.SettingsScreen
 import com.clayworks.kiln.ui.components.settings.SettingsState
 import com.clayworks.kiln.ui.theme.KilnTheme
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -79,15 +87,16 @@ class MainActivity : ComponentActivity() {
 }
 
 /**
- * Phase 2a Track A: Settings route on Android. Hoists the three SettingsRepository
- * flows into Compose state, routes the four SettingsScreen callbacks back to the
- * repo's suspend setters via a rememberCoroutineScope.
+ * Phase 2a Track A+B+D-C: Settings route on Android. Hoists five
+ * SettingsRepository flows into Compose state, derives a reactive
+ * `missingCount` from `countTracksMissingReplayGain`, and drives a
+ * `BackfillUiState` state machine from
+ * `TrackAnalysisRunner.runOnceWithProgress()` emissions.
  *
- * Phase 2a Track B: folder picker swapped from a Track A Toast stub to a real
- * SAF launcher (rememberSafFolderPicker). On a successful pick the URI is
- * appended to scanFolders (dedup against the current list); the scanner picks
- * up the new entry on the next scan via AndroidMediaStoreScanner's
- * safTreeUrisFlow constructor param.
+ * Phase 2a Track B: folder picker is a real SAF launcher (rememberSafFolderPicker).
+ * On a successful pick the URI is appended to scanFolders (dedup against the
+ * current list); the scanner picks up the new entry on the next scan via
+ * AndroidMediaStoreScanner's safTreeUrisFlow constructor param.
  */
 @Composable
 private fun AndroidSettingsRoute(
@@ -98,6 +107,23 @@ private fun AndroidSettingsRoute(
     val themeMode by graph.settings.themeMode.collectAsState(initial = ThemeMode.System)
     val scanOnLaunch by graph.settings.scanOnLaunch.collectAsState(initial = false)
     val scanFolders by graph.settings.scanFolders.collectAsState(initial = emptyList())
+    val replayGainMode by graph.settings.replayGainMode.collectAsState(initial = ReplayGainMode.Off)
+    val replayGainPreAmpDb by graph.settings.replayGainPreAmpDb.collectAsState(initial = 0.0)
+
+    val missingCountFlow = remember(graph) {
+        graph.kilnDatabase.trackQueries.countTracksMissingReplayGain()
+            .asFlow()
+            .mapToOne(Dispatchers.IO)
+            .map { it.toInt() }
+    }
+    val missingCount by missingCountFlow.collectAsState(initial = 0)
+
+    var backfillState: BackfillUiState by remember { mutableStateOf<BackfillUiState>(BackfillUiState.Idle(0)) }
+    LaunchedEffect(missingCount) {
+        if (backfillState is BackfillUiState.Idle) {
+            backfillState = BackfillUiState.Idle(missingCount)
+        }
+    }
 
     val launchSafPicker = rememberSafFolderPicker(onPicked = { uri ->
         if (uri !in scanFolders) {
@@ -121,6 +147,9 @@ private fun AndroidSettingsRoute(
                 themeMode = themeMode,
                 scanOnLaunch = scanOnLaunch,
                 scanFolders = scanFolders,
+                replayGainMode = replayGainMode,
+                replayGainPreAmpDb = replayGainPreAmpDb,
+                backfill = backfillState,
             ),
             onThemeModeChange = { mode ->
                 coroutineScope.launch { graph.settings.setThemeMode(mode) }
@@ -132,6 +161,35 @@ private fun AndroidSettingsRoute(
             onRemoveFolder = { folder ->
                 coroutineScope.launch {
                     graph.settings.setScanFolders(scanFolders - folder)
+                }
+            },
+            onReplayGainModeChange = { mode ->
+                coroutineScope.launch { graph.settings.setReplayGainMode(mode) }
+            },
+            onReplayGainPreAmpDbChange = { db ->
+                coroutineScope.launch { graph.settings.setReplayGainPreAmpDb(db) }
+            },
+            onTriggerBackfill = {
+                coroutineScope.launch {
+                    var startedTotal = 0
+                    graph.analysisRunner.runOnceWithProgress().collect { progress ->
+                        backfillState = when (progress) {
+                            is AnalysisProgress.Started -> {
+                                startedTotal = progress.total
+                                BackfillUiState.InProgress(0, 0, progress.total)
+                            }
+                            is AnalysisProgress.Progress ->
+                                BackfillUiState.InProgress(progress.analyzed, progress.skipped, progress.total)
+                            is AnalysisProgress.Complete ->
+                                BackfillUiState.Complete(
+                                    analyzed = progress.result.tracksAnalyzed,
+                                    skipped = progress.result.tracksSkipped,
+                                    total = startedTotal,
+                                    albumsAggregated = progress.result.albumsAggregated,
+                                    durationMs = progress.result.durationMs,
+                                )
+                        }
+                    }
                 }
             },
         )

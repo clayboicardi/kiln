@@ -24,6 +24,9 @@ dependencies {
 
     // SQLDelight JVM driver — graph constructs JdbcSqliteDriver directly.
     implementation(libs.sqldelight.sqlite.driver)
+    // SQLDelight coroutines extensions — asFlow() + mapToOne() used in
+    // DesktopSettingsRoute to reactively observe countTracksMissingReplayGain.
+    implementation(libs.bundles.sqldelight.common)
 
     // Swing dispatcher — JFileChooser folder picker in Main.kt's
     // DesktopSettingsRoute runs on Dispatchers.Swing (EDT). Required by

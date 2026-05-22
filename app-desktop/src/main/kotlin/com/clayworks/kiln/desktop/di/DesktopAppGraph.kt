@@ -66,6 +66,8 @@ abstract class DesktopAppGraph(
     abstract val scanner: LibraryScanner
     abstract val player: PlatformPlayer
     abstract val settings: SettingsRepository
+    abstract val kilnDatabase: KilnDatabase
+    abstract val analysisRunner: TrackAnalysisRunner
 
     /**
      * JdbcSqliteDriver with `schema = KilnDatabase.Schema` auto-creates the
@@ -170,9 +172,11 @@ abstract class DesktopAppGraph(
         source: MusicSource,
     ): PlatformPlayer = createJavaSoundPlayer(audioDispatcher, decoder, source)
 
+    @Singleton
     @Provides
     protected fun trackAnalyzer(): TrackAnalyzer = createJvmFlacTrackAnalyzer()
 
+    @Singleton
     @Provides
     protected fun analysisRunner(
         db: KilnDatabase,

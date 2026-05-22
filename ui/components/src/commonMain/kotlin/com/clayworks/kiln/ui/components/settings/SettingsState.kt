@@ -1,5 +1,6 @@
 package com.clayworks.kiln.ui.components.settings
 
+import com.clayworks.kiln.library.settings.ReplayGainMode
 import com.clayworks.kiln.library.settings.ThemeMode
 
 /**
@@ -16,4 +17,7 @@ data class SettingsState(
     val themeMode: ThemeMode,
     val scanOnLaunch: Boolean,
     val scanFolders: List<String>,
+    val replayGainMode: ReplayGainMode,
+    val replayGainPreAmpDb: Double,
+    val backfill: BackfillUiState,
 )
