@@ -1,6 +1,7 @@
 {
   "_doc": "Workspace-scoped MCP servers for Kiln. See docs/decisions/2026-05-21-tooling-recommendation.md for rationale.",
-  "_dbhub_note": "ACTIVE as of 2026-05-21 after first ./gradlew :app-desktop:run. DSN points at ~/.kiln/kiln.db (NOT %AppData%/kiln/ as originally assumed in the doc — Kiln uses the user-home dir convention).",
+  "_dbhub_note": "ACTIVE. DSN points at ~/.kiln/kiln.db (user-home convention, NOT %AppData%/kiln/).",
+  "_dbhub_v0_21_2_quirks_2026_05_21": "1) --max-rows and --query-timeout were silently dropped from the v0.21.2 release on npm; pass row-limit config via dbhub.toml [[tools]] block when needed. 2) better-sqlite3 is no longer bundled — must be installed into the npx cache dir manually. Procedure if SQLite connector errors with 'driver package better-sqlite3 not installed': locate the npx cache via `ls C:/Users/chawo/AppData/Local/npm-cache/_npx/*/node_modules/@bytebase/dbhub`, cd to the cache root, `npm install --no-save better-sqlite3`.",
   "mcpServers": {
     "kiln-db-desktop": {
       "command": "npx",
@@ -8,8 +9,6 @@
         "-y",
         "@bytebase/dbhub@0.21.2",
         "--transport", "stdio",
-        "--max-rows", "1000",
-        "--query-timeout", "10000",
         "--dsn", "sqlite:///C:/Users/chawo/.kiln/kiln.db"
       ]
     }
