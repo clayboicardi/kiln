@@ -16,6 +16,7 @@ jb-compose-material3 = "1.9.0"          # matches Slack
 jb-compose-material-icons-core = "1.7.3"
 compose-runtime = "1.11.1"              # keep in sync with the androidx version used by jb-compose
 jb-lifecycle = "2.11.0-beta01"          # KMP lifecycle artifacts; matches Slack circuit
+skiko = "0.144.6"                       # explicit pin matching Compose-MP 1.11.0's transitive force-upgrade; silences the coil 3.4.0 declared-version mismatch warning per review P2-1. When Compose-MP bumps, verify via :ui:theme:dependencies and re-pin.
 
 # === Image loading (Item 2 — Pre-MVP locked) ===
 coil = "3.4.0"
@@ -91,6 +92,7 @@ compose-ui-test-junit4 = { module = "org.jetbrains.compose.ui:ui-test-junit4", v
 compose-resources = { module = "org.jetbrains.compose.components:components-resources", version.ref = "jb-compose" }
 compose-lifecycle-runtime = { module = "org.jetbrains.androidx.lifecycle:lifecycle-runtime-compose", version.ref = "jb-lifecycle" }
 compose-lifecycle-viewmodel = { module = "org.jetbrains.androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "jb-lifecycle" }
+skiko = { module = "org.jetbrains.skiko:skiko", version.ref = "skiko" }
 
 # === Coil (Item 2) ===
 coil = { module = "io.coil-kt.coil3:coil", version.ref = "coil" }
