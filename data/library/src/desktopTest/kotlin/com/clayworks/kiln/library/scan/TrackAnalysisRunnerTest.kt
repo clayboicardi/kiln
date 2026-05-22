@@ -3,6 +3,7 @@ package com.clayworks.kiln.library.scan
 import arrow.core.Either
 import com.clayworks.kiln.library.source.TestDb
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import kotlin.math.abs
 import kotlin.test.AfterTest
@@ -250,5 +251,40 @@ class TrackAnalysisRunnerTest {
             "album_db should differ between 2-track ($albumDbAfterRun1) and 3-track " +
                 "($albumDbAfterRun2) aggregates by at least 0.1 dB",
         )
+    }
+
+    @Test
+    fun `runOnceWithProgress emits Started then Progress then Complete`() = runBlocking {
+        val artistId = testDb.insertArtist("Test Artist")
+        val albumId = testDb.insertAlbum(artistId, "Test Album")
+        val t1 = testDb.insertTrack(artistId, albumId, "T1", filePath = "/test/t1.flac")
+        val t2 = testDb.insertTrack(artistId, albumId, "T2", filePath = "/test/t2.flac")
+
+        val analyzer = FakeTrackAnalyzer(mapOf(
+            "/test/t1.flac" to Either.Right(TrackLoudness(-20.0, -1.0)),
+            "/test/t2.flac" to Either.Right(TrackLoudness(-18.0, -0.5)),
+        ))
+        val runner = TrackAnalysisRunner(testDb.db, analyzer, Dispatchers.Unconfined)
+
+        val emissions = runner.runOnceWithProgress().toList()
+        assertTrue(emissions.size >= 2, "expected >= 2 emissions, got ${emissions.size}")
+        assertTrue(emissions.first() is AnalysisProgress.Started, "first emission must be Started, got ${emissions.first()}")
+        assertEquals(2, (emissions.first() as AnalysisProgress.Started).total)
+        assertTrue(emissions.last() is AnalysisProgress.Complete, "last emission must be Complete, got ${emissions.last()}")
+        val finalResult = (emissions.last() as AnalysisProgress.Complete).result
+        assertEquals(2, finalResult.tracksAnalyzed)
+        assertEquals(0, finalResult.tracksSkipped)
+        assertEquals(1, finalResult.albumsAggregated)
+    }
+
+    @Test
+    fun `runOnceWithProgress on empty library emits Started 0 then Complete 0`() = runBlocking {
+        val analyzer = FakeTrackAnalyzer(emptyMap())
+        val runner = TrackAnalysisRunner(testDb.db, analyzer, Dispatchers.Unconfined)
+        val emissions = runner.runOnceWithProgress().toList()
+        assertTrue(emissions.first() is AnalysisProgress.Started)
+        assertEquals(0, (emissions.first() as AnalysisProgress.Started).total)
+        assertTrue(emissions.last() is AnalysisProgress.Complete)
+        assertEquals(0, (emissions.last() as AnalysisProgress.Complete).result.tracksAnalyzed)
     }
 }
