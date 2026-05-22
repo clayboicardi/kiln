@@ -10,6 +10,10 @@ kotlin {
     sourceSets {
         commonMain.dependencies {
             implementation(libs.bundles.compose.mp.common)
+            // ThemeMode lives in :data:library:settings — keep KilnTheme's Settings
+            // coupling minimal (just the enum import). Avoids inventing a redundant
+            // enum in :ui:theme.
+            implementation(project(":data:library"))
             // kmpalette-core: dep deferred to Phase 2a Flight A adoption. Item 3
             // vetting decided 4.0.0-beta02 but the artifact is NOT on Maven
             // Central (only tagged on GitHub). Phase 2a Flight A resolves via
