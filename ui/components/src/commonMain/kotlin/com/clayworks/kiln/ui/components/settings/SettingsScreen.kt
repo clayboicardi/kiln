@@ -138,8 +138,8 @@ fun SettingsScreen(
         Spacer(modifier = Modifier.height(16.dp))
         Text("ReplayGain", style = MaterialTheme.typography.titleMedium)
         Text(
-            "Volume-normalize tracks during playback. Note: applies once Track D-B's " +
-                "consumer-side gain ships. Until then, configuring here persists for later.",
+            "Volume-normalize tracks during playback. Run the analyzer in the ReplayGain " +
+                "section below to populate per-track values.",
             style = MaterialTheme.typography.bodySmall,
             modifier = Modifier.padding(top = 4.dp, bottom = 8.dp),
         )

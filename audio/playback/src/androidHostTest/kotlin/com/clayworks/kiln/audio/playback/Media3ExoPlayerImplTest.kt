@@ -16,6 +16,10 @@ import arrow.core.Either
 import com.clayworks.kiln.audio.dsp.AudioFrame
 import com.clayworks.kiln.audio.dsp.AudioProcessor
 import com.clayworks.kiln.audio.dsp.DecodedAudioFormat
+import com.clayworks.kiln.audio.dsp.replaygain.ReplayGainProcessor
+import com.clayworks.kiln.library.settings.ReplayGainMode
+import com.clayworks.kiln.library.settings.SettingsRepository
+import com.clayworks.kiln.library.settings.ThemeMode
 import com.clayworks.kiln.library.source.AudioCodec
 import com.clayworks.kiln.library.source.BrowseScope
 import com.clayworks.kiln.library.source.ItemId
@@ -28,6 +32,8 @@ import com.clayworks.kiln.library.source.SourceCapabilities
 import com.clayworks.kiln.library.source.SourceError
 import com.clayworks.kiln.library.source.SourceId
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -95,13 +101,56 @@ class Media3ExoPlayerImplTest {
             }
     }
 
-    private fun newPlayer(source: MusicSource = AlwaysFailingSource()): Media3ExoPlayerImpl {
+    /**
+     * Test stub for SettingsRepository. Holds in-memory state and exposes it
+     * via MutableStateFlow so tests can change values mid-test and the player's
+     * settings-collector observes the change. Defaults: replayGainMode=Off,
+     * replayGainPreAmpDb=0.0, themeMode=System, scanOnLaunch=false,
+     * scanFolders=empty. Tests that only need the player not to crash on
+     * settings reads use this directly; tests that exercise RG behavior set
+     * values via setReplayGainMode / setReplayGainPreAmpDb.
+     */
+    private class StubSettingsRepository(
+        initialMode: ReplayGainMode = ReplayGainMode.Off,
+        initialPreAmpDb: Double = 0.0,
+    ) : SettingsRepository {
+        private val _themeMode = MutableStateFlow(ThemeMode.System)
+        override val themeMode: Flow<ThemeMode> = _themeMode.asStateFlow()
+        override suspend fun setThemeMode(mode: ThemeMode) { _themeMode.value = mode }
+
+        private val _scanOnLaunch = MutableStateFlow(false)
+        override val scanOnLaunch: Flow<Boolean> = _scanOnLaunch.asStateFlow()
+        override suspend fun setScanOnLaunch(enabled: Boolean) { _scanOnLaunch.value = enabled }
+
+        private val _scanFolders = MutableStateFlow<List<String>>(emptyList())
+        override val scanFolders: Flow<List<String>> = _scanFolders.asStateFlow()
+        override suspend fun setScanFolders(folders: List<String>) { _scanFolders.value = folders }
+
+        private val _replayGainMode = MutableStateFlow(initialMode)
+        override val replayGainMode: Flow<ReplayGainMode> = _replayGainMode.asStateFlow()
+        override suspend fun setReplayGainMode(mode: ReplayGainMode) { _replayGainMode.value = mode }
+
+        private val _replayGainPreAmpDb = MutableStateFlow(initialPreAmpDb)
+        override val replayGainPreAmpDb: Flow<Double> = _replayGainPreAmpDb.asStateFlow()
+        override suspend fun setReplayGainPreAmpDb(db: Double) { _replayGainPreAmpDb.value = db }
+    }
+
+    private fun newPlayer(
+        source: MusicSource = AlwaysFailingSource(),
+        settings: SettingsRepository = StubSettingsRepository(),
+        rgProcessor: ReplayGainProcessor = ReplayGainProcessor(),
+    ): Media3ExoPlayerImpl {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
-        return Media3ExoPlayerImpl(context, source).also { players.add(it) }
+        return Media3ExoPlayerImpl(
+            context = context,
+            source = source,
+            settings = settings,
+            rgProcessor = rgProcessor,
+        ).also { players.add(it) }
     }
 
     @Test
-    fun `initial state — Idle, position 0, empty queue, volume 1, no processors`() {
+    fun `initial state — Idle, position 0, empty queue, volume 1, rg processor present`() {
         val player = newPlayer()
         assertEquals(PlayerState.Idle, player.state.value)
         assertEquals(0L, player.positionMs.value)
@@ -112,7 +161,9 @@ class Media3ExoPlayerImplTest {
         assertEquals(false, q.shuffleEnabled)
         assertEquals(1.0f, player.volume.value.linear)
         assertEquals(false, player.volume.value.muted)
-        assertEquals(0, player.processors.value.size)
+        // ReplayGainProcessor is added to the chain in the init block
+        // (mirrors desktop JavaSoundPlayerImpl). Track D-B (Android) Task 3.
+        assertEquals(1, player.processors.value.size)
     }
 
     @Test
@@ -222,23 +273,25 @@ class Media3ExoPlayerImplTest {
 
     @Test
     fun `addAudioProcessor + removeAudioProcessor mutate processors flow`() {
-        // NOTE: Media3ExoPlayerImpl.addAudioProcessor stores into the
-        // _processors MutableStateFlow but does NOT yet inject the processor
-        // into the audio pipeline — the chain hot-apply is deferred to MVP
-        // Sessions 16-22 (custom RenderersFactory wrapping AudioSink). The
-        // flow surface IS the testable contract today: Compose surfaces can
-        // observe the list of registered processors even though the actual
-        // audio path doesn't run them yet.
+        // NOTE: addAudioProcessor stores into the _processors MutableStateFlow.
+        // Track D-B Task 2/3 wired the RG processor into the actual Media3
+        // audio pipeline via KilnRenderersFactory + MediaProcessorAdapter;
+        // future processors (EQ, room correction, visualizer fanout) join the
+        // chain in subsequent sessions. This test exercises the public flow
+        // surface only — Compose surfaces observe the list of registered
+        // processors via this StateFlow.
         val player = newPlayer()
+        // The init block already adds rgProcessor — size starts at 1.
+        assertEquals(1, player.processors.value.size)
         val processor = object : AudioProcessor {
             override val id = "test"
             override fun onFormatChange(format: DecodedAudioFormat) = Unit
             override fun process(frame: AudioFrame): AudioFrame = frame
         }
         player.addAudioProcessor(processor)
-        assertEquals(1, player.processors.value.size)
+        assertEquals(2, player.processors.value.size)
         player.removeAudioProcessor(processor)
-        assertEquals(0, player.processors.value.size)
+        assertEquals(1, player.processors.value.size)
     }
 
     @Test
@@ -270,6 +323,33 @@ class Media3ExoPlayerImplTest {
             player.state.value,
             "post-release state should remain whatever it was at release time",
         )
+    }
+
+    // ---------- ReplayGain wiring (Phase 2a Track D-B Android) ----------
+
+    @Test
+    fun `RG processor is exposed in processors flow at construction`() {
+        // The init block adds rgProcessor to _processors so Compose surfaces
+        // can observe the chain. Media3-side injection happens via
+        // KilnRenderersFactory; this is the observation surface.
+        val rg = ReplayGainProcessor()
+        val player = newPlayer(rgProcessor = rg)
+        val procs = player.processors.value
+        assertEquals(1, procs.size)
+        assertEquals("replay-gain-processor", procs[0].id)
+    }
+
+    @Test
+    fun `RG processor stays at unity gain when no track is loaded`() = runBlocking {
+        val rg = ReplayGainProcessor()
+        val settings = StubSettingsRepository(initialMode = ReplayGainMode.Off, initialPreAmpDb = 6.0)
+        newPlayer(settings = settings, rgProcessor = rg)
+        // Before any track loads, currentPlayable is null. The settings-flow collector
+        // returns early on null playable, so the processor's linearGain stays at its
+        // default 1.0 regardless of mode/pre-amp values. This test verifies the
+        // collector's null-guard, NOT the Off-mode short-circuit in resolveGainLinear
+        // (that path only fires when a track is actually loaded).
+        assertEquals(1.0, rg.currentLinearGain(), 1e-9)
     }
 
     private fun makeMediaItem(id: String): MediaItem = MediaItem(

@@ -16,6 +16,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.driver.android.AndroidSqliteDriver
 import io.requery.android.database.sqlite.RequerySQLiteOpenHelperFactory
+import com.clayworks.kiln.audio.dsp.replaygain.ReplayGainProcessor
 import com.clayworks.kiln.audio.playback.Media3ExoPlayerImpl
 import com.clayworks.kiln.audio.playback.PlatformPlayer
 import com.clayworks.kiln.audio.playback.createAndroidMediaTrackAnalyzer
@@ -109,6 +110,18 @@ abstract class AndroidAppGraph(
     )
 
     /**
+     * ReplayGainProcessor is the single per-process audio processor wired into
+     * the Media3 pipeline via KilnRenderersFactory + MediaProcessorAdapter.
+     * Singleton so the settings-flow collector in Media3ExoPlayerImpl can
+     * mutate gain on the same instance the audio pipeline reads.
+     *
+     * Mirrors DesktopAppGraph.replayGainProcessor() from PR #13.
+     */
+    @Singleton
+    @Provides
+    protected fun replayGainProcessor(): ReplayGainProcessor = ReplayGainProcessor()
+
+    /**
      * Media3ExoPlayerImpl owns native resources (ExoPlayer + MediaSession);
      * one instance per process. Its constructor must run on the main thread
      * (ExoPlayer single-thread-access rule). KilnApplication.onCreate is the
@@ -119,7 +132,14 @@ abstract class AndroidAppGraph(
     protected fun media3Player(
         context: Context,
         source: MusicSource,
-    ): PlatformPlayer = Media3ExoPlayerImpl(context, source)
+        settings: SettingsRepository,
+        rgProcessor: ReplayGainProcessor,
+    ): PlatformPlayer = Media3ExoPlayerImpl(
+        context = context,
+        source = source,
+        settings = settings,
+        rgProcessor = rgProcessor,
+    )
 
     @Singleton
     @Provides
