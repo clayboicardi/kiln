@@ -426,10 +426,19 @@ internal class JavaSoundPlayerImpl(
         // playback coroutine context — launch a one-shot child coroutine to
         // do the settings I/O without making startStream itself suspend.
         // The settings-change collector (init block) handles subsequent updates.
+        //
+        // Race-fix (bug_003): the two settings .first() reads are genuine
+        // suspension points on ioDispatcher; under rapid track-skip an older
+        // launch can resume AFTER a newer transition has updated
+        // currentPlayable. Re-read @Volatile currentPlayable inside the lambda
+        // so we apply the LATEST track's gain, not whichever transition's
+        // launch happens to complete first. Mirrors Media3ExoPlayerImpl
+        // onMediaItemTransition (Android sibling).
         scope.launch {
             val mode = settings.replayGainMode.first()
             val preAmpDb = settings.replayGainPreAmpDb.first()
-            applyRgGain(playable, mode, preAmpDb)
+            val latest = currentPlayable ?: return@launch
+            applyRgGain(latest, mode, preAmpDb)
         }
 
         _paused.value = !autoPlay
