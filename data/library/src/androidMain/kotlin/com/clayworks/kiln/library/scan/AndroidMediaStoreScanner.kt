@@ -162,13 +162,21 @@ class AndroidMediaStoreScanner(
             ?: "content://media/external/audio/media/$mediaId"
 
         // MediaStore reports DATE_MODIFIED in seconds-since-epoch; convert to ms.
+        // Per the ADR (Session 19): when the provider returns 0, persist file_mtime_ms=0
+        // AND has_known_mtime=0 rather than substituting scanStartedMs. The pre-fix
+        // substitution forced perpetual re-scans because scanStartedMs differs every
+        // pass. MediaStore in practice always returns a real DATE_MODIFIED for IS_MUSIC
+        // rows; the unknown-mtime branch is defensive against vendor quirks.
         val mtimeSeconds = if (cols.dateModified >= 0) cursor.getLong(cols.dateModified) else 0L
-        val mtime = if (mtimeSeconds > 0) mtimeSeconds * 1000L else scanStartedMs
+        val mtimeKnown = mtimeSeconds > 0
+        val mtime = if (mtimeKnown) mtimeSeconds * 1000L else 0L
+        val knownness = if (mtimeKnown) 1L else 0L
         val size = if (cols.size >= 0) cursor.getLong(cols.size).coerceAtLeast(0L) else 0L
 
         val existing = db.trackQueries.selectByFilePath(filePath).executeAsOneOrNull()
         if (existing != null &&
             existing.file_mtime_ms == mtime &&
+            existing.has_known_mtime == knownness &&
             existing.file_size_bytes == size &&
             existing.deleted_at_ms == null
         ) {
@@ -221,6 +229,7 @@ class AndroidMediaStoreScanner(
                     file_path = filePath,
                     file_size_bytes = size,
                     file_mtime_ms = mtime,
+                    has_known_mtime = knownness,
                     replay_gain_track_db = null,
                     replay_gain_album_db = null,
                     replay_gain_track_peak = null,
@@ -253,6 +262,7 @@ class AndroidMediaStoreScanner(
                     channels = DEFAULT_CHANNELS,
                     file_size_bytes = size,
                     file_mtime_ms = mtime,
+                    has_known_mtime = knownness,
                     replay_gain_track_db = null,
                     replay_gain_album_db = null,
                     replay_gain_track_peak = null,
@@ -335,12 +345,21 @@ class AndroidMediaStoreScanner(
 
             for (doc in SafTreeWalker.walk(context.contentResolver, treeUri)) {
                 val filePath = doc.documentUri.toString()
-                val mtime = doc.lastModified.takeIf { it > 0 } ?: scanStartedMs
+                // Per the ADR (Session 19): if the DocumentsProvider omits mtime,
+                // persist file_mtime_ms=0 + has_known_mtime=0 rather than substituting
+                // scanStartedMs (which changes every pass, forcing perpetual rescans).
+                // Cloud providers (Drive, Dropbox, OneDrive) and some MTP/file-manager
+                // providers omit COLUMN_LAST_MODIFIED.
+                val rawMtime = doc.lastModified
+                val mtimeKnown = rawMtime > 0
+                val mtime = if (mtimeKnown) rawMtime else 0L
+                val knownness = if (mtimeKnown) 1L else 0L
                 val size = doc.size.coerceAtLeast(0L)
 
                 val existing = db.trackQueries.selectByFilePath(filePath).executeAsOneOrNull()
                 if (existing != null &&
                     existing.file_mtime_ms == mtime &&
+                    existing.has_known_mtime == knownness &&
                     existing.file_size_bytes == size &&
                     existing.deleted_at_ms == null
                 ) {
@@ -401,6 +420,7 @@ class AndroidMediaStoreScanner(
                         file_path = filePath,
                         file_size_bytes = size,
                         file_mtime_ms = mtime,
+                        has_known_mtime = knownness,
                         replay_gain_track_db = null,
                         replay_gain_album_db = null,
                         replay_gain_track_peak = null,
@@ -434,6 +454,7 @@ class AndroidMediaStoreScanner(
                         channels = DEFAULT_CHANNELS,
                         file_size_bytes = size,
                         file_mtime_ms = mtime,
+                        has_known_mtime = knownness,
                         replay_gain_track_db = null,
                         replay_gain_album_db = null,
                         replay_gain_track_peak = null,
