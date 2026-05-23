@@ -244,6 +244,9 @@ class JvmFilesystemScanner(
                     file_path = pathStr,
                     file_size_bytes = size,
                     file_mtime_ms = mtime,
+                    // JVM Files.readAttributes() always returns a real mtime — no
+                    // SAF-style "provider omits column" failure mode exists here.
+                    has_known_mtime = 1L,
                     replay_gain_track_db = tags.replayGainTrackDb,
                     replay_gain_album_db = tags.replayGainAlbumDb,
                     replay_gain_track_peak = tags.replayGainTrackPeak,
@@ -276,6 +279,7 @@ class JvmFilesystemScanner(
                     channels = tags.channels,
                     file_size_bytes = size,
                     file_mtime_ms = mtime,
+                    has_known_mtime = 1L,
                     replay_gain_track_db = tags.replayGainTrackDb,
                     replay_gain_album_db = tags.replayGainAlbumDb,
                     replay_gain_track_peak = tags.replayGainTrackPeak,

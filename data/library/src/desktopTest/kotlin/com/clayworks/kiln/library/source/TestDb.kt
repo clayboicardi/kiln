@@ -127,6 +127,7 @@ class TestDb : AutoCloseable {
             file_path = filePath,
             file_size_bytes = fileSizeBytes,
             file_mtime_ms = fileMtimeMs,
+            has_known_mtime = 1L,
             replay_gain_track_db = replayGainTrackDb,
             replay_gain_album_db = null,
             replay_gain_track_peak = replayGainTrackPeak,

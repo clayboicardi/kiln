@@ -59,6 +59,7 @@ class JvmFilesystemScannerTest {
             file_path = "/tmp/sentinel-must-not-be-deleted.flac",
             file_size_bytes = 1024L,
             file_mtime_ms = 0L,
+            has_known_mtime = 1L,
             replay_gain_track_db = null,
             replay_gain_album_db = null,
             replay_gain_track_peak = null,

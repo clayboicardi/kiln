@@ -1,0 +1,27 @@
+-- v2 → v3: add has_known_mtime to track. Distinguishes "provider reports
+-- mtime" (default 1) from "provider omits COLUMN_LAST_MODIFIED" (set 0
+-- by the SAF/MediaStore scanners when their respective mtime sources
+-- return <= 0).
+--
+-- File name is `2.sqm` because SQLDelight names migration files by their
+-- SOURCE schema version, not target. v2→v3 = 2.sqm. CLAUDE.md gotcha.
+--
+-- Existing rows backfill to DEFAULT 1, which is correct for:
+--   - Desktop filesystem scans (Files.readAttributes always returns a
+--     real mtime).
+--   - Android MediaStore scans pre-fix (DATE_MODIFIED was substituted
+--     to scanStartedMs when absent, so existing rows have *some* number
+--     > 0 — collapsing to "known" is the conservative interpretation;
+--     they'll force one rescan on the next pass).
+--
+-- Android SAF rows previously polluted with scanStartedMs as a stand-in
+-- for missing mtime will self-correct: incoming `has_known_mtime=0`
+-- with file_mtime_ms=0 mismatches the defaulted has_known_mtime=1 and
+-- forces one rescan via the updateForRescan path, then settles into
+-- the new unknown-mtime state.
+--
+-- Architectural decision: /multi:decide (claude+codex consensus,
+-- Gemini dissent for Option A sentinel-0L) — Session 19 2026-05-23.
+-- See engram topic `architecture/kiln-saf-unknown-mtime-has-known-mtime`.
+
+ALTER TABLE track ADD COLUMN has_known_mtime INTEGER NOT NULL DEFAULT 1;

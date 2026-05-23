@@ -50,7 +50,14 @@ CREATE TABLE track (
     -- Lazy stats
     play_count               INTEGER NOT NULL DEFAULT 0,
     skip_count               INTEGER NOT NULL DEFAULT 0,
-    last_played_ms           INTEGER DEFAULT NULL
+    last_played_ms           INTEGER DEFAULT NULL,
+
+    -- 1 = provider reported a real mtime; 0 = provider omitted (some SAF
+    -- DocumentsProviders). Gates the unchanged-check on SAF passes.
+    -- Added v2→v3 via migrations/2.sqm; SQLite's ALTER TABLE ADD COLUMN
+    -- always appends to the END of the table, so this column MUST stay
+    -- last in CREATE TABLE for verifyMigrations to pass.
+    has_known_mtime          INTEGER NOT NULL DEFAULT 1
 );
 
 -- All track-list indexes are PARTIAL — `WHERE deleted_at_ms IS NULL` is part
@@ -117,12 +124,12 @@ INSERT INTO track(
     album_id, artist_id, title, title_sort, duration_ms,
     track_number, disc_number, year, date, genre, composer, bpm,
     codec, bitrate_kbps, sample_rate_hz, bit_depth, channels,
-    file_path, file_size_bytes, file_mtime_ms,
+    file_path, file_size_bytes, file_mtime_ms, has_known_mtime,
     replay_gain_track_db, replay_gain_album_db,
     replay_gain_track_peak, replay_gain_album_peak,
     has_embedded_art, art_path,
     source, date_added_ms, date_modified_ms, last_scanned_ms
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 lastInsertRowId:
 SELECT last_insert_rowid();
@@ -151,6 +158,7 @@ SET album_id = ?,
     channels = ?,
     file_size_bytes = ?,
     file_mtime_ms = ?,
+    has_known_mtime = ?,
     replay_gain_track_db = ?,
     replay_gain_album_db = ?,
     replay_gain_track_peak = ?,
