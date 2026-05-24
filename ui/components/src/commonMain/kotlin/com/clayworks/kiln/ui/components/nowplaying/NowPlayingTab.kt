@@ -1,5 +1,12 @@
-// NowPlayingTab — Voyager Tab wrapping NowPlayingContent. Collects
-// PlatformPlayer's state / queue / positionMs flows.
+// NowPlayingTab — Voyager Tab wrapping the now-playing UI. Hosts an embedded
+// Voyager Navigator whose initial screen is NowPlayingHomeScreen (collects
+// PlatformPlayer's state / queue / positionMs flows + renders NowPlayingContent).
+// Tapping the track title pushes SpecSheetScreen(trackId) onto the inner
+// Navigator stack.
+//
+// Phase 2b-prereq: introduces the inner Navigator so Stream A can routably
+// land SpecSheetScreen without rebuilding NowPlayingTab plumbing.
+// See docs/superpowers/plans/2026-05-23-phase-2b-plan.md §6.1.
 
 package com.clayworks.kiln.ui.components.nowplaying
 
@@ -10,10 +17,15 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
+import cafe.adriel.voyager.core.screen.Screen
+import cafe.adriel.voyager.navigator.LocalNavigator
+import cafe.adriel.voyager.navigator.Navigator
+import cafe.adriel.voyager.navigator.currentOrThrow
 import cafe.adriel.voyager.navigator.tab.Tab
 import cafe.adriel.voyager.navigator.tab.TabOptions
 import com.clayworks.kiln.audio.playback.PlatformPlayer
 import com.clayworks.kiln.audio.playback.PlayerState
+import com.clayworks.kiln.ui.components.specsheet.SpecSheetScreen
 import kotlinx.coroutines.launch
 
 class NowPlayingTab(
@@ -30,6 +42,22 @@ class NowPlayingTab(
 
     @Composable
     override fun Content() {
+        Navigator(NowPlayingHomeScreen(player))
+    }
+}
+
+/**
+ * Root screen of the NowPlayingTab's inner Navigator. Owns the player-flow
+ * collection + transport wiring. Tap-title pushes [SpecSheetScreen] onto
+ * the parent [Navigator] stack via [LocalNavigator].
+ */
+class NowPlayingHomeScreen(
+    private val player: PlatformPlayer,
+) : Screen {
+
+    @Composable
+    override fun Content() {
+        val navigator = LocalNavigator.currentOrThrow
         val playerState by player.state.collectAsState()
         val queue by player.queue.collectAsState()
         val positionMs by player.positionMs.collectAsState()
@@ -58,6 +86,9 @@ class NowPlayingTab(
             },
             onSkipPrevious = {
                 coroutineScope.launch { player.skipToPrevious() }
+            },
+            onTitleClick = { trackId ->
+                navigator.push(SpecSheetScreen(trackId))
             },
         )
     }
