@@ -4,7 +4,7 @@
 // AudioManager.getSupportedMixerAttributes. Result drives the hard gate for all
 // subsequent Stream B production code per plan
 // docs/superpowers/plans/2026-05-23-phase-2b-plan.md §7. The empirical
-// result-doc commit at docs/decisions/2026-05-XX-phase-2b-bitperfect-probe-result.md
+// result-doc commit at docs/decisions/<date>-phase-2b-bitperfect-probe-result.md
 // is Clay-filled-in after running BitPerfectProbeActivity on the real device
 // (B0-T4 / B0-T5 — human tasks).
 //

@@ -1,7 +1,7 @@
 // BitPerfectProbeActivity — debug-only entry point for running
 // BitPerfectCapabilityProbe on real Android hardware. Surfaces probe results
 // visually so Clay can screenshot + fill in the empirical result-doc at
-// docs/decisions/2026-05-XX-phase-2b-bitperfect-probe-result.md per plan
+// docs/decisions/<date>-phase-2b-bitperfect-probe-result.md per plan
 // docs/superpowers/plans/2026-05-23-phase-2b-plan.md §7 step B0-T4.
 //
 // CURRENT LOCATION: src/main/kotlin/... (because there's no src/debug source
@@ -24,12 +24,13 @@ import androidx.compose.material3.Text
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.clayworks.kiln.audio.playback.BitPerfectCapabilityProbe
+import com.clayworks.kiln.audio.playback.BitPerfectProbeResult
 
 class BitPerfectProbeActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val probe = BitPerfectCapabilityProbe(this)
-        val result = probe.probe()
+        val resultOrError: Result<BitPerfectProbeResult> = runCatching { probe.probe() }
         setContent {
             MaterialTheme {
                 val scrollState = rememberScrollState()
@@ -42,13 +43,31 @@ class BitPerfectProbeActivity : ComponentActivity() {
                         text = "Bit-Perfect Capability Probe",
                         style = MaterialTheme.typography.headlineSmall,
                     )
-                    Text("Android API: ${result.androidApi}")
-                    Text("Availability: ${result.availability}")
-                    Text("Device: ${result.deviceProductName ?: "(none)"}")
-                    Text("Supported formats: ${result.supportedFormats.size}")
-                    result.supportedFormats.forEach { format ->
-                        Text("  ${format.sampleRate} Hz / encoding=${format.encoding} / ${format.channelCount} ch")
-                    }
+                    resultOrError.fold(
+                        onSuccess = { result ->
+                            Text("Android API: ${result.androidApi}")
+                            Text("Availability: ${result.availability}")
+                            Text("Device: ${result.deviceProductName ?: "(none)"}")
+                            Text("Supported formats: ${result.supportedFormats.size}")
+                            result.supportedFormats.forEach { format ->
+                                Text("  ${format.sampleRate} Hz / encoding=${format.encoding} / ${format.channelCount} ch")
+                            }
+                        },
+                        onFailure = { e ->
+                            Text(
+                                "Probe threw: ${e::class.simpleName}",
+                                style = MaterialTheme.typography.titleMedium,
+                            )
+                            Text(
+                                e.message ?: "(no message)",
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                            Text(
+                                "Screenshot this for the result-doc.",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        },
+                    )
                 }
             }
         }
