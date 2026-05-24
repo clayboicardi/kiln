@@ -235,4 +235,79 @@ These are decision-relevant for Phase 2b Stream B-B3 (`BitPerfectAudioTrackPlaye
 
 ---
 
+## G2 Cross-Check Addendum: Codex triangulation (2026-05-24)
+
+> **Method:** Second `/multi:research` re-fan targeting the same prompt at `/tmp/phase-2b-g2-prompt.txt`, now with `-p claude,codex` (gemini findings already captured above). Fan was 1/2 (codex succeeded at 541s; claude timed out). Codex's response is substantive + web-grounded via Firecrawl — captured for cross-LLM triangulation of the earlier gemini-only findings. Min-panel-size refused synthesis (exit 6); raw codex response read directly. Run ID `20260524T062444Z-2551048`.
+
+### Cross-LLM convergence (gemini ↔ codex AGREE)
+
+| Topic | Both providers confirm |
+|---|---|
+| `AudioManager.getSupportedMixerAttributes(AudioDeviceInfo)` is canonical | Yes; no post-2026-01 semantic change. Codex adds AOSP docs were updated 2026-03-26 / 2026-04-10. |
+| BIT_PERFECT bypasses: SRC, software volume, DSP mixing, effects, format conversion | Both confirm. Codex adds: hardware controls volume because framework software volume is not provided. |
+| Bluetooth 100% unsupported (F28) | Both confirm. Codex frames as "Bluetooth is out of path: preferred mixer attributes are USB-only." |
+| Hot-plug requires listener (F27) | Both confirm. Codex adds: "listeners fire on set/clear/device disconnection." |
+| BIT_PERFECT is vendor-optional | Both confirm. Codex adds AOSP-level detail: requires `AUDIO_OUTPUT_FLAG_BIT_PERFECT` on a USB-routable dynamic mix port + AIDL Audio HAL. |
+| AudioTrack format must EXACTLY match `AudioMixerAttributes` (F5: probe necessary not sufficient) | Both confirm. Codex adds: "AOSP exact-profile matching supports that reading." |
+
+### ⚠ Cross-LLM DISAGREEMENT (decision-relevant)
+
+#### Disagreement #1 — Pixel 10 Pro XL vendor support
+
+| Provider | Position |
+|---|---|
+| **Gemini (2026-05-24 first attempt)** | "Pixel 10 Pro XL (Android 16) ships with bit-perfect HAL support **enabled** (Tensor G5). It is not vendor-optional/off." — sourced via Reddit audiophile communities, XDA |
+| **Codex (2026-05-24 second attempt)** | "**No public, confirmed Pixel/Samsung/Xiaomi matrix found**. For Pixel 10 Pro XL / Android 16 specifically: **no public empirical proof found; classify as unconfirmed, do not assume enabled**." — sourced via AF Digitale, AOSP framework code |
+| **Resolution** | **Codex's more conservative read wins** — gemini's claim was sourced from secondary aggregators (Reddit / XDA forums) without primary CDD attestation; codex went to AOSP framework source + did not find Pixel 10-specific evidence. **The (a)-only-advocate dissent risk (Pixel 10 vendor support unmeasured) is NOT resolved.** Capability probe (B0) remains the load-bearing empirical gate. |
+
+**Codex even cites a contradictory secondary source:** "A 2025-10-03 AF Digitale article reports Pixel Android 14/15 testing as **not fully operational in daily use**." This is consistent with the (a)-only-dissent that Pixel may probe-PASS at API level but fail in practice.
+
+#### Disagreement #2 — F26 silent-rate regression credibility
+
+| Provider | Position |
+|---|---|
+| **Gemini** | "Android 14 QPR3 introduced a regression where the system falsely reported bit-perfect success but output at the wrong sample rate, failing null-tests" — sourced via XDA |
+| **Codex** | "**I found no credible public null-test showing a device reports `BIT_PERFECT` but silently resamples anyway**; Pixel reports are better treated as 'native path not confirmed/operational,' not false-positive proof." |
+| **Resolution** | F26 framing should be SOFTENED. Codex's challenge is fair: gemini's source for the silent-rate-regression claim is forum-level (XDA), not a published null-test from a researcher. **The null-test rig (Item 15) is STILL essential** — but F26 should be reframed as "potential silent failure mode requiring empirical null-test verification" rather than "documented regression." |
+
+### NEW gotchas surfaced by codex (NOT in gemini's first pass)
+
+| ID | Failure mode (codex-sourced) | Stream B mitigation |
+|---|---|---|
+| **F29** | **Bit-perfect rejected when phone mode is not normal** OR when higher-priority use cases are active. App-side bit-perfect mode requests can fail silently if a call is active, music playback through another app holds the route, etc. | B3 must handle `setPreferredMixerAttributes` failure-return: surface to UI as "bit-perfect unavailable: device in use"; auto-retry on `OnPreferredMixerAttributesChangedListener` notifications when state recovers. |
+| **F30** | **Alarms / ringtones force reopen / reroute** — even when bit-perfect is engaged, an alarm or incoming-call ringtone can preempt the audio route and force the bit-perfect stream to be torn down. | B3 must handle the route-preemption via `OnAudioDeviceCallback` + auto-re-engage post-preemption (or surface "bit-perfect interrupted by system audio" to user; engagement state flow). |
+
+### F24/F25 status under codex triangulation
+
+- **F24 (90-Second Disconnect Bug):** Codex did NOT specifically confirm or deny. Codex's claim "no credible public null-test showing silent failure" doesn't directly address a hardware-disconnect bug. **Status: gemini-sourced only**; treat as 1-provider finding requiring empirical verification on Clay's actual Pixel 10 + dongle during B0-T4.
+- **F25 ("Silent" 88.2kHz Bug):** Codex did NOT specifically confirm or deny. **Status: gemini-sourced only**; treat as 1-provider finding. Conservative mitigation in plan stands (exclude non-48kHz-multiples from bit-perfect path for first ship).
+
+### Decision-relevance (updated)
+
+**The Phase 2b Option (a-prime) lock is STILL not changed,** because:
+
+- The lock already includes the B0 capability-probe gate as the single unlock condition — this protocol is exactly what handles the now-unresolved Pixel 10 vendor-support question
+- Codex confirms the API contract + bypass list + bluetooth incompatibility — the architectural decision (bit-perfect via AudioTrack + MIXER_BEHAVIOR_BIT_PERFECT) is sound
+- Codex adds 2 new failure modes (F29 + F30) but they're tactical scope-additions, not architectural changes
+
+**Updated probability estimate:** Codex's "unconfirmed, do not assume enabled" framing meaningfully shifts the prior on B0 probe outcome from "likely PROBE_PASS" (gemini-only) to "genuinely uncertain — could go either way." Clay should run B0 with the explicit awareness that PROBE_FAIL is a realistic outcome that triggers the (a)-only fallback per plan §3 G1 unlock condition.
+
+### Caveats remaining
+
+- **1/2 panel.** Codex-only this re-fan; claude timed out at 540s. The disagreement-resolution position above weighs codex's primary-source-grounded reads more heavily than gemini's secondary-source reads (Reddit/XDA), which is methodologically defensible but still 2-provider triangulation, not 3.
+- **F24, F25 remain gemini-only-sourced.** They should be treated as conservative-mitigation-worthy (no harm in handling them) but not as proven failure modes.
+- **F29, F30 are new codex-only-sourced findings.** Same caveat applies to them.
+
+### Status
+
+**CROSS-CHECK COMPLETE.** Gemini + codex have each contributed distinct findings. Net result:
+- Confirmed (both): API contract, bypass list, BT/USB exclusivity, hot-plug listener
+- Disputed (codex wins): Pixel 10 vendor support — UNCONFIRMED; capability probe (B0) is the empirical resolution
+- Disputed (codex softens gemini): F26 silent-rate regression — reframe as "potential failure mode" not "documented regression"
+- Single-provider (treat with caution + empirical-verify): F24 (90s disconnect), F25 (88.2kHz silent), F29 (phone-mode rejection), F30 (alarm-reopen)
+
+Plan §4 risk register amendment should integrate F24-F30 with these confidence markers.
+
+---
+
 End of research.
