@@ -27,6 +27,28 @@
             </intent-filter>
         </activity>
 
+        <!--
+            Debug-only entry point for Phase 2b Stream B-B0 bit-perfect
+            capability probe. Surfaces a second launcher icon "Kiln Bit-Perfect
+            Probe" so Clay can run BitPerfectCapabilityProbe on real hardware
+            (Pixel 10 Pro XL + USB-C-to-AUX dongle) and screenshot the result
+            for the empirical result-doc per plan
+            docs/superpowers/plans/2026-05-23-phase-2b-plan.md §7 step B0-T4.
+
+            TODO(post-B0): once a debug build variant exists, move this entry
+            (and the activity .kt file) into src/debug/ so the probe surface is
+            excluded from release APKs.
+        -->
+        <activity
+            android:name="com.clayworks.kiln.debug.BitPerfectProbeActivity"
+            android:exported="true"
+            android:label="Kiln Bit-Perfect Probe">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
     </application>
 
 </manifest>
