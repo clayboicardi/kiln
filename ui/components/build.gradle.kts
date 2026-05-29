@@ -57,6 +57,14 @@ kotlin {
             dependencies {
                 implementation(libs.compose.ui.test.junit4)
                 implementation(compose.desktop.currentOs)
+                // :audio:dsp needed at test compile time for FakePlatformPlayer
+                // stubs that implement PlatformPlayer's AudioProcessor surface
+                // (addAudioProcessor / removeAudioProcessor / processors flow).
+                // Phase 2b-prereq adds this dep — main code never references
+                // :audio:dsp directly (the PlatformPlayer signatures leak the
+                // type but it's compile-resolved only when implementations are
+                // written here).
+                implementation(project(":audio:dsp"))
             }
         }
     }

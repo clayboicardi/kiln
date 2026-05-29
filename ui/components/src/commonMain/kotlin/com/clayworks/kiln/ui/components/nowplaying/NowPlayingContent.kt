@@ -7,6 +7,7 @@
 
 package com.clayworks.kiln.ui.components.nowplaying
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -48,6 +49,7 @@ fun NowPlayingContent(
     onSkipNext: () -> Unit,
     onSkipPrevious: () -> Unit,
     modifier: Modifier = Modifier,
+    onTitleClick: (trackId: String) -> Unit = {},
 ) {
     val item = state.currentItem
     if (item == null) {
@@ -72,10 +74,14 @@ fun NowPlayingContent(
         verticalArrangement = Arrangement.SpaceEvenly,
     ) {
         // Title + subtitle (artist - album when subtitle is "artist — album")
+        // Title is clickable — taps push SpecSheetScreen onto the parent
+        // Navigator (Phase 2b-prereq). Default onTitleClick is a no-op so
+        // standalone NowPlayingContent rendering (e.g. previews) stays inert.
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(
                 text = item.title,
                 style = MaterialTheme.typography.headlineSmall,
+                modifier = Modifier.clickable { onTitleClick(item.itemId.value) },
             )
             Spacer(modifier = Modifier.height(8.dp))
             item.subtitle?.let { subtitle ->
