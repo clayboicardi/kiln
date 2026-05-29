@@ -1655,4 +1655,152 @@ The library `org.jetbrains.compose.components:components-resources-android` is p
 
 Spec amendment commit lands during MVP Session 2 work. Engram entry under `kiln/library-vetting/item-1-minsdk-23-revisit-2026-05-19`. Risk-playbook R4 implicitly resolved by this addendum (no separate R4 update needed; future maintenance can prune R4 when the playbook is refreshed).
 
+---
+
+## Item 13 addendum: Phase 2b sequencing resolved — Option (a-prime) locked (2026-05-23)
+
+> **Plan reference:** Pre-MVP Research §2.1 Item 13 originally locked the engine-swap-shaped `PlatformPlayer` boundary in MVP and downgraded Phase 2b Flights H+I from "must build" to "may build, soft-lock revisit at end of Phase 2a." This addendum records the resolution of that soft-lock revisit.
+
+### Status update
+
+**Original Item 13 status:** DECIDED with soft-lock-revisit at end of Phase 2a (Flights H+I in scope conditional on dogfood outcomes).
+
+**New status:** DECIDED with resolved soft-lock. Phase 2b LOCKED to Option (a-prime); Flights H+I (AAudio MMAP + WASAPI as originally scoped) DEFERRED to Phase 2c. New Android bit-perfect path via `AudioMixerAttributes.MIXER_BEHAVIOR_BIT_PERFECT` (a path not surfaced in the original 2026-05-18 research) added to Phase 2b in their place.
+
+### Soft-lock revisit method
+
+Triggered 2026-05-23 (Session 20) post-Phase-2a-Track-D ship. Sequence:
+
+1. **`/multi:research`** on current state of AAudio (Android 14+) + WASAPI (Windows 11 24H2) — fan to claude+codex (gemini quota-burned); 290s wall; output at [`./2026-05-23-phase-2b-aaudio-wasapi-research.md`](./2026-05-23-phase-2b-aaudio-wasapi-research.md). Codex (web-grounded via Firecrawl) surfaced the previously-unsurfaced `MIXER_BEHAVIOR_BIT_PERFECT` AudioTrack path as a distinct audiophile option separate from low-latency Oboe.
+2. **`/multi:decide`** between four sequencing options: (a) Spec Sheet UI only, (a-prime) Spec Sheet UI + Android BIT_PERFECT path, (b) Spec Sheet UI + Oboe-low-latency + WASAPI bundled, (c) Stream B only. Both providers (claude + codex) independently locked (a-prime); 112s wall. ADR engram at `architecture/kiln-phase-2b-sequencing`.
+3. **`/multi:falsify`** on Option (a-prime): 3/3 valid panel (claude+gemini+codex), 23 distinct failure modes ranked, 11 at H-by-H = 9. Falsify-integration decisions captured at engram `architecture/kiln-phase-2b-falsify-integration`.
+
+### Decision
+
+**Phase 2b LOCKED to Option (a-prime):**
+- Stream A: Spec Sheet UI per-track + library aggregate stats (~40-70hr — revised up from 30-50hr to include F10 format-fact backfill scanner pass)
+- Stream B: Android `MIXER_BEHAVIOR_BIT_PERFECT` path via `BitPerfectAudioTrackPlayerImpl` (~155-245hr — revised up from 50-90hr to integrate falsify findings including JNA-libFLAC software decode swap, null-test acceptance rig, AudioFocus/MediaSession/AudioDeviceCallback reimplementation, loudness-matched toggle, per-track sample-rate rebuild)
+- Phase 2b-prereq: Voyager Navigator scaffold + clickable title in NowPlayingTab + placeholder SpecSheetScreen (~10-20hr — added per F17 mitigation, since Stream A's tap-title route requires it)
+- **Total Phase 2b:** 205-335hr (vs original (a-prime) 80-140hr; vs originally-baselined bundled Phase 2b 205-310hr)
+
+**Deferred to Phase 2c:**
+- Windows WASAPI engine (~80-120hr) — original Flight I
+- Android Oboe low-latency path (~80-120hr) — original Flight H
+- Phase 2c trigger condition: Phase 2b shipped to main with all sub-flights green + dogfooded at least 30 days + cross-platform audiophile asymmetry causing friction in actual listening sessions
+
+### Rationale
+
+1. **Bit-perfect is audiophile-correct for Clay's FLAC-on-USB-DAC use case;** low-latency Oboe is the right answer for the wrong problem (games/realtime, not lossless listening). Codex's research surfaced this framing distinction; claude convergence locked it.
+2. **Per-phase scope honors Hard-Capped Operations + Bus-Factor-of-One.** Splitting Windows WASAPI into its own phase avoids C++/JNI/COM bridge complexity stacked against new UI work.
+3. **`PlatformPlayer` Engine-Swap-Shaped Boundary preserved** — `BitPerfectAudioTrackPlayerImpl` implements the existing interface verbatim. The original Item 13 abstraction earns its keep exactly as designed.
+4. **Falsify-integration costs accepted** (155-245hr Stream B vs original 50-90hr) because quality-first per Clay's 2026-05-23 directive: the "bit-perfect" claim becomes verifiable (Item 14 + Item 15) rather than locked as marketing copy.
+
+### Single unlock condition for Stream B
+
+`AudioManager.getSupportedMixerAttributes(usbDevice)` returns non-empty on Pixel 10 Pro XL + Clay's exact USB-C-to-AUX dongle, AS VERIFIED by the B0 capability-probe spike. If empty → drop Stream B from Phase 2b → ship Phase 2b-prereq + Phase 2b-A only → re-evaluate Stream B at Phase 2c kickoff.
+
+### Dissent preserved
+
+- **(b)-bundled advocate:** splitting leaves Windows on `javax.sound.sampled` until Phase 2c; cross-platform audiophile story incomplete this phase. Counter: clean phase boundaries beat narrative completeness; Phase 2c with Windows-only focus more likely to ship correctly than bundled-Phase-2b under the now-225-335hr scope.
+- **(a)-only advocate:** BIT_PERFECT is vendor-optional; Pixel 10 Pro XL support empirically unmeasured (2026-05-23). Mitigated by capability-probe spike (B0) as first Stream B task — if probe fails, ship (a)-only.
+- **Research-source caveat:** the `/multi:research` fan was codex-heavy (gemini quota-burned 2026-05-23). G2 gate added: gemini cross-check of BIT_PERFECT vendor-support landscape required before Stream B code lands.
+
+### Engram + commit cross-reference
+
+- Engram `architecture/kiln-phase-2b-sequencing` (decision lock 2026-05-23)
+- Engram `architecture/kiln-phase-2b-falsify-integration` (falsify-integration scope revisions 2026-05-23)
+- Plan doc: [`../superpowers/plans/2026-05-23-phase-2b-plan.md`](../superpowers/plans/2026-05-23-phase-2b-plan.md)
+- Research doc: [`./2026-05-23-phase-2b-aaudio-wasapi-research.md`](./2026-05-23-phase-2b-aaudio-wasapi-research.md)
+
+---
+
+## Item 14: Android JNA-libFLAC port (Phase 2b Stream B-B1)
+
+> **Plan reference:** [`../superpowers/plans/2026-05-23-phase-2b-plan.md`](../superpowers/plans/2026-05-23-phase-2b-plan.md) §6.B1 (Android JNA-libFLAC port). Falsify F1 mitigation — bit-perfect claim becomes verifiable.
+
+### Question
+
+Phase 2b Stream B's bit-perfect AudioTrack path requires a verifiably-correct FLAC decoder that bypasses Android's vendor MediaCodec FLAC implementation (which may resample/dither/quantize before PCM emerges, defeating the bit-perfect claim per falsify F1). Should the desktop JNA + Xiph libFLAC 1.5.0 bridge (already in production via `audio/playback/src/desktopMain/.../JvmFlacDecoderImpl.kt`) be ported to Android?
+
+### Method
+
+Falsify F1 surfaced the issue. Research doc "NEW PATH SURFACED" framed bit-perfect as a distinct goal from low-latency. Implementation decision flows from Clay's 2026-05-23 "quality priority" directive on RG-bypass — null-test acceptance gate (Item 15) requires a reference PCM to compare against, and the desktop JNA bridge already produces that reference.
+
+### Decision
+
+**Port the desktop JNA-libFLAC bridge to Android** (gated on G1 capability-probe PROBE_PASS).
+
+Implementation shape:
+- `audio/playback/src/androidMain/.../AndroidFlacDecoderImpl.kt` — mirror desktop API
+- libFLAC 1.5.0 BSD-3 `.so` binaries vendored at `audio/playback/src/androidMain/jniLibs/<abi>/libFLAC.so` for `arm64-v8a` / `armeabi-v7a` / `x86_64` / `x86` — sourced from xiph/flac NDK build OR known-Apache-2.0-or-BSD prebuilt package
+- JNA `Native.load("FLAC", LibFLAC::class.java)` resolves to `libFLAC.so` (CLAUDE.md gotcha applies: drop the `lib` prefix)
+- Reuse `JvmFlacDecodedStream.kt` callback model; consider moving to `commonMain` if compatible
+- Android-host tests against same FLAC fixtures used in `JvmFlacTrackAnalyzerTest.kt`
+- Performance gate: at least 5x realtime decode for 96 kHz on Pixel 10 Pro XL (escalation to NDK direct C linkage if insufficient)
+
+### License + dependencies
+
+- libFLAC 1.5.0 BSD-3-Clause (same as desktop; THIRD_PARTY_LICENSES.md already attributes)
+- JNA 5.17.0 (already pinned; existing on classpath via `audio/playback`)
+- No new top-level dependencies
+
+### Estimated effort
+
+~30-50 hr (one sub-flight of Phase 2b Stream B-B1).
+
+### Soft-lock revisit triggers
+
+- Performance gate fails (<5x realtime on Pixel 10 Pro XL) → escalate to NDK direct C linkage (an additional ~20-40hr; signals that the AudioTrack callback path's hot loop won't sustain real-time playback in pure-JVM)
+- libFLAC 1.5.0 turns out to have a published 1.6.x major-version-bumped successor with API churn between now and Stream B start → re-pin to 1.5.0 stable; do not chase
+
+### Status
+
+**CONDITIONALLY DECIDED.** Implementation begins at Phase 2b Stream B-B1 IFF G1 capability probe (B0) returns PROBE_PASS for any target format. If G1 returns PROBE_FAIL all formats, Stream B is dropped and this item becomes "may be revisited at Phase 2c kickoff."
+
+---
+
+## Item 15: DAC null-test acceptance rig (Phase 2b Stream B-B2)
+
+> **Plan reference:** [`../superpowers/plans/2026-05-23-phase-2b-plan.md`](../superpowers/plans/2026-05-23-phase-2b-plan.md) §6.B2 (Null-test acceptance rig). Falsify F1 + F5 mitigation — capability probe is necessary, not sufficient; external bit-identity verification is the sufficiency check.
+
+### Question
+
+`AudioManager.getSupportedMixerAttributes()` returning non-empty does NOT guarantee bit-identical output (per F5 — HAL/ALSA can silently resample even with probe-green). The bit-perfect claim therefore requires an out-of-tree verification: a reproducible DAC loopback rig that compares PCM emitted by the bit-perfect path against PCM decoded by the JNA-libFLAC reference (Item 14), confirming zero bit-error over a captured sample window.
+
+### Method
+
+Required by falsify-integration (Clay's 2026-05-23 "quality priority" directive made null-test acceptance non-negotiable for the bit-perfect claim). No prior tooling exists in the project.
+
+### Decision
+
+**Build a reproducible DAC loopback test harness** as part of Phase 2b Stream B-B2, before any production `BitPerfectAudioTrackPlayerImpl` code lands.
+
+Rig shape (deferred to flight-start detailed plan; outline only):
+
+- **Hardware:** USB audio loopback (Clay's USB-C-to-AUX dongle + external mic; OR external USB audio interface with hardware loopback such as a Focusrite Scarlett's MIDI-thru or a basic ALSA `hw:Loopback` device on a Linux laptop wired in)
+- **Capture path:** depends on hardware — options include (a) `AudioRecord` from the dongle's mic-in if applicable, (b) `arecord` on a Linux laptop with the dongle wired in, (c) PortAudio-based capture on a Windows desktop
+- **Comparison software:** small Python or Kotlin script aligns captured PCM with reference PCM (cross-correlation on a 1-second pilot tone), reports bit-error count over remaining test window
+- **Acceptance:** 0 bit errors over 30-second test window for each of {44.1/16, 48/16, 96/24, 192/24} (4 fixture files representing the library's empirical format distribution)
+- **Failure mode handling:** any non-zero bit-error for a format → UI rename "Bit-perfect output" to "Direct mixer output" for that format-class + user-visible warning. Per-format pass/fail surface
+- **Documentation:** `audio/playback/null-test-rig/README.md` — reproducible from a clean checkout
+
+### License + dependencies
+
+- New module (or scripts tree) `audio/playback/null-test-rig/` — Apache 2.0 per project default
+- Tooling deps depend on capture-path choice; all common ones (Python `scipy`/`numpy` for analysis; ALSA tooling on Linux; PortAudio on Windows) are permissively licensed (Apache 2.0 / BSD / PSF)
+- Hardware: existing Clay-owned dongle + potentially one external interface or measurement mic (sub-$100 — fits Lean Technical Scaling preference)
+
+### Estimated effort
+
+~10-20 hr (one sub-flight of Phase 2b Stream B-B2).
+
+### Soft-lock revisit triggers
+
+- Test rig cannot achieve 0 bit-errors for any format on the chosen hardware → blocks Stream B-B3 indefinitely; either swap hardware OR scope cut "bit-perfect" to "Direct mixer output" (acceptable degradation per F1 mitigation framing)
+- Capture path proves device-incompatible (e.g., Clay's dongle has no mic-in for loopback) → escalate to external USB audio interface purchase OR `hw:Loopback` on Linux laptop
+
+### Status
+
+**CONDITIONALLY DECIDED.** Implementation begins at Phase 2b Stream B-B2 IFF G1 capability probe (B0) returns PROBE_PASS for any target format AND Item 14 JNA-libFLAC port produces working reference PCM. If either prerequisite fails, this item is deferred/dropped accordingly.
+
 
