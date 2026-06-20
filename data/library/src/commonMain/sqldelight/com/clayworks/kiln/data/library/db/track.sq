@@ -57,7 +57,14 @@ CREATE TABLE track (
     -- Added v2→v3 via migrations/2.sqm; SQLite's ALTER TABLE ADD COLUMN
     -- always appends to the END of the table, so this column MUST stay
     -- last in CREATE TABLE for verifyMigrations to pass.
-    has_known_mtime          INTEGER NOT NULL DEFAULT 1
+    has_known_mtime          INTEGER NOT NULL DEFAULT 1,
+
+    -- NULL = Android format facts not yet verified via MediaMetadataRetriever
+    -- backfill (F10). Set to System.currentTimeMillis() once a later backfill
+    -- pass has populated sample_rate_hz/bit_depth/channels/bitrate_kbps/has_embedded_art.
+    -- Desktop scans set this at insert (JVM tag-read already authoritative).
+    -- Added v3→v4 via migrations/3.sqm; MUST stay last (ALTER ADD COLUMN appends).
+    metadata_backfilled_at_ms INTEGER DEFAULT NULL
 );
 
 -- All track-list indexes are PARTIAL — `WHERE deleted_at_ms IS NULL` is part

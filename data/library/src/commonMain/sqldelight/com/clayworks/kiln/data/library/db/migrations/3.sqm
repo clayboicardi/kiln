@@ -1,0 +1,5 @@
+-- v3 → v4: add metadata_backfilled_at_ms to track. NULL on existing rows =
+-- "Android format facts unverified" → a later backfill pass will fill them and
+-- stamp this column. Desktop rows are stamped at insert.
+-- File named 3.sqm (SOURCE version v3), per SQLDelight convention.
+ALTER TABLE track ADD COLUMN metadata_backfilled_at_ms INTEGER DEFAULT NULL;
