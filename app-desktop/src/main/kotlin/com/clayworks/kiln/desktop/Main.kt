@@ -28,6 +28,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -50,6 +51,8 @@ import com.clayworks.kiln.library.settings.ReplayGainMode
 import com.clayworks.kiln.library.settings.ThemeMode
 import com.clayworks.kiln.ui.components.home.KilnHomeScreen
 import com.clayworks.kiln.ui.components.settings.BackfillUiState
+import com.clayworks.kiln.ui.components.specsheet.LocalLibraryStats
+import com.clayworks.kiln.ui.components.specsheet.LocalPlayer
 import com.clayworks.kiln.ui.components.settings.SettingsScreen
 import com.clayworks.kiln.ui.components.settings.SettingsState
 import com.clayworks.kiln.ui.theme.KilnTheme
@@ -110,11 +113,20 @@ fun main() {
                             onClose = { showSettings = false },
                         )
                     } else {
-                        KilnHomeScreen(
-                            musicSource = graph.musicSource,
-                            player = graph.player,
-                            onOpenSettings = { showSettings = true },
-                        )
+                        // Provide the non-serializable runtime deps to the inner
+                        // Voyager Navigators' Screens (NowPlaying + Spec Sheet)
+                        // via CompositionLocals — they can't ride in Screen
+                        // constructors (Voyager Screen : Serializable).
+                        CompositionLocalProvider(
+                            LocalLibraryStats provides graph.libraryStats,
+                            LocalPlayer provides graph.player,
+                        ) {
+                            KilnHomeScreen(
+                                musicSource = graph.musicSource,
+                                player = graph.player,
+                                onOpenSettings = { showSettings = true },
+                            )
+                        }
                     }
                 }
             }

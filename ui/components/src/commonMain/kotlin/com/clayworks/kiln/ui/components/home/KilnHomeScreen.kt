@@ -44,7 +44,10 @@ fun KilnHomeScreen(
     onOpenSettings: () -> Unit,
 ) {
     val libraryTab = remember(musicSource, player) { LibraryTab(musicSource, player) }
-    val nowPlayingTab = remember(player) { NowPlayingTab(player) }
+    // NowPlayingTab takes no constructor dependency — its inner Screens read the
+    // PlatformPlayer from LocalPlayer (provided at the app root). See A5 /
+    // LocalLibraryStats.kt for the Voyager Screen-serialization rationale.
+    val nowPlayingTab = remember { NowPlayingTab() }
     val searchTab = remember(musicSource, player) { SearchTab(musicSource, player) }
 
     TabNavigator(libraryTab) {

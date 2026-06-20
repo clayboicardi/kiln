@@ -23,14 +23,12 @@ import cafe.adriel.voyager.navigator.Navigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import cafe.adriel.voyager.navigator.tab.Tab
 import cafe.adriel.voyager.navigator.tab.TabOptions
-import com.clayworks.kiln.audio.playback.PlatformPlayer
 import com.clayworks.kiln.audio.playback.PlayerState
+import com.clayworks.kiln.ui.components.specsheet.LocalPlayer
 import com.clayworks.kiln.ui.components.specsheet.SpecSheetScreen
 import kotlinx.coroutines.launch
 
-class NowPlayingTab(
-    private val player: PlatformPlayer,
-) : Tab {
+class NowPlayingTab : Tab {
 
     override val options: TabOptions
         @Composable
@@ -42,7 +40,7 @@ class NowPlayingTab(
 
     @Composable
     override fun Content() {
-        Navigator(NowPlayingHomeScreen(player))
+        Navigator(NowPlayingHomeScreen())
     }
 }
 
@@ -50,14 +48,17 @@ class NowPlayingTab(
  * Root screen of the NowPlayingTab's inner Navigator. Owns the player-flow
  * collection + transport wiring. Tap-title pushes [SpecSheetScreen] onto
  * the parent [Navigator] stack via [LocalNavigator].
+ *
+ * Holds no dependency in its constructor — PlatformPlayer is non-serializable
+ * (native ExoPlayer / JavaSound handles) and Voyager serializes the back-stack,
+ * so the player is read from [LocalPlayer] at composition time instead.
  */
-class NowPlayingHomeScreen(
-    private val player: PlatformPlayer,
-) : Screen {
+class NowPlayingHomeScreen : Screen {
 
     @Composable
     override fun Content() {
         val navigator = LocalNavigator.currentOrThrow
+        val player = LocalPlayer.current
         val playerState by player.state.collectAsState()
         val queue by player.queue.collectAsState()
         val positionMs by player.positionMs.collectAsState()
