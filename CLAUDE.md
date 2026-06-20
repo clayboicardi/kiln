@@ -4,7 +4,7 @@
 
 Kiln by Clayworks is a from-scratch Android + Windows Desktop music player. Personal-use audiophile player + developer portfolio piece. Owner is Clay Haworth (clayboicardi on GitHub) — analytically strong power user who directs AI to build.
 
-**Status as of 2026-05-19 (post-Session-9):** MVP Sessions 5 + 6 + 7 complete. H6 (JNA libFLAC bridge: vendoring + binding + STREAMINFO + decode + 24-bit packing + seek + JvmFlacDecoderImpl) + H5 (JavaSoundPlayerImpl + DesktopAppGraph player wiring) shipped. Both DI graphs (Android + Desktop) now expose the full chain including PlatformPlayer. **48 tests green** (25 :data:library + 23 :audio:playback). **Empirical FLAC smoke vs. Clay's D:\tiddl library: 10/10 decoded successfully.** Pre-MVP gate cleared earlier this day. Repo public at https://github.com/clayboicardi/kiln; CI green on every push. **Next: pick up at [`docs/sessions/2026-05-19-session-10-handoff.md`](docs/sessions/2026-05-19-session-10-handoff.md)** (H7 single-button play + H8 Pixel install — the vertical-slice milestone, ~2-4 hrs).
+**Status as of 2026-06-19 (post-Session-21):** MVP + Phase 2a shipped. **Phase 2b underway.** The **B0 bit-perfect capability gate PASSED** on Pixel 10 Pro XL — Tensor G5 (Android 17/API 37) exposes `MIXER_BEHAVIOR_BIT_PERFECT` at 48 kHz 16/24-bit via a generic USB-C-to-3.5mm dongle. The **48 kHz ceiling is the cheap dongle's DAC, not the phone** — a proper hi-res USB DAC re-probe is required before locking the B2 null-test matrix. This resolves the G2 Gemini-vs-Codex dispute (Gemini correct) and greenlights Stream B (probe result merged as PR #25, doc at `docs/decisions/2026-06-19-phase-2b-bitperfect-probe-result.md`). **Phase 2b-A (Spec Sheet UI + Android format-fact backfill): DATA LAYER COMPLETE + reviewed-clean** on branch `phase-2b/a-spec-sheet` (A0 schema v3→v4 `metadata_backfilled_at_ms`; A1 read model — `SpecSheetEntry`/`LibraryAggregate`/`LibraryStatsSource`; A2 `AndroidFormatFactBackfill` via MediaExtractor+MMR; A3 scan-end+DI wiring) — no PR yet, flight unfinished. **Next: the 2b-A UI** — pick up at [`docs/sessions/2026-06-19-session-21-closeout-handoff.md`](docs/sessions/2026-06-19-session-21-closeout-handoff.md) (A4 `SpecSheetContent` + A5 nav wiring + A6 compose tests & Pixel smoke; Clay drives the visuals via Claude Design first). Repo public at https://github.com/clayboicardi/kiln; CI green on every push.
 
 ## Quick Navigation
 
@@ -12,7 +12,7 @@ Kiln by Clayworks is a from-scratch Android + Windows Desktop music player. Pers
 
 | If you're being asked to... | Read this first |
 |---|---|
-| Pick up the next session's work | `docs/sessions/2026-05-19-session-10-handoff.md` (2 pending items, H7 vertical-slice + H8 Pixel install) |
+| Pick up the next session's work | `docs/sessions/2026-06-19-session-21-closeout-handoff.md` (Phase 2b-A UI: A4 SpecSheetContent + A5 nav wiring + A6 tests/Pixel smoke; on branch `phase-2b/a-spec-sheet`) |
 | Understand the design contract | `docs/superpowers/specs/2026-05-18-kiln-rebuild-design.md` |
 | Plan or sequence work | `docs/superpowers/plans/2026-05-18-kiln-execution-plan.md` |
 | Continue Pre-MVP Research | `docs/decisions/2026-05-18-library-vetting.md` (append-only log) |
@@ -53,6 +53,7 @@ This project replaces JAMZ!!! at `C:\Users\chawo\Projects\JAMZ!!!\`. JAMZ was a 
 
 One-liners that would have prevented friction this past session. Skim before scaffold/build work.
 
+- **Set `JAVA_HOME` to Temurin JDK 21 before any `./gradlew` invocation.** Gradle 9.5.1 runs its daemon on `JAVA_HOME`'s JDK; **JDK 25 is unsupported as the daemon JVM and WEDGES the build** — `gradle.properties` sets `kotlin.daemon.useFallbackStrategy=false`, so the Kotlin daemon hangs indefinitely instead of failing fast (observed 2026-06-19: a 91-min hang, ~3 GB RSS, zero output). Symptom signature: an orphaned `java.exe` at ~3 GB running >5 min with no build output. JDK 21 lives at `C:\Program Files\Eclipse Adoptium\jdk-21.0.10.7-hotspot` (the project pins `jvmToolchain(21)` for *compilation*, but that does NOT govern the daemon JVM). User-scope `JAVA_HOME` was set to JDK 21 on 2026-06-19, but already-running session shells may inherit the prior env — prefix gradle commands explicitly within a session. **Git Bash:** `JAVA_HOME="/c/Program Files/Eclipse Adoptium/jdk-21.0.10.7-hotspot" ./gradlew ...`. **PowerShell** (the primary shell on Cortex): `$env:JAVA_HOME = 'C:\Program Files\Eclipse Adoptium\jdk-21.0.10.7-hotspot'; .\gradlew ...`. **CMD:** `set "JAVA_HOME=C:\Program Files\Eclipse Adoptium\jdk-21.0.10.7-hotspot" && gradlew ...`.
 - AGP 9.0 dropped `org.jetbrains.kotlin.android` plugin — Kotlin support is built-in to AGP. Don't re-add it.
 - AGP 9.0 + KMP requires `com.android.kotlin.multiplatform.library` (NOT `com.android.library`) for `:audio:*`, `:data:*`, `:ui:*` KMP modules. New DSL: `kotlin { androidLibrary { compileSdk = 36; minSdk = 23; namespace = ... } }`.
 - Gradle 9.x: `include(":foo")` REQUIRES `./foo/` directory to exist at settings.gradle.kts evaluation. Empty dirs with `.gitkeep` work; non-existent dirs fail the build.
