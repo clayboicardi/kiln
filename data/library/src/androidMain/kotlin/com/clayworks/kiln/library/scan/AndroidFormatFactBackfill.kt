@@ -80,30 +80,37 @@ class AndroidFormatFactBackfill(
                 .executeAsList()
             if (page.isEmpty()) break
 
-            for (row in page) {
-                val facts = readFormatFacts(row)
-                val nowMs = System.currentTimeMillis()
-                if (facts != null) {
-                    db.trackQueries.updateTrackFormatFacts(
-                        sampleRateHz = facts.sampleRateHz,
-                        bitDepth = facts.bitDepth,
-                        channels = facts.channels,
-                        bitrateKbps = facts.bitrateKbps,
-                        hasEmbeddedArt = if (facts.hasEmbeddedArt) 1L else 0L,
-                        backfilledAtMs = nowMs,
-                        id = row.id,
-                    )
-                    updated++
-                } else {
-                    // File missing / unsupported / no audio track / extractor
-                    // threw. Stamp it anyway so it leaves the IS NULL worklist
-                    // (loop-safety, F-pattern).
-                    db.trackQueries.markBackfilledNoMetadata(
-                        backfilledAtMs = nowMs,
-                        id = row.id,
-                    )
+            // Read native format facts OUTSIDE any transaction — MediaExtractor /
+            // MMR I/O must not hold the SQLite write lock. Then batch the whole
+            // page's writes into ONE db.transaction so SQLite fsyncs once per page
+            // (200 rows) instead of once per row; a large-library backfill would
+            // otherwise spend minutes on per-row autocommit overhead.
+            val pageFacts = page.map { row -> row to readFormatFacts(row) }
+            val nowMs = System.currentTimeMillis()
+            db.transaction {
+                for ((row, facts) in pageFacts) {
+                    if (facts != null) {
+                        db.trackQueries.updateTrackFormatFacts(
+                            sampleRateHz = facts.sampleRateHz,
+                            bitDepth = facts.bitDepth,
+                            channels = facts.channels,
+                            bitrateKbps = facts.bitrateKbps,
+                            hasEmbeddedArt = if (facts.hasEmbeddedArt) 1L else 0L,
+                            backfilledAtMs = nowMs,
+                            id = row.id,
+                        )
+                    } else {
+                        // File missing / unsupported / no audio track / extractor
+                        // threw. Stamp it anyway so it leaves the IS NULL worklist
+                        // (loop-safety, F-pattern).
+                        db.trackQueries.markBackfilledNoMetadata(
+                            backfilledAtMs = nowMs,
+                            id = row.id,
+                        )
+                    }
                 }
             }
+            updated += pageFacts.count { it.second != null }
         }
         updated
     }
@@ -200,6 +207,11 @@ class AndroidFormatFactBackfill(
                 .extractMetadata(MediaMetadataRetriever.METADATA_KEY_BITRATE)
                 ?.toLongOrNull()
             val bitrateKbps = if (bitrate != null && bitrate > 0) bitrate / 1000 else null
+            // embeddedPicture loads the full artwork byte[] per track. There is no
+            // cheaper "has embedded album art" metadata key on MediaMetadataRetriever
+            // (METADATA_KEY_HAS_IMAGE is for still-image tracks, not cover art). The
+            // allocation is transient per row — freed before the next via the
+            // per-row retriever.release() in finally — so it does not accumulate.
             val hasEmbeddedArt = retriever.embeddedPicture != null
             bitrateKbps to hasEmbeddedArt
         } catch (e: Exception) {
