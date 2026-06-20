@@ -242,6 +242,46 @@ INNER JOIN artist     ON track.artist_id     = artist.id
 LEFT JOIN artist AS album_artist ON album.artist_id = album_artist.id
 WHERE track.deleted_at_ms IS NULL;
 
+-- Phase 2b-A (A2): Android MediaMetadataRetriever format-fact backfill (F10).
+-- Worklist of live rows whose Android format facts haven't been verified yet
+-- (metadata_backfilled_at_ms IS NULL). Existing sample_rate_hz / bit_depth /
+-- channels are projected so the backfill can carry the NOT-NULL columns
+-- through unchanged when MMR can't supply them (MMR exposes bitrate + embedded
+-- art reliably, but NOT sample-rate / bit-depth / channel-count — see
+-- SafTagReader). No OFFSET: every processed row is stamped, so it leaves the
+-- IS NULL worklist immediately and a plain LIMIT loop terminates.
+selectTracksNeedingBackfill:
+SELECT id, file_path, sample_rate_hz, bit_depth, channels
+FROM track
+WHERE metadata_backfilled_at_ms IS NULL
+  AND deleted_at_ms IS NULL
+LIMIT :limit;
+
+-- Count for the backfill worklist — drives the loop-drain assertion + progress.
+countTracksNeedingBackfill:
+SELECT COUNT(*) FROM track
+WHERE metadata_backfilled_at_ms IS NULL
+  AND deleted_at_ms IS NULL;
+
+-- Persist MMR-verified format facts + stamp the row out of the worklist.
+-- sample_rate_hz / channels are NOT NULL, so the backfill passes through the
+-- existing values when MMR doesn't override them (no fabrication).
+updateTrackFormatFacts:
+UPDATE track
+SET sample_rate_hz = :sampleRateHz,
+    bit_depth      = :bitDepth,
+    channels       = :channels,
+    bitrate_kbps   = :bitrateKbps,
+    has_embedded_art = :hasEmbeddedArt,
+    metadata_backfilled_at_ms = :backfilledAtMs
+WHERE id = :id;
+
+-- Stamp a row the backfill couldn't read (file missing / MMR threw / no audio
+-- header). Leaves format columns untouched; the stamp alone drains the row
+-- from the IS NULL worklist so the loop can't spin on it forever.
+markBackfilledNoMetadata:
+UPDATE track SET metadata_backfilled_at_ms = :backfilledAtMs WHERE id = :id;
+
 markPlayed:
 UPDATE track
 SET play_count = play_count + 1,
