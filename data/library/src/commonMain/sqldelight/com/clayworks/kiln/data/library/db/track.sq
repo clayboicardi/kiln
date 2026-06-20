@@ -195,6 +195,13 @@ SET album_id = ?,
     replay_gain_track_peak = ?,
     replay_gain_album_peak = ?,
     has_embedded_art = ?,
+    -- Reset the Android format-fact backfill stamp: a changed file just had its
+    -- format columns rewritten (the Android scanner writes 44100/2/null
+    -- placeholders above), so it must re-enter the backfill worklist
+    -- (metadata_backfilled_at_ms IS NULL) and be re-verified via MediaExtractor at
+    -- scan-end. Harmless no-op on desktop — the backfill is Android-only and the
+    -- desktop scanner already wrote authoritative facts into the columns above.
+    metadata_backfilled_at_ms = NULL,
     art_path = ?,
     date_modified_ms = :modifiedAtMs,
     last_scanned_ms = :scannedAtMs,
