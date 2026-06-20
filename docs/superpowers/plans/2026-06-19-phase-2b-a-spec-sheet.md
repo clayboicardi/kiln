@@ -398,24 +398,34 @@ git commit -m "phase-2b-a(A4): SpecSheetContent stateless UI + format helpers"
 
 ## Task A5: SpecSheetScreen data wiring + thread the stats source through nav
 
+> **⚠️ Voyager `Screen : Serializable` constraint (gemini-code-assist review, PR #26 — this SUPERSEDES the earlier "thread the source through Screen constructors" design).** Voyager's `Screen` extends `java.io.Serializable` on Android; the navigator saves its stack across process death / config change by serializing the Screen objects. A `Screen` that holds a non-serializable dependency (`LibraryStatsSource` → `KilnDatabase` + `CoroutineDispatcher`) throws `NotSerializableException`. So `SpecSheetScreen` must stay **serializable-only (`trackId: String`)** and obtain `LibraryStatsSource` from a Compose `CompositionLocal`. **The existing `NowPlayingHomeScreen(player: PlatformPlayer)` has the SAME latent bug** — it never crashed in `NowPlayingNavigationTest` because a Compose UI test doesn't trigger process-death serialization. Migrate it to a `LocalPlayer` CompositionLocal in this task.
+
 **Files:**
-- Modify: `…/specsheet/SpecSheetScreen.kt` (take `LibraryStatsSource`, collect flows, render `SpecSheetContent`)
-- Modify: `…/nowplaying/NowPlayingTab.kt` (`NowPlayingTab(player, statsSource)` → `NowPlayingHomeScreen(player, statsSource)` → `SpecSheetScreen(trackId, statsSource)`)
-- Modify: app root construction of `NowPlayingTab(player)` in BOTH apps (discover sites: `grep -rn "NowPlayingTab(" app-android app-desktop ui`)
+- Create: `…/specsheet/LocalLibraryStats.kt` (+ a `LocalPlayer` CompositionLocal, here or in `nowplaying/`)
+- Modify: `…/specsheet/SpecSheetScreen.kt` (hold only `trackId`; read `LocalLibraryStats.current`; collect flows; render `SpecSheetContent`)
+- Modify: `…/nowplaying/NowPlayingTab.kt` + `NowPlayingHomeScreen` (read `LocalPlayer.current` instead of constructor `player`)
+- Modify: app-root construction in BOTH apps (discover: `grep -rn "NowPlayingTab(" app-android app-desktop ui`)
 
 **Interfaces:**
-- Consumes: A1 `LibraryStatsSource`. `SpecSheetScreen` constructor becomes `SpecSheetScreen(trackId: String, statsSource: LibraryStatsSource)`.
+- Consumes: A1 `LibraryStatsSource`. `SpecSheetScreen` constructor STAYS **`SpecSheetScreen(trackId: String)`** (serializable-only).
 
-- [ ] **Step 1: Rewrite `SpecSheetScreen.Content()`** to collect:
+- [ ] **Step 1: Define the CompositionLocals** (`…/specsheet/LocalLibraryStats.kt`):
+
+```kotlin
+val LocalLibraryStats = staticCompositionLocalOf<LibraryStatsSource> { error("LocalLibraryStats not provided") }
+val LocalPlayer = staticCompositionLocalOf<PlatformPlayer> { error("LocalPlayer not provided") }
+```
+
+- [ ] **Step 2: Rewrite `SpecSheetScreen`** — hold only `trackId`, read the source from the CompositionLocal:
 
 ```kotlin
 class SpecSheetScreen(
-    private val trackId: String,
-    private val statsSource: LibraryStatsSource,
+    private val trackId: String,   // serializable-only — NO dependency in the ctor (Voyager Screen : Serializable)
 ) : Screen {
     @Composable
     override fun Content() {
         val navigator = LocalNavigator.currentOrThrow
+        val statsSource = LocalLibraryStats.current
         val entry by statsSource.specSheetEntry(trackId).collectAsState(initial = null)
         val aggregate by statsSource.aggregateStats().collectAsState(initial = null)
         val state = when {
@@ -426,10 +436,9 @@ class SpecSheetScreen(
     }
 }
 ```
-> `:ui:components` already deps `:data:library` (build.gradle.kts:29) and consumes a `Flow` (no direct `Query.asFlow()`), so **no `libs.bundles.sqldelight.common` add is needed** here.
+Push it dependency-free: `navigator.push(SpecSheetScreen(trackId))`. `:ui:components` already deps `:data:library` and consumes a `Flow`, so **no `libs.bundles.sqldelight.common` add is needed**.
 
-- [ ] **Step 2: Thread `statsSource`** through `NowPlayingTab` → `NowPlayingHomeScreen` → `navigator.push(SpecSheetScreen(trackId, statsSource))`. Add the constructor params (mirror how `player` is threaded).
-- [ ] **Step 3: Update the construction sites.** `LocalLibrarySource` implements `LibraryStatsSource`; both graphs already expose `musicSource: MusicSource`. Add `abstract val libraryStats: LibraryStatsSource` to both graphs (provide the same `LocalLibrarySource` instance), and pass it where `NowPlayingTab(player)` is built.
+- [ ] **Step 3: Provide the CompositionLocals at the app root + migrate NowPlaying.** Where `NowPlayingTab(...)` is constructed (both apps), wrap the navigator content in `CompositionLocalProvider(LocalLibraryStats provides graph.libraryStats, LocalPlayer provides graph.player) { ... }`. Add `abstract val libraryStats: LibraryStatsSource` to both DI graphs (same `LocalLibrarySource` instance). Change `NowPlayingTab`/`NowPlayingHomeScreen` to read `LocalPlayer.current` instead of taking `player` in their constructors — so both Screens become serializable-safe. Update `NowPlayingNavigationTest` to provide the CompositionLocals.
 - [ ] **Step 4: Build both apps:**
 
 ```
