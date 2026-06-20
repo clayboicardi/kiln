@@ -198,10 +198,14 @@ class AndroidFormatFactBackfillTest {
                 db = db,
                 ioDispatcher = Dispatchers.Unconfined,
             )
-            runBlocking { backfill.runOnce() }
+            val updated = runBlocking { backfill.runOnce() }
 
-            // The unreadable file can't be opened by MMR, so it is stamped via
-            // markBackfilledNoMetadata and drops out of the IS NULL worklist.
+            // The unreadable file can't be opened by MediaExtractor/MMR, so the
+            // row is stamped via markBackfilledNoMetadata — NOT updateTrackFormatFacts.
+            // updated == 0 proves the row was honestly marked no-metadata, not
+            // falsely "corrected" with fabricated facts.
+            assertEquals(0, updated)
+            // …and it drops out of the IS NULL worklist, so the loop drains.
             assertEquals(0L, db.trackQueries.countTracksNeedingBackfill().executeAsOne())
         } finally {
             driver.close()

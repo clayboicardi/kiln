@@ -242,16 +242,16 @@ INNER JOIN artist     ON track.artist_id     = artist.id
 LEFT JOIN artist AS album_artist ON album.artist_id = album_artist.id
 WHERE track.deleted_at_ms IS NULL;
 
--- Phase 2b-A (A2): Android MediaMetadataRetriever format-fact backfill (F10).
--- Worklist of live rows whose Android format facts haven't been verified yet
--- (metadata_backfilled_at_ms IS NULL). Existing sample_rate_hz / bit_depth /
--- channels are projected so the backfill can carry the NOT-NULL columns
--- through unchanged when MMR can't supply them (MMR exposes bitrate + embedded
--- art reliably, but NOT sample-rate / bit-depth / channel-count — see
--- SafTagReader). No OFFSET: every processed row is stamped, so it leaves the
--- IS NULL worklist immediately and a plain LIMIT loop terminates.
+-- Phase 2b-A (A2): Android format-fact backfill worklist (F10).
+-- Live rows whose Android format facts haven't been verified yet
+-- (metadata_backfilled_at_ms IS NULL). Only id + file_path are projected: the
+-- backfill re-reads sample-rate + channels authoritatively from the file via
+-- MediaExtractor (the scanner's 44100/2 placeholders in those columns are
+-- exactly what the backfill corrects), so the stale DB values are deliberately
+-- NOT carried into the pass. No OFFSET: every processed row is stamped, so it
+-- leaves the IS NULL worklist immediately and a plain LIMIT loop terminates.
 selectTracksNeedingBackfill:
-SELECT id, file_path, sample_rate_hz, bit_depth, channels
+SELECT id, file_path
 FROM track
 WHERE metadata_backfilled_at_ms IS NULL
   AND deleted_at_ms IS NULL
