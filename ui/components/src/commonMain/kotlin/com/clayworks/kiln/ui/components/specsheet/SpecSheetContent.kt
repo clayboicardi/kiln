@@ -33,7 +33,10 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import com.clayworks.kiln.library.source.LibraryAggregate
 import com.clayworks.kiln.library.source.SpecSheetEntry
-import java.time.Instant
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.TimeZone
 
 @Composable
 fun SpecSheetContent(
@@ -170,14 +173,16 @@ private fun formatKhz(sampleRateHz: Int): String =
         (sampleRateHz / 1000).toString()
     } else {
         // JVM-only String.format is fine — :ui:components targets JVM + Android only.
-        String.format("%.1f", sampleRateHz / 1000.0)
+        // Locale.US pins the decimal separator to '.' (a comma-decimal default
+        // locale would render "44,1 kHz" and break the documented format + tests).
+        String.format(Locale.US, "%.1f", sampleRateHz / 1000.0)
     }
 
 /** "+0.3 dB / peak 0.998", "—" when the dB value is absent; peak appended only when present. */
 private fun formatReplayGain(db: Double?, peak: Double?): String {
     if (db == null) return "—"
-    val gain = "${String.format("%+.1f", db)} dB"
-    return if (peak != null) "$gain / peak ${String.format("%.3f", peak)}" else gain
+    val gain = "${String.format(Locale.US, "%+.1f", db)} dB"
+    return if (peak != null) "$gain / peak ${String.format(Locale.US, "%.3f", peak)}" else gain
 }
 
 /** Humanized byte count — B / KB / MB / GB, 1 decimal above bytes (1024-based). */
@@ -190,12 +195,23 @@ private fun formatBytes(bytes: Long): String {
         value /= 1024.0
         unitIndex++
     }
-    return "${String.format("%.1f", value)} ${units[unitIndex]}"
+    return "${String.format(Locale.US, "%.1f", value)} ${units[unitIndex]}"
 }
 
-/** ISO-8601 UTC instant, or "unknown" when the provider didn't report an mtime. */
-private fun formatMtime(fileMtimeMs: Long, hasKnownMtime: Boolean): String =
-    if (hasKnownMtime) Instant.ofEpochMilli(fileMtimeMs).toString() else "unknown"
+/**
+ * ISO-8601 UTC, or "unknown" when the provider didn't report an mtime. Uses
+ * SimpleDateFormat rather than java.time.Instant: java.time requires API 26, the
+ * Android minSdk is 23, and core-library desugaring is NOT enabled — so Instant
+ * would crash (NoClassDefFoundError) on API 23-25. SimpleDateFormat works on all
+ * API levels and on the desktop JVM.
+ */
+private fun formatMtime(fileMtimeMs: Long, hasKnownMtime: Boolean): String {
+    if (!hasKnownMtime) return "unknown"
+    val format = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply {
+        timeZone = TimeZone.getTimeZone("UTC")
+    }
+    return format.format(Date(fileMtimeMs))
+}
 
 /** 0.0..1.0 fraction → integer percent, e.g. 0.873 → "87%". */
 private fun formatCoverage(fraction: Double): String =
