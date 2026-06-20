@@ -88,6 +88,30 @@ selectById:
 SELECT * FROM track
 WHERE id = ? AND deleted_at_ms IS NULL;
 
+-- Phase 2b-A (A1): per-track Spec Sheet read model. Full-row select so the
+-- mapper can surface every format/RG/file fact. Live rows only.
+selectSpecSheetEntry:
+SELECT * FROM track WHERE id = ? AND deleted_at_ms IS NULL;
+
+-- Phase 2b-A (A1): library aggregate totals for the Spec Sheet stats header.
+-- SUM(...) columns are nullable (Long?) per SQLDelight — handle with ?: 0L.
+aggregateTotals:
+SELECT
+    COUNT(*)                                                          AS total_tracks,
+    COALESCE(SUM(file_size_bytes), 0)                                 AS total_bytes,
+    SUM(CASE WHEN replay_gain_track_db IS NOT NULL THEN 1 ELSE 0 END) AS rg_covered,
+    SUM(CASE WHEN has_known_mtime = 1        THEN 1 ELSE 0 END)        AS known_mtime
+FROM track
+WHERE deleted_at_ms IS NULL;
+
+-- Phase 2b-A (A1): per-codec track counts for the aggregate codec breakdown.
+aggregateCodecCounts:
+SELECT codec, COUNT(*) AS cnt
+FROM track
+WHERE deleted_at_ms IS NULL
+GROUP BY codec
+ORDER BY cnt DESC;
+
 selectByAlbum:
 -- COALESCE handles NULL disc_number / track_number gracefully. In SQLite,
 -- NULL sorts BEFORE non-NULL in ASC order, which would put untagged tracks

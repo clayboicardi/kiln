@@ -4,6 +4,7 @@
 
 package com.clayworks.kiln.library.source
 
+import com.clayworks.kiln.data.library.db.AggregateTotals
 import com.clayworks.kiln.data.library.db.Album
 import com.clayworks.kiln.data.library.db.Artist
 import com.clayworks.kiln.data.library.db.Playlist
@@ -90,6 +91,43 @@ internal fun Track.toPlayable(sourceId: SourceId): Playable = Playable(
     },
     cachedLocally = true,
 )
+
+// Phase 2b-A (A1): per-track Spec Sheet read model. Extension on the generated
+// `Track` row — maps every format/RG/file column the Spec Sheet surfaces.
+// `has_embedded_art` / `has_known_mtime` are INTEGER (0/1) columns → Boolean.
+internal fun Track.toSpecSheetEntry(): SpecSheetEntry = SpecSheetEntry(
+    trackId = id.toString(),
+    title = title,
+    codec = codec,
+    sampleRateHz = sample_rate_hz.toInt(),
+    bitDepth = bit_depth?.toInt(),
+    channels = channels.toInt(),
+    bitrateKbps = bitrate_kbps?.toInt(),
+    durationMs = duration_ms,
+    replayGainTrackDb = replay_gain_track_db,
+    replayGainAlbumDb = replay_gain_album_db,
+    replayGainTrackPeak = replay_gain_track_peak,
+    replayGainAlbumPeak = replay_gain_album_peak,
+    hasEmbeddedArt = has_embedded_art != 0L,
+    filePath = file_path,
+    fileSizeBytes = file_size_bytes,
+    fileMtimeMs = file_mtime_ms,
+    hasKnownMtime = has_known_mtime != 0L,
+)
+
+// Phase 2b-A (A1): aggregate totals → LibraryAggregate. SUM(...) columns are
+// nullable (Long?) per SQLDelight; `?: 0L` guards the empty-library case.
+// Coverage fractions guard division-by-zero when total_tracks == 0.
+internal fun AggregateTotals.toLibraryAggregate(codecCounts: Map<String, Long>): LibraryAggregate {
+    val total = total_tracks
+    return LibraryAggregate(
+        totalTracks = total,
+        totalBytes = total_bytes,
+        codecCounts = codecCounts,
+        replayGainCoverage = if (total == 0L) 0.0 else (rg_covered ?: 0L).toDouble() / total,
+        knownMtimeCoverage = if (total == 0L) 0.0 else (known_mtime ?: 0L).toDouble() / total,
+    )
+}
 
 // SQLDelight type-narrows selectRecentlyPlayed because of `last_played_ms IS
 // NOT NULL` in the WHERE clause (changes nullability of the column). It thus
