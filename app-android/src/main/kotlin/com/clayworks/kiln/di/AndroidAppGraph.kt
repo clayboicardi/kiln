@@ -23,6 +23,7 @@ import com.clayworks.kiln.audio.playback.createAndroidMediaTrackAnalyzer
 import com.clayworks.kiln.library.scan.TrackAnalysisRunner
 import com.clayworks.kiln.library.scan.TrackAnalyzer
 import com.clayworks.kiln.data.library.db.KilnDatabase
+import com.clayworks.kiln.library.scan.AndroidFormatFactBackfill
 import com.clayworks.kiln.library.scan.AndroidMediaStoreScanner
 import com.clayworks.kiln.library.scan.LibraryScanner
 import com.clayworks.kiln.library.settings.SettingsRepository
@@ -96,17 +97,24 @@ abstract class AndroidAppGraph(
 
     @Singleton
     @Provides
+    protected fun formatBackfill(context: Context, db: KilnDatabase): AndroidFormatFactBackfill =
+        AndroidFormatFactBackfill(context, db, Dispatchers.IO)
+
+    @Singleton
+    @Provides
     protected fun mediaStoreScanner(
         context: Context,
         settings: SettingsRepository,
         db: KilnDatabase,
         driver: SqlDriver,
+        backfill: AndroidFormatFactBackfill,
     ): LibraryScanner = AndroidMediaStoreScanner(
         context = context,
         safTreeUrisFlow = settings.scanFolders,
         db = db,
         driver = driver,
         ioDispatcher = Dispatchers.IO,
+        backfill = backfill,
     )
 
     /**

@@ -45,6 +45,7 @@ class AndroidMediaStoreScanner(
     private val db: KilnDatabase,
     private val driver: SqlDriver,
     private val ioDispatcher: CoroutineDispatcher,
+    private val backfill: AndroidFormatFactBackfill,
 ) : LibraryScanner {
 
     override suspend fun scanIncremental(): Either<ScanError, ScanResult> =
@@ -124,6 +125,14 @@ class AndroidMediaStoreScanner(
             }
 
             rebuildFtsIndex(db, driver)
+
+            // Correct the scanner's placeholder format facts (sample rate /
+            // channels / bitrate / embedded art) for newly-scanned rows. The
+            // backfill's `metadata_backfilled_at_ms IS NULL` worklist makes this
+            // idempotent — an already-backfilled library costs only a COUNT and
+            // returns 0. We are already on ioDispatcher; runOnce() is suspend.
+            val backfilled = backfill.runOnce()
+            log.i { "format-fact backfill: $backfilled rows corrected" }
 
             val durationMs = System.currentTimeMillis() - scanStartedMs
             ScanResult(

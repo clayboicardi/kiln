@@ -211,4 +211,33 @@ class AndroidFormatFactBackfillTest {
             driver.close()
         }
     }
+
+    @Test
+    fun backfill_is_idempotent_second_run_skips_stamped_row() {
+        val (driver, db) = newDb()
+        try {
+            db.insertUnbackfilledTrack(filePath = "/nonexistent.flac")
+            val backfill = AndroidFormatFactBackfill(
+                context = ApplicationProvider.getApplicationContext(),
+                db = db,
+                ioDispatcher = Dispatchers.Unconfined,
+            )
+
+            // First run stamps the (unreadable) row out of the worklist.
+            runBlocking { backfill.runOnce() }
+            assertEquals(0L, db.trackQueries.countTracksNeedingBackfill().executeAsOne())
+            val afterFirst = db.trackQueries.selectByFilePath("/nonexistent.flac").executeAsOne()
+
+            // Second run must do nothing — the metadata_backfilled_at_ms IS NULL
+            // worklist is empty, so runOnce() returns 0 without touching the row.
+            val secondCount = runBlocking { backfill.runOnce() }
+            assertEquals(0, secondCount)
+            assertEquals(0L, db.trackQueries.countTracksNeedingBackfill().executeAsOne())
+
+            val afterSecond = db.trackQueries.selectByFilePath("/nonexistent.flac").executeAsOne()
+            assertEquals(afterFirst, afterSecond)
+        } finally {
+            driver.close()
+        }
+    }
 }
