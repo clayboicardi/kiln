@@ -56,8 +56,8 @@ fun SettingsScreen(
     onReplayGainModeChange: (ReplayGainMode) -> Unit,
     onReplayGainPreAmpDbChange: (Double) -> Unit,
     onTriggerBackfill: () -> Unit,
-    onAutoScanOnFolderAddChange: (Boolean) -> Unit = {},
-    onTriggerScan: () -> Unit = {},
+    onAutoScanOnFolderAddChange: (Boolean) -> Unit,
+    onTriggerScan: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier.verticalScroll(rememberScrollState()).padding(16.dp)) {
