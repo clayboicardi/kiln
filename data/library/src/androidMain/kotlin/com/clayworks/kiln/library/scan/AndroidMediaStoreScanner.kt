@@ -30,6 +30,8 @@ import com.clayworks.kiln.library.scan.internal.toSortName
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 private val log = Logger.withTag("AndroidMediaStoreScanner")
@@ -48,11 +50,19 @@ class AndroidMediaStoreScanner(
     private val backfill: AndroidFormatFactBackfill,
 ) : LibraryScanner {
 
+    // Single-flight guard: the three UI triggers (scan-on-launch, "Scan now",
+    // auto-scan-on-folder-add) can fire while a scan is already running. Two
+    // concurrent runScan() bodies would issue overlapping db.transaction{} on
+    // one connection — SQLiteDatabaseLockedException on Android, BEGIN/COMMIT
+    // corruption on desktop's single JdbcSqliteDriver connection. withLock
+    // serializes them: a second caller awaits the first, then runs.
+    private val scanMutex = Mutex()
+
     override suspend fun scanIncremental(): Either<ScanError, ScanResult> =
-        withContext(ioDispatcher) { runScan(forceFullRescan = false) }
+        scanMutex.withLock { withContext(ioDispatcher) { runScan(forceFullRescan = false) } }
 
     override suspend fun scanFull(): Either<ScanError, ScanResult> =
-        withContext(ioDispatcher) { runScan(forceFullRescan = true) }
+        scanMutex.withLock { withContext(ioDispatcher) { runScan(forceFullRescan = true) } }
 
     private suspend fun runScan(forceFullRescan: Boolean): Either<ScanError, ScanResult> =
         Either.catch {

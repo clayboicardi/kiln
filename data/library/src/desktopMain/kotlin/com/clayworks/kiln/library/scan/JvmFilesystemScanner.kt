@@ -21,6 +21,8 @@ import com.clayworks.kiln.library.scan.internal.toSortName
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.jaudiotagger.audio.AudioFileIO
 import org.jaudiotagger.tag.FieldKey
@@ -49,11 +51,16 @@ class JvmFilesystemScanner(
         java.util.logging.Logger.getLogger("org.jaudiotagger").level = Level.WARNING
     }
 
+    // Single-flight guard — see AndroidMediaStoreScanner. Overlapping scans on
+    // the desktop JdbcSqliteDriver's single connection corrupt the BEGIN/COMMIT
+    // state machine; withLock serializes the three UI triggers.
+    private val scanMutex = Mutex()
+
     override suspend fun scanIncremental(): Either<ScanError, ScanResult> =
-        withContext(ioDispatcher) { runScan(forceFullRescan = false) }
+        scanMutex.withLock { withContext(ioDispatcher) { runScan(forceFullRescan = false) } }
 
     override suspend fun scanFull(): Either<ScanError, ScanResult> =
-        withContext(ioDispatcher) { runScan(forceFullRescan = true) }
+        scanMutex.withLock { withContext(ioDispatcher) { runScan(forceFullRescan = true) } }
 
     private suspend fun runScan(forceFullRescan: Boolean): Either<ScanError, ScanResult> =
         Either.catch {
