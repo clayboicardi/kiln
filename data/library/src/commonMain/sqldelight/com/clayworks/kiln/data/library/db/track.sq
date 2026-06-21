@@ -57,7 +57,14 @@ CREATE TABLE track (
     -- Added v2→v3 via migrations/2.sqm; SQLite's ALTER TABLE ADD COLUMN
     -- always appends to the END of the table, so this column MUST stay
     -- last in CREATE TABLE for verifyMigrations to pass.
-    has_known_mtime          INTEGER NOT NULL DEFAULT 1
+    has_known_mtime          INTEGER NOT NULL DEFAULT 1,
+
+    -- NULL = Android format facts not yet verified via MediaMetadataRetriever
+    -- backfill (F10). Set to System.currentTimeMillis() once a later backfill
+    -- pass has populated sample_rate_hz/bit_depth/channels/bitrate_kbps/has_embedded_art.
+    -- Desktop scans set this at insert (JVM tag-read already authoritative).
+    -- Added v3→v4 via migrations/3.sqm; MUST stay last (ALTER ADD COLUMN appends).
+    metadata_backfilled_at_ms INTEGER DEFAULT NULL
 );
 
 -- All track-list indexes are PARTIAL — `WHERE deleted_at_ms IS NULL` is part
@@ -80,6 +87,30 @@ LIMIT :pageSize OFFSET :pageOffset;
 selectById:
 SELECT * FROM track
 WHERE id = ? AND deleted_at_ms IS NULL;
+
+-- Phase 2b-A (A1): per-track Spec Sheet read model. Full-row select so the
+-- mapper can surface every format/RG/file fact. Live rows only.
+selectSpecSheetEntry:
+SELECT * FROM track WHERE id = ? AND deleted_at_ms IS NULL;
+
+-- Phase 2b-A (A1): library aggregate totals for the Spec Sheet stats header.
+-- SUM(...) columns are nullable (Long?) per SQLDelight — handle with ?: 0L.
+aggregateTotals:
+SELECT
+    COUNT(*)                                                          AS total_tracks,
+    COALESCE(SUM(file_size_bytes), 0)                                 AS total_bytes,
+    SUM(CASE WHEN replay_gain_track_db IS NOT NULL THEN 1 ELSE 0 END) AS rg_covered,
+    SUM(CASE WHEN has_known_mtime = 1        THEN 1 ELSE 0 END)        AS known_mtime
+FROM track
+WHERE deleted_at_ms IS NULL;
+
+-- Phase 2b-A (A1): per-codec track counts for the aggregate codec breakdown.
+aggregateCodecCounts:
+SELECT codec, COUNT(*) AS cnt
+FROM track
+WHERE deleted_at_ms IS NULL
+GROUP BY codec
+ORDER BY cnt DESC;
 
 selectByAlbum:
 -- COALESCE handles NULL disc_number / track_number gracefully. In SQLite,
@@ -164,6 +195,13 @@ SET album_id = ?,
     replay_gain_track_peak = ?,
     replay_gain_album_peak = ?,
     has_embedded_art = ?,
+    -- Reset the Android format-fact backfill stamp: a changed file just had its
+    -- format columns rewritten (the Android scanner writes 44100/2/null
+    -- placeholders above), so it must re-enter the backfill worklist
+    -- (metadata_backfilled_at_ms IS NULL) and be re-verified via MediaExtractor at
+    -- scan-end. Harmless no-op on desktop — the backfill is Android-only and the
+    -- desktop scanner already wrote authoritative facts into the columns above.
+    metadata_backfilled_at_ms = NULL,
     art_path = ?,
     date_modified_ms = :modifiedAtMs,
     last_scanned_ms = :scannedAtMs,
@@ -210,6 +248,46 @@ LEFT JOIN album       ON track.album_id      = album.id
 INNER JOIN artist     ON track.artist_id     = artist.id
 LEFT JOIN artist AS album_artist ON album.artist_id = album_artist.id
 WHERE track.deleted_at_ms IS NULL;
+
+-- Phase 2b-A (A2): Android format-fact backfill worklist (F10).
+-- Live rows whose Android format facts haven't been verified yet
+-- (metadata_backfilled_at_ms IS NULL). Only id + file_path are projected: the
+-- backfill re-reads sample-rate + channels authoritatively from the file via
+-- MediaExtractor (the scanner's 44100/2 placeholders in those columns are
+-- exactly what the backfill corrects), so the stale DB values are deliberately
+-- NOT carried into the pass. No OFFSET: every processed row is stamped, so it
+-- leaves the IS NULL worklist immediately and a plain LIMIT loop terminates.
+selectTracksNeedingBackfill:
+SELECT id, file_path
+FROM track
+WHERE metadata_backfilled_at_ms IS NULL
+  AND deleted_at_ms IS NULL
+LIMIT :limit;
+
+-- Count for the backfill worklist — drives the loop-drain assertion + progress.
+countTracksNeedingBackfill:
+SELECT COUNT(*) FROM track
+WHERE metadata_backfilled_at_ms IS NULL
+  AND deleted_at_ms IS NULL;
+
+-- Persist MMR-verified format facts + stamp the row out of the worklist.
+-- sample_rate_hz / channels are NOT NULL, so the backfill passes through the
+-- existing values when MMR doesn't override them (no fabrication).
+updateTrackFormatFacts:
+UPDATE track
+SET sample_rate_hz = :sampleRateHz,
+    bit_depth      = :bitDepth,
+    channels       = :channels,
+    bitrate_kbps   = :bitrateKbps,
+    has_embedded_art = :hasEmbeddedArt,
+    metadata_backfilled_at_ms = :backfilledAtMs
+WHERE id = :id;
+
+-- Stamp a row the backfill couldn't read (file missing / MMR threw / no audio
+-- header). Leaves format columns untouched; the stamp alone drains the row
+-- from the IS NULL worklist so the loop can't spin on it forever.
+markBackfilledNoMetadata:
+UPDATE track SET metadata_backfilled_at_ms = :backfilledAtMs WHERE id = :id;
 
 markPlayed:
 UPDATE track

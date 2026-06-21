@@ -6,17 +6,22 @@ package com.clayworks.kiln.library.source
 
 import app.cash.sqldelight.coroutines.asFlow
 import app.cash.sqldelight.coroutines.mapToList
+import app.cash.sqldelight.coroutines.mapToOne
+import app.cash.sqldelight.coroutines.mapToOneOrNull
 import arrow.core.Either
 import com.clayworks.kiln.data.library.db.KilnDatabase
 import com.clayworks.kiln.library.source.internal.sanitizeFtsQuery
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.transform
 
 class LocalLibrarySource(
     private val db: KilnDatabase,
     private val ioDispatcher: CoroutineDispatcher,
-) : MusicSource {
+) : MusicSource, LibraryStatsSource {
     override val id = SourceId("local")
     override val displayName = "Local Library"
     override val capabilities = LocalSourceCapabilities
@@ -116,5 +121,25 @@ class LocalLibrarySource(
     // refresh() defaulted to Either.Right(Unit) from interface. Scanner integration
     // lands at MVP Session 4-7 follow-up (LibraryScanner interface + Android
     // MediaStore + JVM filesystem walker impls).
+
+    // ---- LibraryStatsSource (Phase 2b-A Task A1) ----
+
+    override fun specSheetEntry(trackId: String): Flow<SpecSheetEntry?> {
+        // Bare-numeric ItemId contract (per LocalLibrarySourceMappers): container
+        // kinds (album:/artist:/playlist:) aren't tracks → emit null, no query.
+        val id = trackId.toLongOrNull() ?: return flowOf(null)
+        return db.trackQueries.selectSpecSheetEntry(id)
+            .asFlow()
+            .mapToOneOrNull(ioDispatcher)
+            .map { it?.toSpecSheetEntry() }
+    }
+
+    override fun aggregateStats(): Flow<LibraryAggregate> {
+        val totals = db.trackQueries.aggregateTotals().asFlow().mapToOne(ioDispatcher)
+        val codecs = db.trackQueries.aggregateCodecCounts().asFlow().mapToList(ioDispatcher)
+        return combine(totals, codecs) { t, rows ->
+            t.toLibraryAggregate(rows.associate { it.codec to it.cnt })
+        }
+    }
 }
 

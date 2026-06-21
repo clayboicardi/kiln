@@ -23,10 +23,12 @@ import com.clayworks.kiln.audio.playback.createAndroidMediaTrackAnalyzer
 import com.clayworks.kiln.library.scan.TrackAnalysisRunner
 import com.clayworks.kiln.library.scan.TrackAnalyzer
 import com.clayworks.kiln.data.library.db.KilnDatabase
+import com.clayworks.kiln.library.scan.AndroidFormatFactBackfill
 import com.clayworks.kiln.library.scan.AndroidMediaStoreScanner
 import com.clayworks.kiln.library.scan.LibraryScanner
 import com.clayworks.kiln.library.settings.SettingsRepository
 import com.clayworks.kiln.library.settings.SettingsRepositoryImpl
+import com.clayworks.kiln.library.source.LibraryStatsSource
 import com.clayworks.kiln.library.source.LocalLibrarySource
 import com.clayworks.kiln.library.source.MusicSource
 import kotlinx.coroutines.Dispatchers
@@ -39,6 +41,7 @@ abstract class AndroidAppGraph(
     @get:Provides protected val context: Context,
 ) {
     abstract val musicSource: MusicSource
+    abstract val libraryStats: LibraryStatsSource
     abstract val scanner: LibraryScanner
     abstract val player: PlatformPlayer
     abstract val settings: SettingsRepository
@@ -89,10 +92,29 @@ abstract class AndroidAppGraph(
     protected fun settingsRepository(db: KilnDatabase): SettingsRepository =
         SettingsRepositoryImpl(db, Dispatchers.IO)
 
+    /**
+     * One LocalLibrarySource instance, bound to BOTH the MusicSource (browse /
+     * search / getPlayable) and LibraryStatsSource (Spec Sheet entry + library
+     * aggregate) surfaces below. Provided as the concrete type and re-exposed
+     * under each interface so the two graph members share a single instance
+     * rather than spinning up two sources over the same DB. Source Protocol
+     * invariant: the read interfaces stay separate; the impl co-implements them.
+     */
     @Singleton
     @Provides
-    protected fun localLibrarySource(db: KilnDatabase): MusicSource =
+    protected fun localLibrarySource(db: KilnDatabase): LocalLibrarySource =
         LocalLibrarySource(db, Dispatchers.IO)
+
+    @Provides
+    protected fun musicSource(source: LocalLibrarySource): MusicSource = source
+
+    @Provides
+    protected fun libraryStatsSource(source: LocalLibrarySource): LibraryStatsSource = source
+
+    @Singleton
+    @Provides
+    protected fun formatBackfill(context: Context, db: KilnDatabase): AndroidFormatFactBackfill =
+        AndroidFormatFactBackfill(context, db, Dispatchers.IO)
 
     @Singleton
     @Provides
@@ -101,12 +123,14 @@ abstract class AndroidAppGraph(
         settings: SettingsRepository,
         db: KilnDatabase,
         driver: SqlDriver,
+        backfill: AndroidFormatFactBackfill,
     ): LibraryScanner = AndroidMediaStoreScanner(
         context = context,
         safTreeUrisFlow = settings.scanFolders,
         db = db,
         driver = driver,
         ioDispatcher = Dispatchers.IO,
+        backfill = backfill,
     )
 
     /**
