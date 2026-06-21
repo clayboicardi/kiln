@@ -248,7 +248,9 @@ private fun DesktopSettingsRoute(
                     val picked = pickFolderDialog()
                     if (picked != null && picked !in scanFolders) {
                         graph.settings.setScanFolders(scanFolders + picked)
-                        if (autoScanOnFolderAdd) runScanNow()
+                        // Don't auto-scan while a backfill runs — the shared write-lock
+                        // would just make it wait, pausing the analyzer. (codex #4/D)
+                        if (autoScanOnFolderAdd && backfillState !is BackfillUiState.InProgress) runScanNow()
                     }
                 }
             },

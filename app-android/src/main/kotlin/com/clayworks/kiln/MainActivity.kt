@@ -76,11 +76,13 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val graph = (application as KilnApplication).graph
+        val app = application as KilnApplication
+        val graph = app.graph
 
         // Scan-on-launch: MediaStore requires READ_MEDIA_AUDIO, so only scan if
         // it is already granted (first run pre-grant no-ops; the scan runs on the
-        // next launch once permission + toggle are set).
+        // next launch once permission + toggle are set). Runs on the process-scope
+        // appScope (not lifecycleScope) so a config-change mid-scan doesn't cancel it.
         if (!launchScanTriggered) {
             launchScanTriggered = true
             val launchPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -88,7 +90,7 @@ class MainActivity : ComponentActivity() {
             } else {
                 Manifest.permission.READ_EXTERNAL_STORAGE
             }
-            lifecycleScope.launch {
+            app.appScope.launch {
                 val granted = ContextCompat.checkSelfPermission(this@MainActivity, launchPermission) ==
                     PackageManager.PERMISSION_GRANTED
                 if (granted && graph.settings.scanOnLaunch.first()) {
@@ -202,7 +204,9 @@ private fun AndroidSettingsRoute(
         if (uri !in scanFolders) {
             coroutineScope.launch {
                 graph.settings.setScanFolders(scanFolders + uri)
-                if (autoScanOnFolderAdd) runScanNow()
+                // Don't auto-scan while a backfill runs — the shared write-lock would
+                // just make it wait, pausing the analyzer. (codex #4/D)
+                if (autoScanOnFolderAdd && backfillState !is BackfillUiState.InProgress) runScanNow()
             }
         }
     })
