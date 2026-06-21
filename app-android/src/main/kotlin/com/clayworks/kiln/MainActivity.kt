@@ -65,24 +65,35 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
+
+    // Process-level guard so scan-on-launch fires once per app launch, not on
+    // every onCreate — config changes (rotation) recreate the Activity, and an
+    // unguarded trigger would re-walk the whole library each time. Reset on
+    // process death (companion field), so a genuine relaunch re-attempts. (codex #5)
+    private companion object {
+        @Volatile var launchScanTriggered = false
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val graph = (application as KilnApplication).graph
 
         // Scan-on-launch: MediaStore requires READ_MEDIA_AUDIO, so only scan if
-        // it is already granted (first run, pre-grant, no-ops — the scan runs on
-        // the next launch once permission + toggle are set). lifecycleScope =
-        // once per Activity create, not per recomposition.
-        val launchPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            Manifest.permission.READ_MEDIA_AUDIO
-        } else {
-            Manifest.permission.READ_EXTERNAL_STORAGE
-        }
-        lifecycleScope.launch {
-            val granted = ContextCompat.checkSelfPermission(this@MainActivity, launchPermission) ==
-                PackageManager.PERMISSION_GRANTED
-            if (granted && graph.settings.scanOnLaunch.first()) {
-                graph.scanner.scanIncremental()
+        // it is already granted (first run pre-grant no-ops; the scan runs on the
+        // next launch once permission + toggle are set).
+        if (!launchScanTriggered) {
+            launchScanTriggered = true
+            val launchPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                Manifest.permission.READ_MEDIA_AUDIO
+            } else {
+                Manifest.permission.READ_EXTERNAL_STORAGE
+            }
+            lifecycleScope.launch {
+                val granted = ContextCompat.checkSelfPermission(this@MainActivity, launchPermission) ==
+                    PackageManager.PERMISSION_GRANTED
+                if (granted && graph.settings.scanOnLaunch.first()) {
+                    graph.scanner.scanIncremental()
+                }
             }
         }
 
