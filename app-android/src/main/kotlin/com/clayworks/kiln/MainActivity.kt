@@ -42,6 +42,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.lifecycleScope
 import app.cash.sqldelight.coroutines.asFlow
 import app.cash.sqldelight.coroutines.mapToOne
 import com.clayworks.kiln.di.AndroidAppGraph
@@ -51,12 +52,14 @@ import com.clayworks.kiln.library.settings.ThemeMode
 import com.clayworks.kiln.saf.rememberSafFolderPicker
 import com.clayworks.kiln.ui.components.home.KilnHomeScreen
 import com.clayworks.kiln.ui.components.settings.BackfillUiState
+import com.clayworks.kiln.ui.components.settings.ScanUiState
 import com.clayworks.kiln.ui.components.specsheet.LocalLibraryStats
 import com.clayworks.kiln.ui.components.specsheet.LocalPlayer
 import com.clayworks.kiln.ui.components.settings.SettingsScreen
 import com.clayworks.kiln.ui.components.settings.SettingsState
 import com.clayworks.kiln.ui.theme.KilnTheme
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
@@ -64,6 +67,24 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val graph = (application as KilnApplication).graph
+
+        // Scan-on-launch: MediaStore requires READ_MEDIA_AUDIO, so only scan if
+        // it is already granted (first run, pre-grant, no-ops — the scan runs on
+        // the next launch once permission + toggle are set). lifecycleScope =
+        // once per Activity create, not per recomposition.
+        val launchPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            Manifest.permission.READ_MEDIA_AUDIO
+        } else {
+            Manifest.permission.READ_EXTERNAL_STORAGE
+        }
+        lifecycleScope.launch {
+            val granted = ContextCompat.checkSelfPermission(this@MainActivity, launchPermission) ==
+                PackageManager.PERMISSION_GRANTED
+            if (granted && graph.settings.scanOnLaunch.first()) {
+                graph.scanner.scanIncremental()
+            }
+        }
+
         setContent {
             val themeMode by graph.settings.themeMode.collectAsState(initial = ThemeMode.System)
             KilnTheme(themeMode = themeMode) {
@@ -118,6 +139,7 @@ private fun AndroidSettingsRoute(
     val coroutineScope = rememberCoroutineScope()
     val themeMode by graph.settings.themeMode.collectAsState(initial = ThemeMode.System)
     val scanOnLaunch by graph.settings.scanOnLaunch.collectAsState(initial = false)
+    val autoScanOnFolderAdd by graph.settings.autoScanOnFolderAdd.collectAsState(initial = true)
     val scanFolders by graph.settings.scanFolders.collectAsState(initial = emptyList())
     val replayGainMode by graph.settings.replayGainMode.collectAsState(initial = ReplayGainMode.Off)
     val replayGainPreAmpDb by graph.settings.replayGainPreAmpDb.collectAsState(initial = 0.0)
@@ -137,10 +159,33 @@ private fun AndroidSettingsRoute(
         }
     }
 
+    var scanState: ScanUiState by remember { mutableStateOf<ScanUiState>(ScanUiState.Idle) }
+    // One incremental scan, mapping ScanResult/ScanError into the coarse UI state.
+    // Uses the route's coroutineScope (matches the backfill button); leaving
+    // Settings mid-scan cancels it — acceptable, the scan is short and re-triggerable.
+    val runScanNow: () -> Unit = {
+        coroutineScope.launch {
+            scanState = ScanUiState.Scanning
+            scanState = graph.scanner.scanIncremental().fold(
+                { err -> ScanUiState.Error(err.toString()) },
+                { res ->
+                    ScanUiState.Done(
+                        added = res.tracksAdded,
+                        updated = res.tracksUpdated,
+                        softDeleted = res.tracksSoftDeleted,
+                        unchanged = res.tracksUnchanged,
+                        durationMs = res.durationMs,
+                    )
+                },
+            )
+        }
+    }
+
     val launchSafPicker = rememberSafFolderPicker(onPicked = { uri ->
         if (uri !in scanFolders) {
             coroutineScope.launch {
                 graph.settings.setScanFolders(scanFolders + uri)
+                if (autoScanOnFolderAdd) runScanNow()
             }
         }
     })
@@ -162,6 +207,8 @@ private fun AndroidSettingsRoute(
                 replayGainMode = replayGainMode,
                 replayGainPreAmpDb = replayGainPreAmpDb,
                 backfill = backfillState,
+                autoScanOnFolderAdd = autoScanOnFolderAdd,
+                scan = scanState,
             ),
             onThemeModeChange = { mode ->
                 coroutineScope.launch { graph.settings.setThemeMode(mode) }
@@ -204,6 +251,10 @@ private fun AndroidSettingsRoute(
                     }
                 }
             },
+            onAutoScanOnFolderAddChange = { enabled ->
+                coroutineScope.launch { graph.settings.setAutoScanOnFolderAdd(enabled) }
+            },
+            onTriggerScan = runScanNow,
         )
     }
 }
