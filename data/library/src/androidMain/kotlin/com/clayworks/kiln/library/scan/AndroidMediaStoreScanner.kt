@@ -59,10 +59,10 @@ class AndroidMediaStoreScanner(
     private val scanMutex = Mutex()
 
     override suspend fun scanIncremental(): Either<ScanError, ScanResult> =
-        scanMutex.withLock { withContext(ioDispatcher) { runScan(forceFullRescan = false) } }
+        withContext(ioDispatcher) { scanMutex.withLock { runScan(forceFullRescan = false) } }
 
     override suspend fun scanFull(): Either<ScanError, ScanResult> =
-        scanMutex.withLock { withContext(ioDispatcher) { runScan(forceFullRescan = true) } }
+        withContext(ioDispatcher) { scanMutex.withLock { runScan(forceFullRescan = true) } }
 
     private suspend fun runScan(forceFullRescan: Boolean): Either<ScanError, ScanResult> =
         Either.catch {

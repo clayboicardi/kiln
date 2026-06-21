@@ -57,10 +57,10 @@ class JvmFilesystemScanner(
     private val scanMutex = Mutex()
 
     override suspend fun scanIncremental(): Either<ScanError, ScanResult> =
-        scanMutex.withLock { withContext(ioDispatcher) { runScan(forceFullRescan = false) } }
+        withContext(ioDispatcher) { scanMutex.withLock { runScan(forceFullRescan = false) } }
 
     override suspend fun scanFull(): Either<ScanError, ScanResult> =
-        scanMutex.withLock { withContext(ioDispatcher) { runScan(forceFullRescan = true) } }
+        withContext(ioDispatcher) { scanMutex.withLock { runScan(forceFullRescan = true) } }
 
     private suspend fun runScan(forceFullRescan: Boolean): Either<ScanError, ScanResult> =
         Either.catch {
@@ -136,13 +136,28 @@ class JvmFilesystemScanner(
                 }
             }
 
-            val softDeleteCount = db.trackQueries.countUnscanned(scanStartedMs)
-                .executeAsOne().toInt()
-            if (softDeleteCount > 0) {
-                db.trackQueries.softDeleteUnscanned(
-                    deletedAtMs = scanStartedMs,
-                    scanStartedMs = scanStartedMs,
-                )
+            // Soft-delete reconciliation, but ONLY when every configured root was
+            // accessible this pass. If a root is inaccessible (unmounted external
+            // drive, missing D:\tiddl), its files weren't walked, so reconciling
+            // would soft-delete that root's entire library — catastrophic now that
+            // scan-on-launch fires automatically. Refuse to reconcile against a
+            // partial view; accessible roots still get their adds/updates. (codex #4)
+            val inaccessibleRoots = scanFolders.filter { !Files.exists(it) }
+            val softDeleteCount = if (inaccessibleRoots.isEmpty()) {
+                val count = db.trackQueries.countUnscanned(scanStartedMs).executeAsOne().toInt()
+                if (count > 0) {
+                    db.trackQueries.softDeleteUnscanned(
+                        deletedAtMs = scanStartedMs,
+                        scanStartedMs = scanStartedMs,
+                    )
+                }
+                count
+            } else {
+                log.w {
+                    "skipping soft-delete: ${inaccessibleRoots.size} configured root(s) inaccessible " +
+                        "($inaccessibleRoots) — refusing to reconcile against a partial view"
+                }
+                0
             }
 
             rebuildFtsIndex(db, driver)
