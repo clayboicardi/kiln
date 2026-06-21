@@ -196,7 +196,11 @@ private fun DesktopSettingsRoute(
     // route leaves composition are harmless no-ops. The scanner's Mutex serializes
     // this with any launch/auto-on-add scan already running.
     val runScanNow: () -> Unit = {
-        appScope.launch {
+        // Dispatchers.Main keeps the Compose state writes (scanState) on the UI
+        // thread; the scan work itself hops to ioDispatcher inside the scanner.
+        // appScope (process-lifetime) still owns the coroutine so it survives
+        // Settings close. (gemini #1)
+        appScope.launch(Dispatchers.Main) {
             scanState = ScanUiState.Scanning
             scanState = graph.scanner.scanIncremental().fold(
                 { err -> ScanUiState.Error(err.toString()) },
