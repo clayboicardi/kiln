@@ -122,6 +122,10 @@ class Media3ExoPlayerImplTest {
         override val scanOnLaunch: Flow<Boolean> = _scanOnLaunch.asStateFlow()
         override suspend fun setScanOnLaunch(enabled: Boolean) { _scanOnLaunch.value = enabled }
 
+        private val _autoScanOnFolderAdd = MutableStateFlow(true)
+        override val autoScanOnFolderAdd: Flow<Boolean> = _autoScanOnFolderAdd.asStateFlow()
+        override suspend fun setAutoScanOnFolderAdd(enabled: Boolean) { _autoScanOnFolderAdd.value = enabled }
+
         private val _scanFolders = MutableStateFlow<List<String>>(emptyList())
         override val scanFolders: Flow<List<String>> = _scanFolders.asStateFlow()
         override suspend fun setScanFolders(folders: List<String>) { _scanFolders.value = folders }
