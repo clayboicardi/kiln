@@ -37,6 +37,13 @@ interface SettingsRepository {
     suspend fun setScanOnLaunch(enabled: Boolean)
 
     /**
+     * Whether adding a folder via the picker immediately triggers a scan of
+     * the library; default true. Toggle in Settings → Behavior.
+     */
+    val autoScanOnFolderAdd: Flow<Boolean>
+    suspend fun setAutoScanOnFolderAdd(enabled: Boolean)
+
+    /**
      * Filesystem paths (Desktop) or SAF tree URIs (Android, Track B) the
      * scanner walks. String-typed so the interface stays platform-neutral —
      * `java.nio.file.Path` is JVM-only; Android URIs aren't paths. Consumers

@@ -15,6 +15,7 @@ private val log = Logger.withTag("SettingsKeys")
 internal object SettingKey {
     const val THEME_MODE = "theme_mode"
     const val SCAN_ON_LAUNCH = "scan_on_launch"
+    const val AUTO_SCAN_ON_FOLDER_ADD = "auto_scan_on_folder_add"
     const val SCAN_FOLDERS = "scan_folders"
     const val REPLAY_GAIN_MODE = "replay_gain_mode"
     const val REPLAY_GAIN_PRE_AMP_DB = "replay_gain_pre_amp_db"

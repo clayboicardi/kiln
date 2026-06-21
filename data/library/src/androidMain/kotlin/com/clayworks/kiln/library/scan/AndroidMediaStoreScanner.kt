@@ -30,6 +30,7 @@ import com.clayworks.kiln.library.scan.internal.toSortName
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 private val log = Logger.withTag("AndroidMediaStoreScanner")
@@ -46,13 +47,17 @@ class AndroidMediaStoreScanner(
     private val driver: SqlDriver,
     private val ioDispatcher: CoroutineDispatcher,
     private val backfill: AndroidFormatFactBackfill,
+    private val writeLock: LibraryWriteLock,
 ) : LibraryScanner {
 
+    // Held for the whole scan via the shared LibraryWriteLock — serializes the
+    // three scan triggers against each other AND against the analyzer's writes
+    // over the single SQLite connection.
     override suspend fun scanIncremental(): Either<ScanError, ScanResult> =
-        withContext(ioDispatcher) { runScan(forceFullRescan = false) }
+        withContext(ioDispatcher) { writeLock.mutex.withLock { runScan(forceFullRescan = false) } }
 
     override suspend fun scanFull(): Either<ScanError, ScanResult> =
-        withContext(ioDispatcher) { runScan(forceFullRescan = true) }
+        withContext(ioDispatcher) { writeLock.mutex.withLock { runScan(forceFullRescan = true) } }
 
     private suspend fun runScan(forceFullRescan: Boolean): Either<ScanError, ScanResult> =
         Either.catch {
@@ -115,13 +120,31 @@ class AndroidMediaStoreScanner(
             updated += safUpdated
             parseErrors += safParseErrors
 
-            val softDeleteCount = db.trackQueries.countUnscanned(scanStartedMs)
-                .executeAsOne().toInt()
-            if (softDeleteCount > 0) {
-                db.trackQueries.softDeleteUnscanned(
-                    deletedAtMs = scanStartedMs,
-                    scanStartedMs = scanStartedMs,
-                )
+            // Soft-delete reconciliation, but ONLY when every configured SAF tree
+            // is currently readable. If a tree's grant/provider/SD card is
+            // unavailable, SafTreeWalker yields no documents, so reconciling would
+            // soft-delete every SAF-only track on startup. MediaStore is always
+            // available, so this guards the SAF-sourced rows. Mirrors the desktop
+            // inaccessible-root guard. (codex #4 Android twin)
+            val unreadableSafTrees = safTreeUris.filter { uriString ->
+                val uri = runCatching { Uri.parse(uriString) }.getOrNull() ?: return@filter true
+                uri.scheme == "content" && !SafTreeWalker.isTreeReadable(context.contentResolver, uri)
+            }
+            val softDeleteCount = if (unreadableSafTrees.isEmpty()) {
+                val count = db.trackQueries.countUnscanned(scanStartedMs).executeAsOne().toInt()
+                if (count > 0) {
+                    db.trackQueries.softDeleteUnscanned(
+                        deletedAtMs = scanStartedMs,
+                        scanStartedMs = scanStartedMs,
+                    )
+                }
+                count
+            } else {
+                log.w {
+                    "skipping soft-delete: ${unreadableSafTrees.size} SAF tree(s) unreadable " +
+                        "($unreadableSafTrees) — refusing to wipe SAF-only tracks"
+                }
+                0
             }
 
             rebuildFtsIndex(db, driver)

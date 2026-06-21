@@ -52,6 +52,16 @@ class SettingsRepositoryImplTest {
     }
 
     @Test
+    fun auto_scan_on_folder_add_defaults_true_then_round_trips() = runTest {
+        // Default before any write is true (adding a folder implies indexing it).
+        assertEquals(true, repo.autoScanOnFolderAdd.first())
+        repo.setAutoScanOnFolderAdd(false)
+        assertEquals(false, repo.autoScanOnFolderAdd.first())
+        repo.setAutoScanOnFolderAdd(true)
+        assertEquals(true, repo.autoScanOnFolderAdd.first())
+    }
+
+    @Test
     fun scan_folders_round_trip_single() = runTest {
         repo.setScanFolders(listOf("D:\\tiddl"))
         assertEquals(listOf("D:\\tiddl"), repo.scanFolders.first())

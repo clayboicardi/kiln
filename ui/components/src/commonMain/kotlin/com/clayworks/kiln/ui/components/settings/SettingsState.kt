@@ -20,4 +20,6 @@ data class SettingsState(
     val replayGainMode: ReplayGainMode,
     val replayGainPreAmpDb: Double,
     val backfill: BackfillUiState,
+    val autoScanOnFolderAdd: Boolean,
+    val scan: ScanUiState,
 )

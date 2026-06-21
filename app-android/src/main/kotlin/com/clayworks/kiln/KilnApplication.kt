@@ -9,11 +9,21 @@ package com.clayworks.kiln
 import android.app.Application
 import com.clayworks.kiln.di.AndroidAppGraph
 import com.clayworks.kiln.di.create
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 
 class KilnApplication : Application() {
 
     lateinit var graph: AndroidAppGraph
         private set
+
+    /**
+     * Process-lifetime scope for one-shot background work not tied to any
+     * Activity — currently the scan-on-launch trigger, which must survive
+     * config-change Activity recreation (lifecycleScope would cancel it). (codex #3)
+     */
+    val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     override fun onCreate() {
         super.onCreate()

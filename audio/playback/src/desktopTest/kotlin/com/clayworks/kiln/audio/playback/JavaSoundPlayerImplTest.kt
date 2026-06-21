@@ -90,6 +90,8 @@ class JavaSoundPlayerImplTest {
         override suspend fun setThemeMode(mode: ThemeMode) = Unit
         override val scanOnLaunch: Flow<Boolean> = flowOf(false)
         override suspend fun setScanOnLaunch(enabled: Boolean) = Unit
+        override val autoScanOnFolderAdd: Flow<Boolean> = flowOf(true)
+        override suspend fun setAutoScanOnFolderAdd(enabled: Boolean) = Unit
         override val scanFolders: Flow<List<String>> = flowOf(emptyList())
         override suspend fun setScanFolders(folders: List<String>) = Unit
         override val replayGainMode: Flow<ReplayGainMode> = flowOf(ReplayGainMode.Off)

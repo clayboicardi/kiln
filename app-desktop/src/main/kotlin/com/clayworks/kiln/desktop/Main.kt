@@ -51,6 +51,7 @@ import com.clayworks.kiln.library.settings.ReplayGainMode
 import com.clayworks.kiln.library.settings.ThemeMode
 import com.clayworks.kiln.ui.components.home.KilnHomeScreen
 import com.clayworks.kiln.ui.components.settings.BackfillUiState
+import com.clayworks.kiln.ui.components.settings.ScanUiState
 import com.clayworks.kiln.ui.components.specsheet.LocalLibraryStats
 import com.clayworks.kiln.ui.components.specsheet.LocalPlayer
 import com.clayworks.kiln.ui.components.settings.SettingsScreen
@@ -58,11 +59,13 @@ import com.clayworks.kiln.ui.components.settings.SettingsState
 import com.clayworks.kiln.ui.theme.KilnTheme
 import java.nio.file.Path
 import javax.swing.JFileChooser
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.swing.Swing
 import kotlinx.coroutines.withContext
 
@@ -98,6 +101,17 @@ fun main() {
         }
     }
 
+    // Process-lifetime scope for background scans not tied to a Composable.
+    val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    // Scan-on-launch: honor the persisted toggle. Async so the window shows
+    // immediately — a 27k-track filesystem walk must not block process start.
+    appScope.launch {
+        if (graph.settings.scanOnLaunch.first()) {
+            graph.scanner.scanIncremental()
+        }
+    }
+
     application {
         Window(
             onCloseRequest = ::exitApplication,
@@ -110,6 +124,7 @@ fun main() {
                     if (showSettings) {
                         DesktopSettingsRoute(
                             graph = graph,
+                            appScope = appScope,
                             onClose = { showSettings = false },
                         )
                     } else {
@@ -147,11 +162,13 @@ fun main() {
 @Composable
 private fun DesktopSettingsRoute(
     graph: DesktopAppGraph,
+    appScope: CoroutineScope,
     onClose: () -> Unit,
 ) {
     val coroutineScope = rememberCoroutineScope()
     val themeMode by graph.settings.themeMode.collectAsState(initial = ThemeMode.System)
     val scanOnLaunch by graph.settings.scanOnLaunch.collectAsState(initial = false)
+    val autoScanOnFolderAdd by graph.settings.autoScanOnFolderAdd.collectAsState(initial = true)
     val scanFolders by graph.settings.scanFolders.collectAsState(initial = emptyList())
     val replayGainMode by graph.settings.replayGainMode.collectAsState(initial = ReplayGainMode.Off)
     val replayGainPreAmpDb by graph.settings.replayGainPreAmpDb.collectAsState(initial = 0.0)
@@ -168,6 +185,35 @@ private fun DesktopSettingsRoute(
     LaunchedEffect(missingCount) {
         if (backfillState is BackfillUiState.Idle) {
             backfillState = BackfillUiState.Idle(missingCount)
+        }
+    }
+
+    var scanState: ScanUiState by remember { mutableStateOf<ScanUiState>(ScanUiState.Idle) }
+    // One incremental scan, mapping ScanResult/ScanError into the coarse UI state.
+    // Runs on the process-lifetime appScope (not the route's coroutineScope) so
+    // closing Settings mid-scan doesn't cancel it — important for auto-scan-on-add,
+    // where the user may navigate away immediately. scanState writes after the
+    // route leaves composition are harmless no-ops. The scanner's Mutex serializes
+    // this with any launch/auto-on-add scan already running.
+    val runScanNow: () -> Unit = {
+        // Dispatchers.Main keeps the Compose state writes (scanState) on the UI
+        // thread; the scan work itself hops to ioDispatcher inside the scanner.
+        // appScope (process-lifetime) still owns the coroutine so it survives
+        // Settings close. (gemini #1)
+        appScope.launch(Dispatchers.Main) {
+            scanState = ScanUiState.Scanning
+            scanState = graph.scanner.scanIncremental().fold(
+                { err -> ScanUiState.Error(err.toString()) },
+                { res ->
+                    ScanUiState.Done(
+                        added = res.tracksAdded,
+                        updated = res.tracksUpdated,
+                        softDeleted = res.tracksSoftDeleted,
+                        unchanged = res.tracksUnchanged,
+                        durationMs = res.durationMs,
+                    )
+                },
+            )
         }
     }
 
@@ -188,6 +234,8 @@ private fun DesktopSettingsRoute(
                 replayGainMode = replayGainMode,
                 replayGainPreAmpDb = replayGainPreAmpDb,
                 backfill = backfillState,
+                autoScanOnFolderAdd = autoScanOnFolderAdd,
+                scan = scanState,
             ),
             onThemeModeChange = { mode ->
                 coroutineScope.launch { graph.settings.setThemeMode(mode) }
@@ -200,6 +248,9 @@ private fun DesktopSettingsRoute(
                     val picked = pickFolderDialog()
                     if (picked != null && picked !in scanFolders) {
                         graph.settings.setScanFolders(scanFolders + picked)
+                        // Don't auto-scan while a backfill runs — the shared write-lock
+                        // would just make it wait, pausing the analyzer. (codex #4/D)
+                        if (autoScanOnFolderAdd && backfillState !is BackfillUiState.InProgress) runScanNow()
                     }
                 }
             },
@@ -237,6 +288,10 @@ private fun DesktopSettingsRoute(
                     }
                 }
             },
+            onAutoScanOnFolderAddChange = { enabled ->
+                coroutineScope.launch { graph.settings.setAutoScanOnFolderAdd(enabled) }
+            },
+            onTriggerScan = runScanNow,
         )
     }
 }

@@ -46,6 +46,16 @@ class SettingsRepositoryImpl(
         db.settingsQueries.upsert(key = SettingKey.SCAN_ON_LAUNCH, value_ = enabled.toString())
     }
 
+    override val autoScanOnFolderAdd: Flow<Boolean> =
+        db.settingsQueries.selectByKey(SettingKey.AUTO_SCAN_ON_FOLDER_ADD)
+            .asFlow()
+            .mapToOneOrNull(ioDispatcher)
+            .map { value -> value != "false" }
+
+    override suspend fun setAutoScanOnFolderAdd(enabled: Boolean): Unit = withContext(ioDispatcher) {
+        db.settingsQueries.upsert(key = SettingKey.AUTO_SCAN_ON_FOLDER_ADD, value_ = enabled.toString())
+    }
+
     override val scanFolders: Flow<List<String>> =
         db.settingsQueries.selectByKey(SettingKey.SCAN_FOLDERS)
             .asFlow()

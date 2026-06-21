@@ -21,6 +21,7 @@ import com.clayworks.kiln.library.scan.internal.toSortName
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.jaudiotagger.audio.AudioFileIO
 import org.jaudiotagger.tag.FieldKey
@@ -42,6 +43,7 @@ class JvmFilesystemScanner(
     private val db: KilnDatabase,
     private val driver: SqlDriver,
     private val ioDispatcher: CoroutineDispatcher,
+    private val writeLock: LibraryWriteLock,
 ) : LibraryScanner {
 
     init {
@@ -49,11 +51,13 @@ class JvmFilesystemScanner(
         java.util.logging.Logger.getLogger("org.jaudiotagger").level = Level.WARNING
     }
 
+    // Held for the whole scan via the shared LibraryWriteLock — serializes
+    // scan-vs-scan AND scan-vs-analyzer over the single SQLite connection.
     override suspend fun scanIncremental(): Either<ScanError, ScanResult> =
-        withContext(ioDispatcher) { runScan(forceFullRescan = false) }
+        withContext(ioDispatcher) { writeLock.mutex.withLock { runScan(forceFullRescan = false) } }
 
     override suspend fun scanFull(): Either<ScanError, ScanResult> =
-        withContext(ioDispatcher) { runScan(forceFullRescan = true) }
+        withContext(ioDispatcher) { writeLock.mutex.withLock { runScan(forceFullRescan = true) } }
 
     private suspend fun runScan(forceFullRescan: Boolean): Either<ScanError, ScanResult> =
         Either.catch {
@@ -129,13 +133,28 @@ class JvmFilesystemScanner(
                 }
             }
 
-            val softDeleteCount = db.trackQueries.countUnscanned(scanStartedMs)
-                .executeAsOne().toInt()
-            if (softDeleteCount > 0) {
-                db.trackQueries.softDeleteUnscanned(
-                    deletedAtMs = scanStartedMs,
-                    scanStartedMs = scanStartedMs,
-                )
+            // Soft-delete reconciliation, but ONLY when every configured root was
+            // accessible this pass. If a root is inaccessible (unmounted external
+            // drive, missing D:\tiddl), its files weren't walked, so reconciling
+            // would soft-delete that root's entire library — catastrophic now that
+            // scan-on-launch fires automatically. Refuse to reconcile against a
+            // partial view; accessible roots still get their adds/updates. (codex #4)
+            val inaccessibleRoots = scanFolders.filter { !Files.exists(it) }
+            val softDeleteCount = if (inaccessibleRoots.isEmpty()) {
+                val count = db.trackQueries.countUnscanned(scanStartedMs).executeAsOne().toInt()
+                if (count > 0) {
+                    db.trackQueries.softDeleteUnscanned(
+                        deletedAtMs = scanStartedMs,
+                        scanStartedMs = scanStartedMs,
+                    )
+                }
+                count
+            } else {
+                log.w {
+                    "skipping soft-delete: ${inaccessibleRoots.size} configured root(s) inaccessible " +
+                        "($inaccessibleRoots) — refusing to reconcile against a partial view"
+                }
+                0
             }
 
             rebuildFtsIndex(db, driver)

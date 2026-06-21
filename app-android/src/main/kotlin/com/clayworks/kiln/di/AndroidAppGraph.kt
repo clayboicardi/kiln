@@ -26,6 +26,7 @@ import com.clayworks.kiln.data.library.db.KilnDatabase
 import com.clayworks.kiln.library.scan.AndroidFormatFactBackfill
 import com.clayworks.kiln.library.scan.AndroidMediaStoreScanner
 import com.clayworks.kiln.library.scan.LibraryScanner
+import com.clayworks.kiln.library.scan.LibraryWriteLock
 import com.clayworks.kiln.library.settings.SettingsRepository
 import com.clayworks.kiln.library.settings.SettingsRepositoryImpl
 import com.clayworks.kiln.library.source.LibraryStatsSource
@@ -116,6 +117,14 @@ abstract class AndroidAppGraph(
     protected fun formatBackfill(context: Context, db: KilnDatabase): AndroidFormatFactBackfill =
         AndroidFormatFactBackfill(context, db, Dispatchers.IO)
 
+    /**
+     * Shared lock serializing the scanner and the analyzer — both write `track`
+     * over the single AndroidSqliteDriver connection. See [LibraryWriteLock].
+     */
+    @Singleton
+    @Provides
+    protected fun libraryWriteLock(): LibraryWriteLock = LibraryWriteLock()
+
     @Singleton
     @Provides
     protected fun mediaStoreScanner(
@@ -124,6 +133,7 @@ abstract class AndroidAppGraph(
         db: KilnDatabase,
         driver: SqlDriver,
         backfill: AndroidFormatFactBackfill,
+        writeLock: LibraryWriteLock,
     ): LibraryScanner = AndroidMediaStoreScanner(
         context = context,
         safTreeUrisFlow = settings.scanFolders,
@@ -131,6 +141,7 @@ abstract class AndroidAppGraph(
         driver = driver,
         ioDispatcher = Dispatchers.IO,
         backfill = backfill,
+        writeLock = writeLock,
     )
 
     /**
@@ -175,9 +186,11 @@ abstract class AndroidAppGraph(
     protected fun analysisRunner(
         db: KilnDatabase,
         analyzer: TrackAnalyzer,
+        writeLock: LibraryWriteLock,
     ): TrackAnalysisRunner = TrackAnalysisRunner(
         db = db,
         analyzer = analyzer,
         ioDispatcher = Dispatchers.IO,
+        writeLock = writeLock,
     )
 }

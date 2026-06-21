@@ -13,6 +13,7 @@ import com.clayworks.kiln.data.library.db.KilnDatabase
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
+import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -86,6 +87,7 @@ class JvmFilesystemScannerTest {
                 db = db,
                 driver = driver,
                 ioDispatcher = Dispatchers.Unconfined,
+                writeLock = LibraryWriteLock(),
             )
 
             val result = scanner.scanIncremental()
@@ -128,6 +130,7 @@ class JvmFilesystemScannerTest {
                 db = db,
                 driver = driver,
                 ioDispatcher = Dispatchers.Unconfined,
+                writeLock = LibraryWriteLock(),
             )
 
             val result = scanner.scanFull()
@@ -150,6 +153,46 @@ class JvmFilesystemScannerTest {
         }
     }
 
+    // ---------- Inaccessible-root guard (codex #4, PR #30) ----------
+
+    @Test
+    fun `scanIncremental with an inaccessible root does NOT soft-delete existing tracks`() = runBlocking {
+        // A configured root that is non-empty in the LIST but inaccessible on
+        // disk (unmounted external drive, missing D:\tiddl). The empty-folders
+        // guard does NOT cover this — the list is non-empty — so without the
+        // inaccessible-root guard the walk discovers 0 files and softDelete
+        // wipes the whole library on the next automatic scan-on-launch.
+        val (driver, db) = inMemoryDb()
+        try {
+            val sentinelId = insertSentinelTrack(db, scanStartedMs = 1_000L)
+            val scanner = JvmFilesystemScanner(
+                scanFoldersFlow = flowOf(listOf(Path.of("/nonexistent/unmounted-drive/music"))),
+                db = db,
+                driver = driver,
+                ioDispatcher = Dispatchers.Unconfined,
+                writeLock = LibraryWriteLock(),
+            )
+
+            val result = scanner.scanIncremental()
+
+            assertTrue(result is Either.Right, "expected Right, got: $result")
+            assertEquals(
+                0,
+                result.value.tracksSoftDeleted,
+                "tracksSoftDeleted MUST be 0 when a configured root is inaccessible — " +
+                    "else an unmounted drive wipes the library on scan-on-launch",
+            )
+            val sentinel = db.trackQueries.selectById(sentinelId).executeAsOneOrNull()
+            assertNotNull(sentinel, "sentinel track row should still exist")
+            assertNull(
+                sentinel.deleted_at_ms,
+                "sentinel.deleted_at_ms MUST be null when a configured root is inaccessible",
+            )
+        } finally {
+            driver.close()
+        }
+    }
+
     @Test
     fun `scanIncremental with empty scanFolders + empty DB returns zero ScanResult cleanly`() = runBlocking {
         val (driver, db) = inMemoryDb()
@@ -159,6 +202,7 @@ class JvmFilesystemScannerTest {
                 db = db,
                 driver = driver,
                 ioDispatcher = Dispatchers.Unconfined,
+                writeLock = LibraryWriteLock(),
             )
 
             val result = scanner.scanIncremental()
