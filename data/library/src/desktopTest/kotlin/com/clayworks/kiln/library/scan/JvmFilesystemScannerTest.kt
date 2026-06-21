@@ -87,6 +87,7 @@ class JvmFilesystemScannerTest {
                 db = db,
                 driver = driver,
                 ioDispatcher = Dispatchers.Unconfined,
+                writeLock = LibraryWriteLock(),
             )
 
             val result = scanner.scanIncremental()
@@ -129,6 +130,7 @@ class JvmFilesystemScannerTest {
                 db = db,
                 driver = driver,
                 ioDispatcher = Dispatchers.Unconfined,
+                writeLock = LibraryWriteLock(),
             )
 
             val result = scanner.scanFull()
@@ -168,6 +170,7 @@ class JvmFilesystemScannerTest {
                 db = db,
                 driver = driver,
                 ioDispatcher = Dispatchers.Unconfined,
+                writeLock = LibraryWriteLock(),
             )
 
             val result = scanner.scanIncremental()
@@ -199,6 +202,7 @@ class JvmFilesystemScannerTest {
                 db = db,
                 driver = driver,
                 ioDispatcher = Dispatchers.Unconfined,
+                writeLock = LibraryWriteLock(),
             )
 
             val result = scanner.scanIncremental()

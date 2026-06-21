@@ -8,6 +8,7 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlin.math.pow
 
@@ -59,6 +60,7 @@ class TrackAnalysisRunner(
     private val db: KilnDatabase,
     private val analyzer: TrackAnalyzer,
     private val ioDispatcher: CoroutineDispatcher,
+    private val writeLock: LibraryWriteLock,
 ) {
 
     /**
@@ -75,9 +77,11 @@ class TrackAnalysisRunner(
         val touchedAlbumIds = mutableSetOf<Long>()
 
         while (true) {
-            val page = db.trackQueries
-                .selectTracksMissingReplayGain(pageSize = PAGE_SIZE, pageOffset = skippedTotal)
-                .executeAsList()
+            val page = writeLock.mutex.withLock {
+                db.trackQueries
+                    .selectTracksMissingReplayGain(pageSize = PAGE_SIZE, pageOffset = skippedTotal)
+                    .executeAsList()
+            }
             if (page.isEmpty()) break
 
             var pageSkippedDelta = 0
@@ -93,11 +97,13 @@ class TrackAnalysisRunner(
                     is Either.Right -> {
                         val gainDb = REFERENCE_LUFS - result.value.integratedLufs
                         val peakLinear = dbtpToLinear(result.value.truePeakDbtp)
-                        db.trackQueries.updateTrackReplayGain(
-                            id = row.id,
-                            db = gainDb,
-                            peak = peakLinear,
-                        )
+                        writeLock.mutex.withLock {
+                            db.trackQueries.updateTrackReplayGain(
+                                id = row.id,
+                                db = gainDb,
+                                peak = peakLinear,
+                            )
+                        }
                         analyzed++
                         row.album_id?.let { touchedAlbumIds.add(it) }
                     }
@@ -119,7 +125,9 @@ class TrackAnalysisRunner(
         // coverage; run 2's newly-analyzed tracks never re-aggregate).
         var albumsAggregated = 0
         for (albumId in touchedAlbumIds) {
-            val perTrack = db.trackQueries.selectTrackReplayGainForAlbum(albumId).executeAsList()
+            val perTrack = writeLock.mutex.withLock {
+                db.trackQueries.selectTrackReplayGainForAlbum(albumId).executeAsList()
+            }
             if (perTrack.isEmpty()) continue
 
             // selectTrackReplayGainForAlbum filters IS NOT NULL so replay_gain_track_db is non-null.
@@ -134,12 +142,14 @@ class TrackAnalysisRunner(
             val albumDb = REFERENCE_LUFS - albumLufs
             val albumPeak = perTrack.mapNotNull { it.replay_gain_track_peak }.maxOrNull() ?: 0.0
 
-            db.transaction {
-                db.trackQueries.updateAlbumReplayGainForAlbum(
-                    albumId = albumId,
-                    db = albumDb,
-                    peak = albumPeak,
-                )
+            writeLock.mutex.withLock {
+                db.transaction {
+                    db.trackQueries.updateAlbumReplayGainForAlbum(
+                        albumId = albumId,
+                        db = albumDb,
+                        peak = albumPeak,
+                    )
+                }
             }
             albumsAggregated++
         }
@@ -177,7 +187,9 @@ class TrackAnalysisRunner(
      * in sync via the per-task review process.
      */
     fun runOnceWithProgress(): Flow<AnalysisProgress> = flow {
-        val total = db.trackQueries.countTracksMissingReplayGain().executeAsOne().toInt()
+        val total = writeLock.mutex.withLock {
+            db.trackQueries.countTracksMissingReplayGain().executeAsOne().toInt()
+        }
         emit(AnalysisProgress.Started(total = total))
 
         val startedMs = System.currentTimeMillis()
@@ -187,9 +199,11 @@ class TrackAnalysisRunner(
         val touchedAlbumIds = mutableSetOf<Long>()
 
         while (true) {
-            val page = db.trackQueries
-                .selectTracksMissingReplayGain(pageSize = PAGE_SIZE, pageOffset = skippedTotal)
-                .executeAsList()
+            val page = writeLock.mutex.withLock {
+                db.trackQueries
+                    .selectTracksMissingReplayGain(pageSize = PAGE_SIZE, pageOffset = skippedTotal)
+                    .executeAsList()
+            }
             if (page.isEmpty()) break
 
             var pageSkippedDelta = 0
@@ -205,11 +219,13 @@ class TrackAnalysisRunner(
                     is Either.Right -> {
                         val gainDb = REFERENCE_LUFS - result.value.integratedLufs
                         val peakLinear = dbtpToLinear(result.value.truePeakDbtp)
-                        db.trackQueries.updateTrackReplayGain(
-                            id = row.id,
-                            db = gainDb,
-                            peak = peakLinear,
-                        )
+                        writeLock.mutex.withLock {
+                            db.trackQueries.updateTrackReplayGain(
+                                id = row.id,
+                                db = gainDb,
+                                peak = peakLinear,
+                            )
+                        }
                         analyzed++
                         row.album_id?.let { touchedAlbumIds.add(it) }
                     }
@@ -224,7 +240,9 @@ class TrackAnalysisRunner(
 
         var albumsAggregated = 0
         for (albumId in touchedAlbumIds) {
-            val perTrack = db.trackQueries.selectTrackReplayGainForAlbum(albumId).executeAsList()
+            val perTrack = writeLock.mutex.withLock {
+                db.trackQueries.selectTrackReplayGainForAlbum(albumId).executeAsList()
+            }
             if (perTrack.isEmpty()) continue
 
             val trackLufsList = perTrack.map { row -> REFERENCE_LUFS - row.replay_gain_track_db }
@@ -238,12 +256,14 @@ class TrackAnalysisRunner(
             val albumDb = REFERENCE_LUFS - albumLufs
             val albumPeak = perTrack.mapNotNull { it.replay_gain_track_peak }.maxOrNull() ?: 0.0
 
-            db.transaction {
-                db.trackQueries.updateAlbumReplayGainForAlbum(
-                    albumId = albumId,
-                    db = albumDb,
-                    peak = albumPeak,
-                )
+            writeLock.mutex.withLock {
+                db.transaction {
+                    db.trackQueries.updateAlbumReplayGainForAlbum(
+                        albumId = albumId,
+                        db = albumDb,
+                        peak = albumPeak,
+                    )
+                }
             }
             albumsAggregated++
         }

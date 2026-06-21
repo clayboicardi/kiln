@@ -45,6 +45,31 @@ object SafTreeWalker {
         yieldAll(walkChildren(contentResolver, treeUri, rootDocId))
     }
 
+    /**
+     * Probes whether [treeUri] is currently readable — the persisted grant is
+     * intact AND the underlying provider/storage is reachable. A revoked grant,
+     * removed SD card, or offline cloud provider makes the root children query
+     * throw [SecurityException] or return a null cursor. The scanner uses this
+     * to decide whether a zero-document walk means "empty" (reconcile/soft-delete
+     * OK) or "unavailable" (skip reconciliation — don't wipe SAF-only tracks).
+     */
+    fun isTreeReadable(contentResolver: ContentResolver, treeUri: Uri): Boolean {
+        val rootDocId = try {
+            DocumentsContract.getTreeDocumentId(treeUri)
+        } catch (e: IllegalArgumentException) {
+            return false
+        }
+        val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, rootDocId)
+        return try {
+            contentResolver
+                .query(childrenUri, arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID), null, null, null)
+                ?.use { true } ?: false
+        } catch (e: SecurityException) {
+            log.w(e) { "SAF tree unreadable: $treeUri (grant revoked / storage unavailable?)" }
+            false
+        }
+    }
+
     private fun walkChildren(
         contentResolver: ContentResolver,
         treeUri: Uri,
