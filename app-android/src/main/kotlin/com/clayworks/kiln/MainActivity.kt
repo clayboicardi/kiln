@@ -42,7 +42,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
-import androidx.lifecycle.lifecycleScope
 import app.cash.sqldelight.coroutines.asFlow
 import app.cash.sqldelight.coroutines.mapToOne
 import com.clayworks.kiln.di.AndroidAppGraph
@@ -107,7 +106,7 @@ class MainActivity : ComponentActivity() {
                     if (showSettings) {
                         AndroidSettingsRoute(
                             graph = graph,
-                            scope = lifecycleScope,
+                            scope = app.appScope,
                             onClose = { showSettings = false },
                         )
                     } else {
@@ -177,13 +176,14 @@ private fun AndroidSettingsRoute(
 
     var scanState: ScanUiState by remember { mutableStateOf<ScanUiState>(ScanUiState.Idle) }
     // One incremental scan, mapping ScanResult/ScanError into the coarse UI state.
-    // Runs on the Activity lifecycleScope (not the route's coroutineScope) so
-    // closing Settings mid-scan doesn't cancel it — important for auto-scan-on-add,
-    // where the user may navigate away immediately. scanState writes after the
-    // route leaves composition are harmless no-ops. The scanner's Mutex serializes
-    // this with any launch/auto-on-add scan already running.
+    // Runs on the process-lifetime appScope (not lifecycleScope/route scope) so a
+    // config-change or Settings-close mid-scan doesn't cancel it — important for
+    // auto-scan-on-add, where the user may navigate away immediately. Dispatchers.Main
+    // keeps the scanState writes on the UI thread; writes after the route leaves
+    // composition are harmless no-ops. The shared LibraryWriteLock serializes this
+    // against any scan/analyzer already running. (codex round-3 #2)
     val runScanNow: () -> Unit = {
-        scope.launch {
+        scope.launch(Dispatchers.Main) {
             scanState = ScanUiState.Scanning
             scanState = graph.scanner.scanIncremental().fold(
                 { err -> ScanUiState.Error(err.toString()) },
