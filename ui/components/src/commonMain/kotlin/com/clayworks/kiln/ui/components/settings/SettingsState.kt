@@ -20,4 +20,9 @@ data class SettingsState(
     val replayGainMode: ReplayGainMode,
     val replayGainPreAmpDb: Double,
     val backfill: BackfillUiState,
+    // Appended with temporary defaults so app-module call sites compile before
+    // the platform routes wire them; defaults are removed once both routes pass
+    // explicit values (see the scan-trigger plan, Task 5).
+    val autoScanOnFolderAdd: Boolean = true,
+    val scan: ScanUiState = ScanUiState.Idle,
 )

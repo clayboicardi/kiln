@@ -23,6 +23,8 @@ class SettingsScreenTest {
         replayGainMode: ReplayGainMode = ReplayGainMode.Off,
         replayGainPreAmpDb: Double = 0.0,
         backfill: BackfillUiState = BackfillUiState.Idle(missingCount = 0),
+        autoScanOnFolderAdd: Boolean = true,
+        scan: ScanUiState = ScanUiState.Idle,
     ) = SettingsState(
         themeMode = themeMode,
         scanOnLaunch = scanOnLaunch,
@@ -30,6 +32,8 @@ class SettingsScreenTest {
         replayGainMode = replayGainMode,
         replayGainPreAmpDb = replayGainPreAmpDb,
         backfill = backfill,
+        autoScanOnFolderAdd = autoScanOnFolderAdd,
+        scan = scan,
     )
 
     private fun renderScreen(
@@ -41,6 +45,8 @@ class SettingsScreenTest {
         onReplayGainModeChange: (ReplayGainMode) -> Unit = {},
         onReplayGainPreAmpDbChange: (Double) -> Unit = {},
         onTriggerBackfill: () -> Unit = {},
+        onAutoScanOnFolderAddChange: (Boolean) -> Unit = {},
+        onTriggerScan: () -> Unit = {},
     ) {
         composeRule.setContent {
             SettingsScreen(
@@ -52,6 +58,8 @@ class SettingsScreenTest {
                 onReplayGainModeChange = onReplayGainModeChange,
                 onReplayGainPreAmpDbChange = onReplayGainPreAmpDbChange,
                 onTriggerBackfill = onTriggerBackfill,
+                onAutoScanOnFolderAddChange = onAutoScanOnFolderAddChange,
+                onTriggerScan = onTriggerScan,
             )
         }
     }
@@ -94,6 +102,43 @@ class SettingsScreenTest {
         renderScreen(onPickFolder = { clicked = true })
         composeRule.onNodeWithText("Add Folder").performClick()
         assertTrue(clicked)
+    }
+
+    @Test
+    fun shows_auto_scan_on_folder_add_toggle() {
+        renderScreen()
+        composeRule.onNodeWithText("Auto-scan when a folder is added").assertExists()
+    }
+
+    @Test
+    fun scan_idle_shows_scan_now_button() {
+        renderScreen(state = defaultState(scan = ScanUiState.Idle))
+        composeRule.onNodeWithText("Scan now").assertExists()
+    }
+
+    @Test
+    fun scan_now_button_invokes_callback() {
+        var clicked = false
+        renderScreen(onTriggerScan = { clicked = true })
+        composeRule.onNodeWithText("Scan now").performClick()
+        assertTrue(clicked)
+    }
+
+    @Test
+    fun scan_in_progress_shows_scanning_text() {
+        renderScreen(state = defaultState(scan = ScanUiState.Scanning))
+        composeRule.onNodeWithText("Scanning library…").assertExists()
+    }
+
+    @Test
+    fun scan_done_shows_summary() {
+        renderScreen(
+            state = defaultState(
+                scan = ScanUiState.Done(added = 5, updated = 0, softDeleted = 0, unchanged = 27761, durationMs = 3000L),
+            ),
+        )
+        composeRule.onNodeWithText("Scan complete: 5 added, 0 updated, 0 removed, 27761 unchanged in 3s.")
+            .assertExists()
     }
 
     @Test
