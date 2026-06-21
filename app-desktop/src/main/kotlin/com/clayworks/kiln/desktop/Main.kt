@@ -124,6 +124,7 @@ fun main() {
                     if (showSettings) {
                         DesktopSettingsRoute(
                             graph = graph,
+                            appScope = appScope,
                             onClose = { showSettings = false },
                         )
                     } else {
@@ -161,6 +162,7 @@ fun main() {
 @Composable
 private fun DesktopSettingsRoute(
     graph: DesktopAppGraph,
+    appScope: CoroutineScope,
     onClose: () -> Unit,
 ) {
     val coroutineScope = rememberCoroutineScope()
@@ -188,10 +190,13 @@ private fun DesktopSettingsRoute(
 
     var scanState: ScanUiState by remember { mutableStateOf<ScanUiState>(ScanUiState.Idle) }
     // One incremental scan, mapping ScanResult/ScanError into the coarse UI state.
-    // Uses the route's coroutineScope (matches the backfill button); closing
-    // Settings mid-scan cancels it — acceptable, the scan is short and re-triggerable.
+    // Runs on the process-lifetime appScope (not the route's coroutineScope) so
+    // closing Settings mid-scan doesn't cancel it — important for auto-scan-on-add,
+    // where the user may navigate away immediately. scanState writes after the
+    // route leaves composition are harmless no-ops. The scanner's Mutex serializes
+    // this with any launch/auto-on-add scan already running.
     val runScanNow: () -> Unit = {
-        coroutineScope.launch {
+        appScope.launch {
             scanState = ScanUiState.Scanning
             scanState = graph.scanner.scanIncremental().fold(
                 { err -> ScanUiState.Error(err.toString()) },

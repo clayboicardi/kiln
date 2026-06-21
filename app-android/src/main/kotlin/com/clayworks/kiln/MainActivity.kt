@@ -58,6 +58,7 @@ import com.clayworks.kiln.ui.components.specsheet.LocalPlayer
 import com.clayworks.kiln.ui.components.settings.SettingsScreen
 import com.clayworks.kiln.ui.components.settings.SettingsState
 import com.clayworks.kiln.ui.theme.KilnTheme
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -93,6 +94,7 @@ class MainActivity : ComponentActivity() {
                     if (showSettings) {
                         AndroidSettingsRoute(
                             graph = graph,
+                            scope = lifecycleScope,
                             onClose = { showSettings = false },
                         )
                     } else {
@@ -134,6 +136,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun AndroidSettingsRoute(
     graph: AndroidAppGraph,
+    scope: CoroutineScope,
     onClose: () -> Unit,
 ) {
     val coroutineScope = rememberCoroutineScope()
@@ -161,10 +164,13 @@ private fun AndroidSettingsRoute(
 
     var scanState: ScanUiState by remember { mutableStateOf<ScanUiState>(ScanUiState.Idle) }
     // One incremental scan, mapping ScanResult/ScanError into the coarse UI state.
-    // Uses the route's coroutineScope (matches the backfill button); leaving
-    // Settings mid-scan cancels it — acceptable, the scan is short and re-triggerable.
+    // Runs on the Activity lifecycleScope (not the route's coroutineScope) so
+    // closing Settings mid-scan doesn't cancel it — important for auto-scan-on-add,
+    // where the user may navigate away immediately. scanState writes after the
+    // route leaves composition are harmless no-ops. The scanner's Mutex serializes
+    // this with any launch/auto-on-add scan already running.
     val runScanNow: () -> Unit = {
-        coroutineScope.launch {
+        scope.launch {
             scanState = ScanUiState.Scanning
             scanState = graph.scanner.scanIncremental().fold(
                 { err -> ScanUiState.Error(err.toString()) },
