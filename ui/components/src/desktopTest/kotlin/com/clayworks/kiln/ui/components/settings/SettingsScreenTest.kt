@@ -1,6 +1,7 @@
 package com.clayworks.kiln.ui.components.settings
 
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -139,6 +140,19 @@ class SettingsScreenTest {
         )
         composeRule.onNodeWithText("Scan complete: 5 added, 0 updated, 0 removed, 27761 unchanged in 3s.")
             .assertExists()
+    }
+
+    @Test
+    fun scan_button_disabled_while_backfill_in_progress() {
+        // codex #6: scan + RG-analyzer both write the track table over one DB
+        // connection, so the UI must not let them run concurrently.
+        renderScreen(
+            state = defaultState(
+                scan = ScanUiState.Idle,
+                backfill = BackfillUiState.InProgress(analyzed = 1, skipped = 0, total = 10),
+            ),
+        )
+        composeRule.onNodeWithText("Scan now").assertIsNotEnabled()
     }
 
     @Test

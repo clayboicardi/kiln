@@ -148,7 +148,13 @@ fun SettingsScreen(
         OutlinedButton(onClick = onPickFolder) { Text("Add Folder") }
 
         Spacer(modifier = Modifier.height(16.dp))
-        ScanContent(state = state.scan, onTriggerScan = onTriggerScan)
+        ScanContent(
+            state = state.scan,
+            onTriggerScan = onTriggerScan,
+            // Disable scan while a ReplayGain backfill runs — both write `track`
+            // rows over one DB connection; concurrent writes lose data / conflict. (codex #6)
+            enabled = state.backfill !is BackfillUiState.InProgress,
+        )
 
         // === ReplayGain section (new) ===
         Spacer(modifier = Modifier.height(16.dp))
@@ -200,6 +206,8 @@ fun SettingsScreen(
         BackfillContent(
             state = state.backfill,
             onTriggerBackfill = onTriggerBackfill,
+            // Disable analyze while a scan runs (same single-connection conflict). (codex #6)
+            enabled = state.scan !is ScanUiState.Scanning,
             modifier = Modifier.padding(top = 8.dp),
         )
     }
@@ -209,11 +217,12 @@ fun SettingsScreen(
 private fun ScanContent(
     state: ScanUiState,
     onTriggerScan: () -> Unit,
+    enabled: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     when (state) {
         is ScanUiState.Idle -> Column(modifier = modifier) {
-            Button(onClick = onTriggerScan) { Text("Scan now") }
+            Button(onClick = onTriggerScan, enabled = enabled) { Text("Scan now") }
         }
         is ScanUiState.Scanning -> Column(modifier = modifier) {
             Text("Scanning library…", style = MaterialTheme.typography.bodyMedium)
@@ -227,12 +236,12 @@ private fun ScanContent(
                 style = MaterialTheme.typography.bodyMedium,
             )
             Spacer(modifier = Modifier.height(8.dp))
-            Button(onClick = onTriggerScan) { Text("Scan again") }
+            Button(onClick = onTriggerScan, enabled = enabled) { Text("Scan again") }
         }
         is ScanUiState.Error -> Column(modifier = modifier) {
             Text("Scan failed: ${state.message}", style = MaterialTheme.typography.bodyMedium)
             Spacer(modifier = Modifier.height(8.dp))
-            Button(onClick = onTriggerScan) { Text("Retry scan") }
+            Button(onClick = onTriggerScan, enabled = enabled) { Text("Retry scan") }
         }
     }
 }
@@ -241,6 +250,7 @@ private fun ScanContent(
 private fun BackfillContent(
     state: BackfillUiState,
     onTriggerBackfill: () -> Unit,
+    enabled: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     when (state) {
@@ -257,7 +267,7 @@ private fun BackfillContent(
                 Spacer(modifier = Modifier.height(8.dp))
                 Button(
                     onClick = onTriggerBackfill,
-                    enabled = state.missingCount > 0,
+                    enabled = enabled && state.missingCount > 0,
                 ) {
                     Text("Analyze")
                 }
@@ -289,7 +299,7 @@ private fun BackfillContent(
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 Spacer(modifier = Modifier.height(8.dp))
-                Button(onClick = onTriggerBackfill) {
+                Button(onClick = onTriggerBackfill, enabled = enabled) {
                     Text("Re-analyze")
                 }
             }
