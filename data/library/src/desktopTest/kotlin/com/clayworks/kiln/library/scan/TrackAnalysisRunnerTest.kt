@@ -324,4 +324,57 @@ class TrackAnalysisRunnerTest {
             "expected an IO worker thread, got '$analyzerThread'",
         )
     }
+
+    // ---------- Item 2: revalidate-before-persist (#31) ----------
+
+    @Test
+    fun `updateTrackReplayGainIfUnchanged writes when id, file_path and mtime all match`() {
+        val artistId = testDb.insertArtist("A")
+        val id = testDb.insertTrack(artistId, title = "T", filePath = "/x.flac", fileMtimeMs = 111L)
+        testDb.db.trackQueries.updateTrackReplayGainIfUnchanged(
+            db = 5.0, peak = 0.9, id = id, filePath = "/x.flac", fileMtimeMs = 111L,
+        )
+        assertEquals(5.0, testDb.db.trackQueries.selectById(id).executeAsOne().replay_gain_track_db!!, 1e-9)
+    }
+
+    @Test
+    fun `updateTrackReplayGainIfUnchanged is a no-op when file_path changed`() {
+        val artistId = testDb.insertArtist("A")
+        val id = testDb.insertTrack(artistId, title = "T", filePath = "/x.flac", fileMtimeMs = 111L)
+        testDb.db.trackQueries.updateTrackReplayGainIfUnchanged(
+            db = 5.0, peak = 0.9, id = id, filePath = "/STALE.flac", fileMtimeMs = 111L,
+        )
+        assertNull(testDb.db.trackQueries.selectById(id).executeAsOne().replay_gain_track_db)
+    }
+
+    @Test
+    fun `updateTrackReplayGainIfUnchanged is a no-op when mtime changed`() {
+        val artistId = testDb.insertArtist("A")
+        val id = testDb.insertTrack(artistId, title = "T", filePath = "/x.flac", fileMtimeMs = 111L)
+        testDb.db.trackQueries.updateTrackReplayGainIfUnchanged(
+            db = 5.0, peak = 0.9, id = id, filePath = "/x.flac", fileMtimeMs = 999L,
+        )
+        assertNull(testDb.db.trackQueries.selectById(id).executeAsOne().replay_gain_track_db)
+    }
+
+    @Test
+    fun `analyzer result is dropped when the row is soft-deleted during analyze`() = runBlocking {
+        val artistId = testDb.insertArtist("Test Artist")
+        val albumId = testDb.insertAlbum(artistId, "Test Album")
+        val id = testDb.insertTrack(artistId, albumId, "T", filePath = "/test/orig.flac", fileMtimeMs = 111L)
+
+        val analyzer = object : TrackAnalyzer {
+            override suspend fun analyze(filePath: String, codec: String): Either<TrackAnalysisError, TrackLoudness> {
+                // Concurrent scan soft-deletes this row while we "analyze" it.
+                testDb.db.trackQueries.softDelete(deletedAtMs = 9_999_999L, id = id)
+                return Either.Right(TrackLoudness(integratedLufs = -20.0, truePeakDbtp = -1.0))
+            }
+        }
+        val runner = TrackAnalysisRunner(testDb.db, analyzer, Dispatchers.Unconfined, LibraryWriteLock())
+        runner.runOnce()
+
+        // The guarded persist must have matched 0 rows; RG stays NULL.
+        val row = testDb.db.trackQueries.selectByFilePath("/test/orig.flac").executeAsOne()
+        assertNull(row.replay_gain_track_db, "stale RG must NOT be persisted onto the changed row")
+    }
 }

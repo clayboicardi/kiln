@@ -330,7 +330,7 @@ WHERE id = ?;
 -- Worklist enumeration. Paginated so the runner can yield + report progress.
 -- Includes album_id so the runner can group for per-album rollup later.
 selectTracksMissingReplayGain:
-SELECT id, file_path, codec, sample_rate_hz, bit_depth, channels, album_id
+SELECT id, file_path, codec, sample_rate_hz, bit_depth, channels, album_id, file_mtime_ms
 FROM track
 WHERE deleted_at_ms IS NULL
   AND replay_gain_track_db IS NULL
@@ -343,13 +343,20 @@ SELECT COUNT(*) FROM track
 WHERE deleted_at_ms IS NULL
   AND replay_gain_track_db IS NULL;
 
--- Per-track persist. `peak` is a linear sample amplitude (RG v2 convention);
--- caller converts from dBTP → linear before invoking.
-updateTrackReplayGain:
+-- Per-track persist, guarded against the analyzer TOCTOU (#31 item 2). The
+-- runner reads file_path + file_mtime_ms with the worklist, releases the lock
+-- across the slow analyze(), then persists here: if a concurrent scan rewrote
+-- file_path, changed file_mtime_ms, or soft-deleted the row in that gap, this
+-- UPDATE matches 0 rows and the stale result is dropped (replay_gain_track_db
+-- stays NULL, so the row re-analyzes on a later pass). `peak` is linear (RG v2).
+updateTrackReplayGainIfUnchanged:
 UPDATE track
 SET replay_gain_track_db = :db,
     replay_gain_track_peak = :peak
-WHERE id = :id;
+WHERE id = :id
+  AND file_path = :filePath
+  AND file_mtime_ms = :fileMtimeMs
+  AND deleted_at_ms IS NULL;
 
 -- Distinct album_ids with at least one analyzed track but no album-level
 -- aggregate yet. Used at the end of an analyzer pass to drive the rollup.
