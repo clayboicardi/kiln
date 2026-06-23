@@ -219,6 +219,11 @@ class AndroidMediaStoreScanner(
         val tags = try {
             readTagsFromCursor(cursor, cols, filePath)
         } catch (e: Throwable) {
+            // Encountered (cursor yielded the row) but unreadable — mark an already-
+            // tracked row as seen so it isn't soft-deleted. Item 1, #31.
+            if (existing != null) {
+                db.trackQueries.touchLastScanned(scannedAtMs = scanStartedMs, filePath = filePath)
+            }
             return Outcome.ParseFailed(mediaId, e)
         }
 
@@ -406,6 +411,13 @@ class AndroidMediaStoreScanner(
                 val metadata = SafTagReader.read(context.contentResolver, doc.documentUri, doc.displayName)
                 if (metadata == null) {
                     parseErrors++
+                    // Encountered (SafTreeWalker yielded the doc) but unreadable — mark an
+                    // already-tracked row as seen so the soft-delete sweep doesn't wipe a
+                    // SAF-only track whose provider listed it but couldn't open it (offline
+                    // cloud doc). Item 1, #31.
+                    if (existing != null) {
+                        db.trackQueries.touchLastScanned(scannedAtMs = scanStartedMs, filePath = filePath)
+                    }
                     log.w { "SafTagReader returned null for ${doc.displayName} ($filePath); skipping" }
                     continue
                 }
