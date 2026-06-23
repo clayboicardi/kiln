@@ -18,6 +18,7 @@ import com.clayworks.kiln.library.scan.internal.parseLeadingLong
 import com.clayworks.kiln.library.scan.internal.parseReplayGainDb
 import com.clayworks.kiln.library.scan.internal.rebuildFtsIndex
 import com.clayworks.kiln.library.scan.internal.toSortName
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -203,6 +204,7 @@ class JvmFilesystemScanner(
         val attrs = try {
             Files.readAttributes(path, java.nio.file.attribute.BasicFileAttributes::class.java)
         } catch (e: Throwable) {
+            if (e is CancellationException) throw e
             // The file was yielded by Files.walk but can't be stat'd now (vanished
             // mid-walk, permissions). It WAS encountered — if we already track it,
             // mark it seen so the soft-delete sweep doesn't treat present-but-
@@ -228,6 +230,7 @@ class JvmFilesystemScanner(
         val tags = try {
             readTags(path)
         } catch (e: Throwable) {
+            if (e is CancellationException) throw e
             // Present but tags unreadable (corrupt header, unsupported). Encountered →
             // mark seen so it isn't soft-deleted; just don't rewrite its metadata.
             if (existing != null) {

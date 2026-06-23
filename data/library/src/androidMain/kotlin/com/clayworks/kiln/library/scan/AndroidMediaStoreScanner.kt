@@ -27,6 +27,7 @@ import com.clayworks.kiln.library.scan.internal.SafTagReader
 import com.clayworks.kiln.library.scan.internal.SafTreeWalker
 import com.clayworks.kiln.library.scan.internal.rebuildFtsIndex
 import com.clayworks.kiln.library.scan.internal.toSortName
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -219,6 +220,7 @@ class AndroidMediaStoreScanner(
         val tags = try {
             readTagsFromCursor(cursor, cols, filePath)
         } catch (e: Throwable) {
+            if (e is CancellationException) throw e
             // Encountered (cursor yielded the row) but unreadable — mark an already-
             // tracked row as seen so it isn't soft-deleted. Item 1, #31.
             if (existing != null) {
