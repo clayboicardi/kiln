@@ -137,7 +137,7 @@ fun `a row whose file is absent IS still soft-deleted`() = runBlocking {
         assertTrue(result is Either.Right, "expected Right, got $result")
         assertEquals(1, result.value.tracksSoftDeleted, "an absent file's row must be reconciled (soft-deleted)")
         val row = db.trackQueries.selectByFilePath(ghostPath).executeAsOne()
-        assertNotNull(row.deleted_at_ms, "absent file's row must be soft-deleted")
+        assertTrue(row.deleted_at_ms != null, "absent file's row must be soft-deleted")  // assertNotNull returns T → breaks JUnit4 void-return; use assertTrue
     } finally {
         driver.close(); Files.deleteIfExists(tempDir)
     }
