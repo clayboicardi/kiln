@@ -98,10 +98,13 @@ class TrackAnalysisRunner(
                         val gainDb = REFERENCE_LUFS - result.value.integratedLufs
                         val peakLinear = dbtpToLinear(result.value.truePeakDbtp)
                         writeLock.mutex.withLock {
-                            db.trackQueries.updateTrackReplayGain(
-                                id = row.id,
+                            db.trackQueries.updateTrackReplayGainIfUnchanged(
                                 db = gainDb,
                                 peak = peakLinear,
+                                id = row.id,
+                                filePath = row.file_path,
+                                fileMtimeMs = row.file_mtime_ms,
+                                fileSizeBytes = row.file_size_bytes,
                             )
                         }
                         analyzed++
@@ -220,10 +223,13 @@ class TrackAnalysisRunner(
                         val gainDb = REFERENCE_LUFS - result.value.integratedLufs
                         val peakLinear = dbtpToLinear(result.value.truePeakDbtp)
                         writeLock.mutex.withLock {
-                            db.trackQueries.updateTrackReplayGain(
-                                id = row.id,
+                            db.trackQueries.updateTrackReplayGainIfUnchanged(
                                 db = gainDb,
                                 peak = peakLinear,
+                                id = row.id,
+                                filePath = row.file_path,
+                                fileMtimeMs = row.file_mtime_ms,
+                                fileSizeBytes = row.file_size_bytes,
                             )
                         }
                         analyzed++

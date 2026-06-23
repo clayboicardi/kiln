@@ -13,6 +13,7 @@ import com.clayworks.kiln.data.library.db.KilnDatabase
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
+import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -71,6 +72,31 @@ class JvmFilesystemScannerTest {
             date_added_ms = scanStartedMs,
             date_modified_ms = scanStartedMs,
             last_scanned_ms = scanStartedMs,
+        )
+        return db.trackQueries.lastInsertRowId().executeAsOne()
+    }
+
+    /** Insert a live track row at an exact file_path with caller-chosen scan/mtime/size. Returns row id. */
+    private fun insertTrackAt(
+        db: KilnDatabase,
+        filePath: String,
+        lastScannedMs: Long,
+        fileMtimeMs: Long,
+        fileSizeBytes: Long,
+    ): Long {
+        db.artistQueries.insert(name = "A", name_sort = "a", musicbrainz_artist_id = null)
+        val artistId = db.artistQueries.lastInsertRowId().executeAsOne()
+        db.trackQueries.insert(
+            album_id = null, artist_id = artistId,
+            title = "T", title_sort = "t", duration_ms = 1_000L,
+            track_number = null, disc_number = null, year = null, date = null,
+            genre = null, composer = null, bpm = null,
+            codec = "FLAC", bitrate_kbps = null, sample_rate_hz = 44_100L, bit_depth = 16L, channels = 2L,
+            file_path = filePath, file_size_bytes = fileSizeBytes, file_mtime_ms = fileMtimeMs, has_known_mtime = 1L,
+            replay_gain_track_db = null, replay_gain_album_db = null,
+            replay_gain_track_peak = null, replay_gain_album_peak = null,
+            has_embedded_art = 0L, art_path = null, source = "local",
+            date_added_ms = lastScannedMs, date_modified_ms = lastScannedMs, last_scanned_ms = lastScannedMs,
         )
         return db.trackQueries.lastInsertRowId().executeAsOne()
     }
@@ -216,6 +242,64 @@ class JvmFilesystemScannerTest {
             assertEquals(0L, scanResult.durationMs)
         } finally {
             driver.close()
+        }
+    }
+
+    // ---------- Item 1: mark-seen-on-encounter (#31) ----------
+
+    @Test
+    fun `present but unreadable file is marked seen, not soft-deleted`() = runBlocking {
+        val (driver, db) = inMemoryDb()
+        val tempDir = Files.createTempDirectory("kiln-itm1-preserve")
+        try {
+            // A file that EXISTS (statable) but whose tags can't be parsed → readTags throws.
+            val badFile = tempDir.resolve("bad.flac")
+            Files.write(badFile, byteArrayOf(0, 1, 2, 3, 4, 5, 6, 7))  // not a valid FLAC stream
+            val badPath = badFile.toString()
+            // Existing row with OLD last_scanned_ms and mtime/size that DIFFER from the
+            // on-disk file, so the unchanged-fast-path does NOT short-circuit and the
+            // readTags() path is exercised.
+            insertTrackAt(db, filePath = badPath, lastScannedMs = 1_000L, fileMtimeMs = 1L, fileSizeBytes = 1L)
+
+            val floor = System.currentTimeMillis()
+            val scanner = JvmFilesystemScanner(
+                scanFoldersFlow = flowOf(listOf(tempDir)),
+                db = db, driver = driver, ioDispatcher = Dispatchers.Unconfined, writeLock = LibraryWriteLock(),
+            )
+            val result = scanner.scanIncremental()
+
+            assertTrue(result is Either.Right, "scan must complete despite the unreadable file (no abort): $result")
+            assertEquals(0, result.value.tracksSoftDeleted, "present-but-unreadable file must NOT be soft-deleted")
+            val row = db.trackQueries.selectByFilePath(badPath).executeAsOne()
+            assertNull(row.deleted_at_ms, "row must not be soft-deleted")
+            assertTrue(row.last_scanned_ms >= floor, "last_scanned_ms must be bumped (marked seen), was ${row.last_scanned_ms}")
+        } finally {
+            driver.close()
+            Files.deleteIfExists(tempDir.resolve("bad.flac")); Files.deleteIfExists(tempDir)
+        }
+    }
+
+    @Test
+    fun `a row whose file is absent IS still soft-deleted`() = runBlocking {
+        // Reconciliation regression guard: the item-1 fix must not disable legitimate soft-delete.
+        val (driver, db) = inMemoryDb()
+        val tempDir = Files.createTempDirectory("kiln-itm1-reconcile")
+        try {
+            val ghostPath = tempDir.resolve("ghost.flac").toString()  // never created on disk
+            insertTrackAt(db, filePath = ghostPath, lastScannedMs = 1_000L, fileMtimeMs = 1L, fileSizeBytes = 1L)
+
+            val scanner = JvmFilesystemScanner(
+                scanFoldersFlow = flowOf(listOf(tempDir)),
+                db = db, driver = driver, ioDispatcher = Dispatchers.Unconfined, writeLock = LibraryWriteLock(),
+            )
+            val result = scanner.scanIncremental()
+
+            assertTrue(result is Either.Right, "expected Right, got $result")
+            assertEquals(1, result.value.tracksSoftDeleted, "an absent file's row must be reconciled (soft-deleted)")
+            val row = db.trackQueries.selectByFilePath(ghostPath).executeAsOne()
+            assertTrue(row.deleted_at_ms != null, "absent file's row must be soft-deleted")
+        } finally {
+            driver.close(); Files.deleteIfExists(tempDir)
         }
     }
 }

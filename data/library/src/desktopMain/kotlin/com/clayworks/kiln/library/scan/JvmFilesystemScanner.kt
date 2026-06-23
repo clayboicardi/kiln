@@ -18,6 +18,7 @@ import com.clayworks.kiln.library.scan.internal.parseLeadingLong
 import com.clayworks.kiln.library.scan.internal.parseReplayGainDb
 import com.clayworks.kiln.library.scan.internal.rebuildFtsIndex
 import com.clayworks.kiln.library.scan.internal.toSortName
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -193,14 +194,28 @@ class JvmFilesystemScanner(
 
     private fun scanOneFile(path: Path, scanStartedMs: Long): Outcome {
         val pathStr = path.toString()
+        // Existing-row lookup hoisted above the stat so the failure paths below can
+        // mark an already-tracked file as "seen" (item 1, #31).
+        val existing = db.trackQueries.selectByFilePath(pathStr).executeAsOneOrNull()
+
         // Single Files.readAttributes call instead of separate getLastModifiedTime + size
         // — halves the syscalls per file (Gemini G5). For 40k-file libraries that's
         // 40k fewer kernel transitions on the fast-path "unchanged file" check.
-        val attrs = Files.readAttributes(path, java.nio.file.attribute.BasicFileAttributes::class.java)
+        val attrs = try {
+            Files.readAttributes(path, java.nio.file.attribute.BasicFileAttributes::class.java)
+        } catch (e: Throwable) {
+            if (e is CancellationException) throw e
+            // The file was yielded by Files.walk but can't be stat'd now (vanished
+            // mid-walk, permissions). It WAS encountered — if we already track it,
+            // mark it seen so the soft-delete sweep doesn't treat present-but-
+            // unreadable as gone. Contained so one bad file can't abort the scan.
+            if (existing != null) {
+                db.trackQueries.touchLastScanned(scannedAtMs = scanStartedMs, filePath = pathStr)
+            }
+            return Outcome.ParseFailed(e)
+        }
         val mtime = attrs.lastModifiedTime().toMillis()
         val size = attrs.size()
-
-        val existing = db.trackQueries.selectByFilePath(pathStr).executeAsOneOrNull()
 
         // Fast path: unchanged file → minimal touch, skip tag read.
         if (existing != null &&
@@ -215,6 +230,12 @@ class JvmFilesystemScanner(
         val tags = try {
             readTags(path)
         } catch (e: Throwable) {
+            if (e is CancellationException) throw e
+            // Present but tags unreadable (corrupt header, unsupported). Encountered →
+            // mark seen so it isn't soft-deleted; just don't rewrite its metadata.
+            if (existing != null) {
+                db.trackQueries.touchLastScanned(scannedAtMs = scanStartedMs, filePath = pathStr)
+            }
             return Outcome.ParseFailed(e)
         }
 
