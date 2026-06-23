@@ -76,9 +76,10 @@ The analyzer reads a worklist page under the lock, releases the lock, spends 1.5
   WHERE id = :id
     AND file_path = :filePath
     AND file_mtime_ms = :fileMtimeMs
+    AND file_size_bytes = :fileSizeBytes
     AND deleted_at_ms IS NULL;
   ```
-- **Worklist gains `file_mtime_ms`:** add `file_mtime_ms` to the `selectTracksMissingReplayGain` projection so the runner captures the mtime observed at read time.
+- **Worklist gains `file_mtime_ms` + `file_size_bytes`:** add both to the `selectTracksMissingReplayGain` projection so the runner captures the mtime + size observed at read time. (`file_size_bytes` added per the PR #33 codex review — see §4.3.)
 - Retire the now-unguarded `updateTrackReplayGain` **iff** a grep confirms `TrackAnalysisRunner` is its only caller. (Tests that referenced it switch to the guarded query.)
 
 ### 4.2 `TrackAnalysisRunner`
@@ -88,7 +89,7 @@ The analyzer reads a worklist page under the lock, releases the lock, spends 1.5
 - A stale row → **0 rows affected → silent no-op → `replay_gain_track_db` stays NULL → the row re-enters the worklist and re-analyzes on a later pass.** This self-healing is the contract; no error is surfaced (the race resolution is benign). Affected-row-count logging of dropped persists is a deferred nice-to-have (§8) — SQLDelight's generated UPDATE returns `Unit`, so surfacing the count would require a raw `driver.execute`, which is not worth it for this fix.
 
 ### 4.3 Unknown-mtime SAF rows
-Rows with `has_known_mtime = 0` carry `file_mtime_ms = 0`. The worklist captures `0`; the guard `file_mtime_ms = 0` always matches (until a scan changes it, which for an unknown-mtime row it would not meaningfully). The mtime guard therefore **degrades to a harmless always-match** for these rows — no added protection, but no false drops. The `file_path` + `deleted_at_ms` guards still apply.
+Rows with `has_known_mtime = 0` carry `file_mtime_ms = 0`. The worklist captures `0`; the guard `file_mtime_ms = 0` always matches (until a scan changes it, which for an unknown-mtime row it would not meaningfully). The mtime guard therefore **degrades to a harmless always-match** for these rows — no false drops. The `file_path`, `file_size_bytes`, and `deleted_at_ms` guards still apply; **`file_size_bytes` (added per the PR #33 codex review) restores content-change protection for unknown-mtime rows**, where it is the only discriminator left once the mtime guard always-matches.
 
 ### 4.4 Album rollup — out of scope
 The per-album rollup reads `selectTrackReplayGainForAlbum` and writes `updateAlbumReplayGainForAlbum` in two separate lock acquisitions, with only Kotlin math (no IO) in between. That window is microseconds versus the 1.5–10 s `analyze()` gap — negligible. Not hardened here; noted for completeness.

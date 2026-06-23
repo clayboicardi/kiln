@@ -104,6 +104,7 @@ class TrackAnalysisRunner(
                                 id = row.id,
                                 filePath = row.file_path,
                                 fileMtimeMs = row.file_mtime_ms,
+                                fileSizeBytes = row.file_size_bytes,
                             )
                         }
                         analyzed++
@@ -228,6 +229,7 @@ class TrackAnalysisRunner(
                                 id = row.id,
                                 filePath = row.file_path,
                                 fileMtimeMs = row.file_mtime_ms,
+                                fileSizeBytes = row.file_size_bytes,
                             )
                         }
                         analyzed++

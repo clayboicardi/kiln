@@ -328,11 +328,11 @@ class TrackAnalysisRunnerTest {
     // ---------- Item 2: revalidate-before-persist (#31) ----------
 
     @Test
-    fun `updateTrackReplayGainIfUnchanged writes when id, file_path and mtime all match`() {
+    fun `updateTrackReplayGainIfUnchanged writes when id, file_path, mtime and size all match`() {
         val artistId = testDb.insertArtist("A")
-        val id = testDb.insertTrack(artistId, title = "T", filePath = "/x.flac", fileMtimeMs = 111L)
+        val id = testDb.insertTrack(artistId, title = "T", filePath = "/x.flac", fileMtimeMs = 111L, fileSizeBytes = 4096L)
         testDb.db.trackQueries.updateTrackReplayGainIfUnchanged(
-            db = 5.0, peak = 0.9, id = id, filePath = "/x.flac", fileMtimeMs = 111L,
+            db = 5.0, peak = 0.9, id = id, filePath = "/x.flac", fileMtimeMs = 111L, fileSizeBytes = 4096L,
         )
         assertEquals(5.0, testDb.db.trackQueries.selectById(id).executeAsOne().replay_gain_track_db!!, 1e-9)
     }
@@ -340,9 +340,9 @@ class TrackAnalysisRunnerTest {
     @Test
     fun `updateTrackReplayGainIfUnchanged is a no-op when file_path changed`() {
         val artistId = testDb.insertArtist("A")
-        val id = testDb.insertTrack(artistId, title = "T", filePath = "/x.flac", fileMtimeMs = 111L)
+        val id = testDb.insertTrack(artistId, title = "T", filePath = "/x.flac", fileMtimeMs = 111L, fileSizeBytes = 4096L)
         testDb.db.trackQueries.updateTrackReplayGainIfUnchanged(
-            db = 5.0, peak = 0.9, id = id, filePath = "/STALE.flac", fileMtimeMs = 111L,
+            db = 5.0, peak = 0.9, id = id, filePath = "/STALE.flac", fileMtimeMs = 111L, fileSizeBytes = 4096L,
         )
         assertNull(testDb.db.trackQueries.selectById(id).executeAsOne().replay_gain_track_db)
     }
@@ -350,9 +350,19 @@ class TrackAnalysisRunnerTest {
     @Test
     fun `updateTrackReplayGainIfUnchanged is a no-op when mtime changed`() {
         val artistId = testDb.insertArtist("A")
-        val id = testDb.insertTrack(artistId, title = "T", filePath = "/x.flac", fileMtimeMs = 111L)
+        val id = testDb.insertTrack(artistId, title = "T", filePath = "/x.flac", fileMtimeMs = 111L, fileSizeBytes = 4096L)
         testDb.db.trackQueries.updateTrackReplayGainIfUnchanged(
-            db = 5.0, peak = 0.9, id = id, filePath = "/x.flac", fileMtimeMs = 999L,
+            db = 5.0, peak = 0.9, id = id, filePath = "/x.flac", fileMtimeMs = 999L, fileSizeBytes = 4096L,
+        )
+        assertNull(testDb.db.trackQueries.selectById(id).executeAsOne().replay_gain_track_db)
+    }
+
+    @Test
+    fun `updateTrackReplayGainIfUnchanged is a no-op when file_size changed`() {
+        val artistId = testDb.insertArtist("A")
+        val id = testDb.insertTrack(artistId, title = "T", filePath = "/x.flac", fileMtimeMs = 111L, fileSizeBytes = 4096L)
+        testDb.db.trackQueries.updateTrackReplayGainIfUnchanged(
+            db = 5.0, peak = 0.9, id = id, filePath = "/x.flac", fileMtimeMs = 111L, fileSizeBytes = 9999L,
         )
         assertNull(testDb.db.trackQueries.selectById(id).executeAsOne().replay_gain_track_db)
     }

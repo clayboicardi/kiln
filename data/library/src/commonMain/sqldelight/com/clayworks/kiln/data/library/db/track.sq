@@ -330,7 +330,7 @@ WHERE id = ?;
 -- Worklist enumeration. Paginated so the runner can yield + report progress.
 -- Includes album_id so the runner can group for per-album rollup later.
 selectTracksMissingReplayGain:
-SELECT id, file_path, codec, sample_rate_hz, bit_depth, channels, album_id, file_mtime_ms
+SELECT id, file_path, codec, sample_rate_hz, bit_depth, channels, album_id, file_mtime_ms, file_size_bytes
 FROM track
 WHERE deleted_at_ms IS NULL
   AND replay_gain_track_db IS NULL
@@ -356,6 +356,7 @@ SET replay_gain_track_db = :db,
 WHERE id = :id
   AND file_path = :filePath
   AND file_mtime_ms = :fileMtimeMs
+  AND file_size_bytes = :fileSizeBytes
   AND deleted_at_ms IS NULL;
 
 -- Distinct album_ids with at least one analyzed track but no album-level
