@@ -34,6 +34,7 @@ import com.clayworks.kiln.library.scan.TrackAnalyzer
 import com.clayworks.kiln.data.library.db.KilnDatabase
 import com.clayworks.kiln.library.scan.JvmFilesystemScanner
 import com.clayworks.kiln.library.scan.LibraryScanner
+import com.clayworks.kiln.library.db.DatabaseWriter
 import com.clayworks.kiln.library.scan.LibraryWriteLock
 import com.clayworks.kiln.library.settings.SettingsRepository
 import com.clayworks.kiln.library.settings.SettingsRepositoryImpl
@@ -104,6 +105,22 @@ abstract class DesktopAppGraph(
     @Singleton
     @Provides
     protected fun database(driver: SqlDriver): KilnDatabase = KilnDatabase(driver)
+
+    /**
+     * Single-writer seam (#31 item 3). Owns one dedicated daemon thread; all DB writes route
+     * through `DatabaseWriter.write { }`, serializing them by construction. The dispatcher is
+     * built inline (not a separate `@Provides CoroutineDispatcher`) because `audioDispatcher`
+     * already provides that type and kotlin-inject can't disambiguate two same-typed bindings.
+     */
+    @Singleton
+    @Provides
+    protected fun databaseWriter(db: KilnDatabase): DatabaseWriter =
+        DatabaseWriter(
+            db = db,
+            writerDispatcher = Executors.newSingleThreadExecutor { runnable ->
+                Thread(runnable, "kiln-db-writer").apply { isDaemon = true }
+            }.asCoroutineDispatcher(),
+        )
 
     /**
      * SettingsRepository binds the impl-returning provider to the interface

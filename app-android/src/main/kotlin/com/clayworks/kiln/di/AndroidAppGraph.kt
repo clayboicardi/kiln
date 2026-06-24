@@ -32,7 +32,10 @@ import com.clayworks.kiln.library.settings.SettingsRepositoryImpl
 import com.clayworks.kiln.library.source.LibraryStatsSource
 import com.clayworks.kiln.library.source.LocalLibrarySource
 import com.clayworks.kiln.library.source.MusicSource
+import com.clayworks.kiln.library.db.DatabaseWriter
+import java.util.concurrent.Executors
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.asCoroutineDispatcher
 import me.tatarka.inject.annotations.Component
 import me.tatarka.inject.annotations.Provides
 
@@ -94,6 +97,20 @@ abstract class AndroidAppGraph(
     @Singleton
     @Provides
     protected fun database(driver: SqlDriver): KilnDatabase = KilnDatabase(driver)
+
+    /**
+     * Single-writer seam (#31 item 3) — see DesktopAppGraph for the rationale. Dispatcher built
+     * inline; one daemon thread serializes all DB writes via `DatabaseWriter.write { }`.
+     */
+    @Singleton
+    @Provides
+    protected fun databaseWriter(db: KilnDatabase): DatabaseWriter =
+        DatabaseWriter(
+            db = db,
+            writerDispatcher = Executors.newSingleThreadExecutor { runnable ->
+                Thread(runnable, "kiln-db-writer").apply { isDaemon = true }
+            }.asCoroutineDispatcher(),
+        )
 
     /**
      * SettingsRepository binds the impl-returning provider to the interface
