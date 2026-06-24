@@ -14,6 +14,7 @@
 - **Canonical 6-target build** (run after each task): `.\gradlew :app-android:assembleDebug :app-desktop:assemble :data:library:build :audio:playback:build :data:library:desktopTest :ui:components:desktopTest`
 - **One change per commit.** Commit messages end with the two trailers (`Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>` and `Claude-Session: …`), matching recent `git log`.
 - **JUnit4 `@Test` must return `Unit`** — use `assertTrue(x != null, …)`, never `assertNotNull` as the last expression of an `= runBlocking { }` body.
+- **No `Thread.sleep` in tests** (`.gemini/styleguide.md`) — use `java.util.concurrent.locks.LockSupport.parkNanos(…)` or latches to coordinate timing.
 - **`SettingsRepository` *interface* must NOT change** — only `SettingsRepositoryImpl`'s constructor — or it breaks `StubSettingsRepository` doubles in `:audio:playback`.
 - **Keep item-2's `updateTrackReplayGainIfUnchanged` guard** unchanged (it is a TOCTOU fix single-writer does not subsume).
 - **PR body uses "Addresses #31"** (never `fix/closes/resolves`) so the squash-merge does not auto-close the issue.
@@ -110,6 +111,49 @@ class WalConfigTest {
             Files.deleteIfExists(dbFile)
         }
     }
+
+    // Addresses codex C4: the PRAGMA-readback above only inspects the current thread's
+    // connection. ThreadedConnectionManager opens a SEPARATE connection per thread, so this
+    // exercises the actual production failure mode — a UI read on another connection while the
+    // writer holds a transaction. Under WAL it must NOT throw SQLITE_BUSY; under rollback journal
+    // it could. Deterministic via latches (no Thread.sleep).
+    @Test
+    fun `WAL lets a read on another thread proceed during an open writer transaction`() {
+        val dbFile = Files.createTempFile("kiln-wal-concurrency", ".db")
+        val driver = JdbcSqliteDriver(
+            url = "jdbc:sqlite:${dbFile.toAbsolutePath()}",
+            properties = Properties().apply {
+                put("foreign_keys", "true"); put("journal_mode", "WAL"); put("busy_timeout", "5000")
+            },
+            schema = KilnDatabase.Schema,
+        )
+        val db = KilnDatabase(driver)
+        val writerInTxn = java.util.concurrent.CountDownLatch(1)
+        val readDone = java.util.concurrent.CountDownLatch(1)
+        val readError = java.util.concurrent.atomic.AtomicReference<Throwable?>(null)
+        try {
+            val writerThread = kotlin.concurrent.thread {   // its own per-thread connection
+                db.transaction {
+                    db.artistQueries.insert(name = "W", name_sort = "w", musicbrainz_artist_id = null)
+                    writerInTxn.countDown()
+                    readDone.await(5, java.util.concurrent.TimeUnit.SECONDS)   // hold the txn open
+                }
+            }
+            writerInTxn.await(5, java.util.concurrent.TimeUnit.SECONDS)
+            try {
+                queryLong(driver, "SELECT count(*) FROM track;")   // reader: this thread's own connection
+            } catch (t: Throwable) {
+                readError.set(t)
+            } finally {
+                readDone.countDown()
+            }
+            writerThread.join(5_000)
+        } finally {
+            driver.close()
+            Files.deleteIfExists(dbFile)
+        }
+        kotlin.test.assertNull(readError.get(), "a read on a second connection during an open write txn must not throw under WAL")
+    }
 }
 ```
 
@@ -132,18 +176,20 @@ return JdbcSqliteDriver(
 )
 ```
 
-- [ ] **Step 4: Apply on Android** — in `AndroidAppGraph.sqlDriver()`'s `Callback.onOpen`, add `busy_timeout` (per-connection) beside the existing FK pragma, and assert WAL is active (the framework/Requery default; set it explicitly if not):
+- [ ] **Step 4: Apply on Android** — enable WAL the **framework-approved** way via `onConfigure` (it configures the connection pool for multi-connection read/write concurrency; a raw `PRAGMA journal_mode=WAL` does NOT, and `execSQL` on a row-returning PRAGMA can throw — gemini G1 / codex C3). Keep the per-connection `busy_timeout` in `onOpen`:
 
 ```kotlin
-override fun onOpen(db: SupportSQLiteDatabase) {
-    super.onOpen(db)
-    db.execSQL("PRAGMA foreign_keys = ON")
-    db.execSQL("PRAGMA busy_timeout = 5000")
-    // WAL is the framework/Requery default for a writable helper. Assert + force
-    // it so reader/writer concurrency holds across device/vendor variance (#31 item 3).
-    db.query("PRAGMA journal_mode").use { c -> /* observe; default expected 'wal' */ }
-    db.execSQL("PRAGMA journal_mode = WAL")
-}
+callback = object : AndroidSqliteDriver.Callback(KilnDatabase.Schema) {
+    override fun onConfigure(db: SupportSQLiteDatabase) {
+        super.onConfigure(db)
+        db.enableWriteAheadLogging()                 // framework WAL + connection-pool config (#31 item 3)
+    }
+    override fun onOpen(db: SupportSQLiteDatabase) {
+        super.onOpen(db)
+        db.execSQL("PRAGMA foreign_keys = ON")
+        db.execSQL("PRAGMA busy_timeout = 5000")     // per-connection
+    }
+},
 ```
 
 - [ ] **Step 5: Run the canonical build**
@@ -245,7 +291,7 @@ class DatabaseWriterTest {
                 launch(Dispatchers.Default) {
                     writer.write {
                         if (!inProgress.compareAndSet(false, true)) overlapDetected.set(true)
-                        Thread.sleep(1)  // widen the window; block runs on the writer thread
+                        java.util.concurrent.locks.LockSupport.parkNanos(1_000_000)  // ~1 ms; no Thread.sleep in tests (.gemini/styleguide.md)
                         inProgress.set(false)
                     }
                 }
@@ -317,10 +363,11 @@ git commit   # subject: "feat(db): add DatabaseWriter single-writer seam + DI pr
 This is **one atomic commit** by necessity: a half-migrated state (one writer on the executor, another still on the mutex) is *not* mutually serialized → corruption window. The scanners, analyzer, and backfill switch together; the mutex is deleted in the same commit.
 
 **Files:**
+- Modify (SQL): `data/library/src/commonMain/sqldelight/.../track.sq` (guarded backfill queries + worklist projection + `selectChanges`)
 - Modify: `TrackAnalysisRunner.kt`, `JvmFilesystemScanner.kt`, `AndroidMediaStoreScanner.kt`, `AndroidFormatFactBackfill.kt`
 - Modify (DI): `DesktopAppGraph.kt` (`filesystemScanner`, `analysisRunner` providers), `AndroidAppGraph.kt` (`mediaStoreScanner`, `analysisRunner` providers)
 - Delete: `LibraryWriteLock.kt`
-- Modify (tests): `TrackAnalysisRunnerTest.kt`, `JvmFilesystemScannerTest.kt`
+- Modify (tests): `TrackAnalysisRunnerTest.kt`, `JvmFilesystemScannerTest.kt`, `AndroidFormatFactBackfillTest.kt` (TOCTOU regression)
 
 **Interfaces:**
 - Consumes: `DatabaseWriter` (Task 2).
@@ -369,43 +416,94 @@ override suspend fun scanIncremental(): Either<ScanError, ScanResult> =
 private fun runScanBlocking(scanFolders: List<Path>, forceFullRescan: Boolean): Either<ScanError, ScanResult> = ...
 ```
 
-- [ ] **Step 3: `AndroidFormatFactBackfill` — route page-writes through the writer.** Add `private val writer: DatabaseWriter`. Native reads stay off-writer (on `ioDispatcher`); wrap only the per-page `db.transaction` in `writer.write`:
+- [ ] **Step 3: `AndroidFormatFactBackfill` — route page-writes through the writer AND revalidate-before-persist (codex C1).** The backfill is the same read→(slow native read, off-writer)→write TOCTOU as the analyzer (item-2): a concurrent *second* scan can reset a row between the page read and the queued write, so a by-`id` write would stamp stale facts. Guard it exactly like item-2.
 
-```kotlin
-suspend fun runOnce(): Int = withContext(ioDispatcher) {
-    var updated = 0
-    while (true) {
-        val page = db.trackQueries.selectTracksNeedingBackfill(limit = PAGE_LIMIT).executeAsList()
-        if (page.isEmpty()) break
-        val pageFacts = page.map { row -> row to readFormatFacts(row) }   // native I/O, off-writer
-        val nowMs = System.currentTimeMillis()
-        writer.write {
-            db.transaction {
-                for ((row, facts) in pageFacts) {
-                    if (facts != null) db.trackQueries.updateTrackFormatFacts(/* …unchanged… */)
-                    else db.trackQueries.markBackfilledNoMetadata(backfilledAtMs = nowMs, id = row.id)
-                }
-            }
-        }
-        updated += pageFacts.count { it.second != null }
-    }
-    updated
-}
-```
+  **Step 3a — `track.sq`:** add guarded variants + a `changes()` probe; widen the worklist projection + add an offset.
 
-- [ ] **Step 4: `AndroidMediaStoreScanner` — same prelude split as desktop; call backfill *after* the write block (sequentially), not inside it.** Replace the `writeLock` field with `writer`. `runScanBlocking` becomes the former `runScan` body minus `safTreeUrisFlow.first()` (now a param) **and minus the `backfill.runOnce()` call**:
+  ```sql
+  -- guarded fact write (mirrors updateTrackReplayGainIfUnchanged)
+  updateTrackFormatFactsIfUnchanged:
+  UPDATE track SET sample_rate_hz = :sampleRateHz, bit_depth = :bitDepth, channels = :channels,
+      bitrate_kbps = :bitrateKbps, has_embedded_art = :hasEmbeddedArt, metadata_backfilled_at_ms = :backfilledAtMs
+  WHERE id = :id AND file_path = :filePath AND file_mtime_ms = :fileMtimeMs
+      AND file_size_bytes = :fileSizeBytes AND deleted_at_ms IS NULL;
+
+  -- guarded "no metadata" stamp (so a rescanned row isn't wrongly dropped from the worklist)
+  markBackfilledNoMetadataIfUnchanged:
+  UPDATE track SET metadata_backfilled_at_ms = :backfilledAtMs
+  WHERE id = :id AND file_path = :filePath AND file_mtime_ms = :fileMtimeMs
+      AND file_size_bytes = :fileSizeBytes AND deleted_at_ms IS NULL;
+
+  -- rows-affected probe for the just-run UPDATE (SQLDelight UPDATEs return Unit)
+  selectChanges:
+  SELECT changes();
+  ```
+  Also add `OFFSET :offset` to `selectTracksNeedingBackfill` and confirm its projection exposes `file_path`, `file_mtime_ms`, `file_size_bytes` (add any missing column) so `SelectTracksNeedingBackfill` carries the guard keys. (`selectChanges` may already exist — reuse if so.)
+
+  **Step 3b — the loop** (add `private val writer: DatabaseWriter`; native reads stay off-writer; advance the offset past stale rows so the loop still terminates, mirroring `TrackAnalysisRunner`):
+
+  ```kotlin
+  suspend fun runOnce(): Int = withContext(ioDispatcher) {
+      var updated = 0          // rows whose REAL facts persisted (excludes no-metadata stamps + stale)
+      var skippedTotal = 0L    // stale rows (guarded write hit 0) — scroll past them
+      while (true) {
+          val page = db.trackQueries
+              .selectTracksNeedingBackfill(limit = PAGE_LIMIT, offset = skippedTotal)
+              .executeAsList()
+          if (page.isEmpty()) break
+          val pageFacts = page.map { row -> row to readFormatFacts(row) }   // native I/O, OFF-writer
+          val nowMs = System.currentTimeMillis()
+          var pageStale = 0
+          writer.write {
+              db.transaction {
+                  for ((row, facts) in pageFacts) {
+                      if (facts != null) {
+                          db.trackQueries.updateTrackFormatFactsIfUnchanged(
+                              sampleRateHz = facts.sampleRateHz, bitDepth = facts.bitDepth,
+                              channels = facts.channels, bitrateKbps = facts.bitrateKbps,
+                              hasEmbeddedArt = if (facts.hasEmbeddedArt) 1L else 0L, backfilledAtMs = nowMs,
+                              id = row.id, filePath = row.file_path,
+                              fileMtimeMs = row.file_mtime_ms, fileSizeBytes = row.file_size_bytes,
+                          )
+                      } else {
+                          db.trackQueries.markBackfilledNoMetadataIfUnchanged(
+                              backfilledAtMs = nowMs, id = row.id, filePath = row.file_path,
+                              fileMtimeMs = row.file_mtime_ms, fileSizeBytes = row.file_size_bytes,
+                          )
+                      }
+                      if (db.trackQueries.selectChanges().executeAsOne() == 0L) pageStale++  // concurrent scan changed the row
+                      else if (facts != null) updated++
+                  }
+              }
+          }
+          skippedTotal += pageStale
+          if (pageStale == page.size && page.size < PAGE_LIMIT.toInt()) break   // all-stale short page → done
+      }
+      updated
+  }
+  ```
+
+  **Step 3c — TOCTOU regression test** (`AndroidFormatFactBackfillTest`, `androidHostTest`): seed a row, run the backfill with a fake reader that mutates the row's `file_mtime_ms`/`file_size_bytes` between the page read and the persist (simulating a concurrent rescan) → assert the stale facts are dropped (`metadata_backfilled_at_ms` stays NULL, facts unchanged) and the row re-enters the worklist. Mirror the item-2 `TrackAnalysisRunnerTest` stale-row test.
+
+- [ ] **Step 4: `AndroidMediaStoreScanner` — prelude split; run backfill INSIDE the scan's error boundary, success-only (codex C2).** Replace `writeLock` with `writer`. Move the `Either.catch { … }.mapLeft(::classifyScanFailure)` UP to `scanIncremental`/`scanFull` so it wraps BOTH the scan write and the backfill. `runScanBlocking` is the former `runScan` body minus `safTreeUrisFlow.first()` (now a param), minus its own `Either.catch` (now at the caller), and minus the `backfill.runOnce()` call (now sequenced after, still inside the catch):
 
 ```kotlin
 override suspend fun scanIncremental(): Either<ScanError, ScanResult> =
     withContext(ioDispatcher) {
-        val safTreeUris = safTreeUrisFlow.first()            // suspend — OUTSIDE the writer
-        val result = writer.write { runScanBlocking(safTreeUris, forceFullRescan = false) }
-        backfill.runOnce()                                   // suspend; own writer.write per page (Step 3)
-        result
+        Either.catch {
+            val safTreeUris = safTreeUrisFlow.first()         // suspend — OUTSIDE the writer
+            val result = writer.write { runScanBlocking(safTreeUris, forceFullRescan = false) }
+            backfill.runOnce()                                // ONLY reached on scan success; its
+            //                                                   exceptions are mapped by this catch
+            result
+        }.mapLeft(::classifyScanFailure)
     }
-// (scanFull mirrors.)
+// scanFull mirrors with forceFullRescan = true.
+// runScanBlocking: KilnDatabase.() -> ScanResult — NON-suspend, THROWS on failure (the outer
+// Either.catch maps it). The empty-/unreadable-guard still early-returns a ScanResult.
 ```
-The `backfill.runOnce()` log line moves to the caller; the `ScanResult` (which never included the backfill count) is unchanged.
+
+Without this, my first cut ran `backfill.runOnce()` *after* `writer.write { … }` returned the `Either` — so a failed scan would still mutate backfill state, and a backfill exception would escape the `Either<ScanError, ScanResult>` contract. (Desktop's `JvmFilesystemScanner` has no backfill, so its `runScanBlocking` can keep returning `Either` with the catch inside — Step 2 unchanged.)
 
 - [ ] **Step 5: Update the DI providers.** In both graphs, the scanner + analyzer providers take `writer: DatabaseWriter` instead of `writeLock: LibraryWriteLock`, and the Android `mediaStoreScanner` keeps its `backfill` param:
 
@@ -463,13 +561,16 @@ git commit   # subject: "refactor(db): route scanners + analyzer + backfill thro
 - Consumes: `DatabaseWriter`.
 - Produces: `SettingsRepositoryImpl(db: KilnDatabase, ioDispatcher: CoroutineDispatcher, writer: DatabaseWriter)`. **The `SettingsRepository` interface is unchanged.**
 
-- [ ] **Step 1: Route each settings write through the writer.** Add `private val writer: DatabaseWriter` to the constructor (import it). Each setter changes from `withContext(ioDispatcher) { db.settingsQueries.upsert(...) }` to `writer.write { db.settingsQueries.upsert(...) }`. The read `Flow`s (`themeMode`, `scanFolders`, …) stay exactly as they are (on `ioDispatcher`). For `setReplayGainPreAmpDb`, keep the `kilnDb` local-alias trick but call `writer.write { … }`:
+- [ ] **Step 1: Route each settings write through the writer.** Add `private val writer: DatabaseWriter` to the constructor (import it). Each setter changes from `withContext(ioDispatcher) { db.settingsQueries.upsert(...) }` to `writer.write { db.settingsQueries.upsert(...) }`. The read `Flow`s (`themeMode`, `scanFolders`, …) stay exactly as they are (on `ioDispatcher`). For `setReplayGainPreAmpDb`, the old `kilnDb` local-alias is **no longer needed** (gemini G3): inside `write { }` the `KilnDatabase` is the receiver, so `settingsQueries` resolves on it and the `db: Double` param no longer shadows it. Drop the alias — every setter now has the identical shape:
 
 ```kotlin
 override suspend fun setThemeMode(mode: ThemeMode) {
     writer.write { settingsQueries.upsert(key = SettingKey.THEME_MODE, value_ = mode.name) }
 }
-// …same shape for setScanOnLaunch / setAutoScanOnFolderAdd / setScanFolders / setReplayGainMode / setReplayGainPreAmpDb…
+// …same shape for setScanOnLaunch / setAutoScanOnFolderAdd / setScanFolders / setReplayGainMode…
+override suspend fun setReplayGainPreAmpDb(db: Double) {   // `db` = the Double pre-amp; receiver supplies settingsQueries
+    writer.write { settingsQueries.upsert(key = SettingKey.REPLAY_GAIN_PRE_AMP_DB, value_ = db.toString()) }
+}
 ```
 (Inside `write { }` the receiver is the `KilnDatabase`, so `settingsQueries` resolves on the receiver — equivalent to `db.settingsQueries`.)
 
