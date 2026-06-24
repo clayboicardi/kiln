@@ -88,7 +88,15 @@ abstract class DesktopAppGraph(
         java.nio.file.Files.createDirectories(userDataDir.path)
         return JdbcSqliteDriver(
             url = "jdbc:sqlite:${dbFile.toAbsolutePath()}",
-            properties = Properties().apply { put("foreign_keys", "true") },
+            properties = Properties().apply {
+                put("foreign_keys", "true")
+                // #31 item 3: WAL gives readers a lock-free committed snapshot while the single
+                // writer appends; busy_timeout waits out brief WAL-checkpoint locks instead of
+                // throwing SQLITE_BUSY. The desktop driver opens a connection per thread
+                // (ThreadedConnectionManager), so these properties apply to every connection.
+                put("journal_mode", "WAL")
+                put("busy_timeout", "5000")
+            },
             schema = KilnDatabase.Schema,
         )
     }

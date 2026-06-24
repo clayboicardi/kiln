@@ -71,9 +71,22 @@ abstract class AndroidAppGraph(
         name = "kiln.db",
         factory = RequerySQLiteOpenHelperFactory(),
         callback = object : AndroidSqliteDriver.Callback(KilnDatabase.Schema) {
+            override fun onConfigure(db: SupportSQLiteDatabase) {
+                super.onConfigure(db)
+                // #31 item 3: enabling WAL opens the framework connection pool, so FK enforcement
+                // must be configured pool-wide here — a raw `PRAGMA foreign_keys` in onOpen only
+                // covers the primary connection, and writes on other pooled connections would skip
+                // FK checks (codex, PR #34). enableWriteAheadLogging() configures WAL + the pool.
+                db.setForeignKeyConstraintsEnabled(true)
+                db.enableWriteAheadLogging()
+            }
+
             override fun onOpen(db: SupportSQLiteDatabase) {
                 super.onOpen(db)
-                db.execSQL("PRAGMA foreign_keys = ON")
+                // busy_timeout is best-effort on Android (WAL + the pool are the primary concurrency
+                // mechanism). PRAGMA busy_timeout returns a row, so issue it via query() + close the
+                // cursor rather than execSQL (which is documented for non-row statements; codex PR #34).
+                db.query("PRAGMA busy_timeout = 5000").use { it.moveToFirst() }
             }
         },
     )
