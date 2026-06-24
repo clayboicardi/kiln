@@ -109,6 +109,8 @@ class WalConfigTest {
         } finally {
             driver.close()
             Files.deleteIfExists(dbFile)
+            Files.deleteIfExists(dbFile.resolveSibling("${dbFile.fileName}-wal"))   // WAL sidecars
+            Files.deleteIfExists(dbFile.resolveSibling("${dbFile.fileName}-shm"))
         }
     }
 
@@ -151,6 +153,8 @@ class WalConfigTest {
         } finally {
             driver.close()
             Files.deleteIfExists(dbFile)
+            Files.deleteIfExists(dbFile.resolveSibling("${dbFile.fileName}-wal"))   // WAL sidecars
+            Files.deleteIfExists(dbFile.resolveSibling("${dbFile.fileName}-shm"))
         }
         kotlin.test.assertNull(readError.get(), "a read on a second connection during an open write txn must not throw under WAL")
     }
@@ -176,18 +180,20 @@ return JdbcSqliteDriver(
 )
 ```
 
-- [ ] **Step 4: Apply on Android** — enable WAL the **framework-approved** way via `onConfigure` (it configures the connection pool for multi-connection read/write concurrency; a raw `PRAGMA journal_mode=WAL` does NOT, and `execSQL` on a row-returning PRAGMA can throw — gemini G1 / codex C3). Keep the per-connection `busy_timeout` in `onOpen`:
+- [ ] **Step 4: Apply on Android** — enable WAL the **framework-approved** way via `onConfigure` (it configures the connection pool for multi-connection read/write concurrency; a raw `PRAGMA journal_mode=WAL` does NOT, and `execSQL` on a row-returning PRAGMA can throw — gemini G1 / codex C3). **Also move FK enforcement to `onConfigure` via `setForeignKeyConstraintsEnabled(true)`** — WAL opens a connection pool, so a raw `PRAGMA foreign_keys` in `onOpen` only covers the primary connection and writes on other pooled connections would skip FK checks (codex round-2). Keep the per-connection `busy_timeout` in `onOpen`:
 
 ```kotlin
 callback = object : AndroidSqliteDriver.Callback(KilnDatabase.Schema) {
     override fun onConfigure(db: SupportSQLiteDatabase) {
         super.onConfigure(db)
-        db.enableWriteAheadLogging()                 // framework WAL + connection-pool config (#31 item 3)
+        db.setForeignKeyConstraintsEnabled(true)     // pool-WIDE FK (codex round-2) — replaces the onOpen
+        //                                              PRAGMA, which only covered the primary connection
+        db.enableWriteAheadLogging()                 // framework WAL + connection pool
     }
     override fun onOpen(db: SupportSQLiteDatabase) {
         super.onOpen(db)
-        db.execSQL("PRAGMA foreign_keys = ON")
-        db.execSQL("PRAGMA busy_timeout = 5000")     // per-connection
+        db.execSQL("PRAGMA busy_timeout = 5000")     // best-effort; on Android WAL + the pool are the
+        //                                              primary concurrency mechanism (SQLITE_BUSY is rare there)
     }
 },
 ```
@@ -398,23 +404,26 @@ writer.write {
 ```
 `analyzer.analyze(...)` stays **between** `writer.write` calls (off the writer thread) — unchanged.
 
-- [ ] **Step 2: `JvmFilesystemScanner` — pull the suspend prelude out, wrap the rest in `writer.write`.** Replace the `writeLock` field with `writer: DatabaseWriter`. Today `scanIncremental()`/`scanFull()` do `withContext(io) { writeLock.mutex.withLock { runScan(force) } }` and `runScan` is `suspend` (it calls `scanFoldersFlow.first()`). Restructure so the suspend read happens before the non-suspend write block:
+- [ ] **Step 2: `JvmFilesystemScanner` — catch at the top; non-suspend scan body in `writer.write`.** Replace the `writeLock` field with `writer: DatabaseWriter`. Move the `Either.catch { … }.mapLeft(::classifyScanFailure)` UP to `scanIncremental`/`scanFull` so it wraps BOTH the suspend folder read AND the write block — a settings/DB failure in `scanFoldersFlow.first()` must map to `Left`, not throw (codex round-2). `runScanBlocking` is the former `runScan` body minus `scanFoldersFlow.first()` (now a param) and minus its own `Either.catch` (now at the caller):
 
 ```kotlin
 override suspend fun scanIncremental(): Either<ScanError, ScanResult> =
     withContext(ioDispatcher) {
-        val scanFolders = scanFoldersFlow.first()           // suspend — OUTSIDE the writer
-        writer.write { runScanBlocking(scanFolders, forceFullRescan = false) }
+        Either.catch {
+            val scanFolders = scanFoldersFlow.first()        // suspend — INSIDE the catch
+            writer.write { runScanBlocking(scanFolders, forceFullRescan = false) }
+        }.mapLeft(::classifyScanFailure)
     }
-// (scanFull mirrors with forceFullRescan = true)
+// scanFull mirrors with forceFullRescan = true.
 
-// runScanBlocking is the former runScan body MINUS the `scanFoldersFlow.first()`
-// line (folders are now a parameter). It is NON-suspend; everything inside —
-// Either.catch, the empty-guard, driver.execute bulk reset, the file walk +
-// db.transaction loop, root-guarded softDeleteUnscanned, rebuildFtsIndex(db, driver)
-// — is unchanged and runs on the writer thread.
-private fun runScanBlocking(scanFolders: List<Path>, forceFullRescan: Boolean): Either<ScanError, ScanResult> = ...
+// runScanBlocking: KilnDatabase.() -> ScanResult — NON-suspend, THROWS on failure (the outer
+// Either.catch maps it). Body = former runScan minus scanFoldersFlow.first() and minus its own
+// Either.catch; the empty-guard early-returns a ScanResult; the driver.execute bulk reset, the
+// file walk + db.transaction loop, root-guarded softDeleteUnscanned, and rebuildFtsIndex(db, driver)
+// all run on the writer thread, unchanged.
+private fun runScanBlocking(scanFolders: List<Path>, forceFullRescan: Boolean): ScanResult = ...
 ```
+This makes desktop + Android symmetric: both put the catch at the top wrapping the folder read + `writer.write`, and `runScanBlocking` throws on failure (returning a bare `ScanResult`).
 
 - [ ] **Step 3: `AndroidFormatFactBackfill` — route page-writes through the writer AND revalidate-before-persist (codex C1).** The backfill is the same read→(slow native read, off-writer)→write TOCTOU as the analyzer (item-2): a concurrent *second* scan can reset a row between the page read and the queued write, so a by-`id` write would stamp stale facts. Guard it exactly like item-2.
 
@@ -438,7 +447,7 @@ private fun runScanBlocking(scanFolders: List<Path>, forceFullRescan: Boolean): 
   selectChanges:
   SELECT changes();
   ```
-  Also add `OFFSET :offset` to `selectTracksNeedingBackfill` and confirm its projection exposes `file_path`, `file_mtime_ms`, `file_size_bytes` (add any missing column) so `SelectTracksNeedingBackfill` carries the guard keys. (`selectChanges` may already exist — reuse if so.)
+  Also add `ORDER BY id` **and** `LIMIT :limit OFFSET :offset` to `selectTracksNeedingBackfill` — the deterministic order is required (codex round-2): the offset-advance below scrolls past stale rows while stamped rows drop out of the `metadata_backfilled_at_ms IS NULL` set, so without a stable order SQLite could reorder later pages and the offset would skip still-processable tracks. Confirm the projection exposes `file_path`, `file_mtime_ms`, `file_size_bytes` (add any missing column) so `SelectTracksNeedingBackfill` carries the guard keys. (`selectChanges` may already exist — reuse if so.)
 
   **Step 3b — the loop** (add `private val writer: DatabaseWriter`; native reads stay off-writer; advance the offset past stale rows so the loop still terminates, mirroring `TrackAnalysisRunner`):
 
@@ -503,7 +512,7 @@ override suspend fun scanIncremental(): Either<ScanError, ScanResult> =
 // Either.catch maps it). The empty-/unreadable-guard still early-returns a ScanResult.
 ```
 
-Without this, my first cut ran `backfill.runOnce()` *after* `writer.write { … }` returned the `Either` — so a failed scan would still mutate backfill state, and a backfill exception would escape the `Either<ScanError, ScanResult>` contract. (Desktop's `JvmFilesystemScanner` has no backfill, so its `runScanBlocking` can keep returning `Either` with the catch inside — Step 2 unchanged.)
+Without this, my first cut ran `backfill.runOnce()` *after* `writer.write { … }` returned the `Either` — so a failed scan would still mutate backfill state, and a backfill exception would escape the `Either<ScanError, ScanResult>` contract. (Desktop's `JvmFilesystemScanner` gets the same catch-at-the-top restructure in Step 2 — its `scanFoldersFlow.first()` must also sit inside the catch, codex round-2 — even though it has no backfill.)
 
 - [ ] **Step 5: Update the DI providers.** In both graphs, the scanner + analyzer providers take `writer: DatabaseWriter` instead of `writeLock: LibraryWriteLock`, and the Android `mediaStoreScanner` keeps its `backfill` param:
 
