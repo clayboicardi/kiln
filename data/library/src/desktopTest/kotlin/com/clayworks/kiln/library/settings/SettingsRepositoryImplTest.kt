@@ -1,5 +1,6 @@
 package com.clayworks.kiln.library.settings
 
+import com.clayworks.kiln.library.db.DatabaseWriter
 import com.clayworks.kiln.library.settings.internal.SettingKey
 import com.clayworks.kiln.library.source.TestDb
 import kotlinx.coroutines.Dispatchers
@@ -18,7 +19,11 @@ class SettingsRepositoryImplTest {
     @BeforeTest
     fun setUp() {
         testDb = TestDb()
-        repo = SettingsRepositoryImpl(testDb.db, ioDispatcher = Dispatchers.Unconfined)
+        repo = SettingsRepositoryImpl(
+            testDb.db,
+            ioDispatcher = Dispatchers.Unconfined,
+            writer = DatabaseWriter(testDb.db, Dispatchers.Unconfined),
+        )
     }
 
     @AfterTest

@@ -130,8 +130,8 @@ abstract class DesktopAppGraph(
      */
     @Singleton
     @Provides
-    protected fun settingsRepository(db: KilnDatabase): SettingsRepository =
-        SettingsRepositoryImpl(db, Dispatchers.IO)
+    protected fun settingsRepository(db: KilnDatabase, writer: DatabaseWriter): SettingsRepository =
+        SettingsRepositoryImpl(db, Dispatchers.IO, writer)
 
     /**
      * One LocalLibrarySource instance, bound to BOTH the MusicSource (browse /
