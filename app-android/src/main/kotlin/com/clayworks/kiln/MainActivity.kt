@@ -180,8 +180,8 @@ private fun AndroidSettingsRoute(
     // config-change or Settings-close mid-scan doesn't cancel it — important for
     // auto-scan-on-add, where the user may navigate away immediately. Dispatchers.Main
     // keeps the scanState writes on the UI thread; writes after the route leaves
-    // composition are harmless no-ops. The shared LibraryWriteLock serializes this
-    // against any scan/analyzer already running. (codex round-3 #2)
+    // composition are harmless no-ops. The single-writer DatabaseWriter serializes this
+    // scan's DB writes against any scan/analyzer already running. (#31 item 3)
     val runScanNow: () -> Unit = {
         scope.launch(Dispatchers.Main) {
             scanState = ScanUiState.Scanning

@@ -9,7 +9,7 @@ import kotlinx.coroutines.withContext
  * database runs through [write], which marshals it onto one dedicated
  * single-thread [writerDispatcher]. Because only one thread ever performs
  * writes, two writes can never overlap — serialization is structural, with no
- * mutex to forget. Replaces the former `LibraryWriteLock`.
+ * mutex to forget. Replaces the former library write-lock mutex.
  *
  * [block] is intentionally NON-suspending. A write unit therefore runs
  * start-to-finish on the writer thread with no internal suspension, which

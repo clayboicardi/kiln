@@ -25,12 +25,15 @@
 // the ParcelFileDescriptor is wrapped in `.use {}` (closes the FD). This mirrors
 // AndroidMediaTrackAnalyzer's extractor usage + SafTagReader's FD discipline.
 //
-// Worklist drain (loop-safety): EVERY processed row is stamped — either via
-// updateTrackFormatFacts (read succeeded) or markBackfilledNoMetadata (file
-// unreadable / no audio track / extractor threw). Stamped rows leave the IS NULL
-// worklist immediately, so a plain LIMIT loop (no OFFSET) terminates. This
-// sidesteps the TrackAnalysisRunner infinite-loop class (skipped-but-unstamped
-// rows).
+// Worklist drain (loop-safety): each processed row is stamped — either via
+// updateTrackFormatFactsIfUnchanged (read succeeded) or markBackfilledNoMetadataIfUnchanged
+// (file unreadable / no audio track / extractor threw). Both writes are GUARDED on
+// id + file_path + file_mtime_ms + file_size_bytes (#31 item 3): the page + native facts are
+// read OFF the writer thread, so a concurrent rescan can change a row in that gap; a guarded
+// write then matches 0 rows (changes() == 0) and the row is left to re-backfill next pass.
+// Stamped rows leave the `metadata_backfilled_at_ms IS NULL` worklist; stale (0-row) rows do
+// not, so — exactly like TrackAnalysisRunner — the loop advances OFFSET past the stale tail so
+// it can't re-query them forever (skipped-but-unstamped infinite-loop class).
 
 package com.clayworks.kiln.library.scan
 
@@ -42,6 +45,7 @@ import android.net.Uri
 import co.touchlab.kermit.Logger
 import com.clayworks.kiln.data.library.db.KilnDatabase
 import com.clayworks.kiln.data.library.db.SelectTracksNeedingBackfill
+import com.clayworks.kiln.library.db.DatabaseWriter
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
 
@@ -66,51 +70,73 @@ class AndroidFormatFactBackfill(
     private val context: Context,
     private val db: KilnDatabase,
     private val ioDispatcher: CoroutineDispatcher,
+    private val writer: DatabaseWriter,
 ) {
     /**
      * Drains the backfill worklist. Returns the number of rows whose format
      * facts were updated from a successful read (excludes rows stamped via
-     * markBackfilledNoMetadata).
+     * markBackfilledNoMetadataIfUnchanged and stale rows a concurrent scan changed).
      */
     suspend fun runOnce(): Int = withContext(ioDispatcher) {
-        var updated = 0
+        var updated = 0          // rows whose REAL facts persisted (excludes no-metadata stamps + stale)
+        var skippedTotal = 0L    // stale rows (guarded write matched 0) — advance OFFSET past them
         while (true) {
             val page = db.trackQueries
-                .selectTracksNeedingBackfill(limit = PAGE_LIMIT)
+                .selectTracksNeedingBackfill(limit = PAGE_LIMIT, offset = skippedTotal)
                 .executeAsList()
             if (page.isEmpty()) break
 
-            // Read native format facts OUTSIDE any transaction — MediaExtractor /
-            // MMR I/O must not hold the SQLite write lock. Then batch the whole
-            // page's writes into ONE db.transaction so SQLite fsyncs once per page
-            // (200 rows) instead of once per row; a large-library backfill would
-            // otherwise spend minutes on per-row autocommit overhead.
+            // Read native format facts OUTSIDE the writer — MediaExtractor / MMR I/O must not run
+            // on the single writer thread. This is the read→(slow off-writer read)→write TOCTOU
+            // window: a concurrent rescan can change a row between this read and the guarded write
+            // below, so the writes are *IfUnchanged-guarded and stale (0-row) hits are scrolled
+            // past via OFFSET. Then batch the whole page's writes into ONE
+            // writer.write { db.transaction } so SQLite fsyncs once per page (200 rows), not per row.
             val pageFacts = page.map { row -> row to readFormatFacts(row) }
             val nowMs = System.currentTimeMillis()
-            db.transaction {
-                for ((row, facts) in pageFacts) {
-                    if (facts != null) {
-                        db.trackQueries.updateTrackFormatFacts(
-                            sampleRateHz = facts.sampleRateHz,
-                            bitDepth = facts.bitDepth,
-                            channels = facts.channels,
-                            bitrateKbps = facts.bitrateKbps,
-                            hasEmbeddedArt = if (facts.hasEmbeddedArt) 1L else 0L,
-                            backfilledAtMs = nowMs,
-                            id = row.id,
-                        )
-                    } else {
-                        // File missing / unsupported / no audio track / extractor
-                        // threw. Stamp it anyway so it leaves the IS NULL worklist
-                        // (loop-safety, F-pattern).
-                        db.trackQueries.markBackfilledNoMetadata(
-                            backfilledAtMs = nowMs,
-                            id = row.id,
-                        )
+            var pageStale = 0
+            writer.write {
+                db.transaction {
+                    for ((row, facts) in pageFacts) {
+                        if (facts != null) {
+                            db.trackQueries.updateTrackFormatFactsIfUnchanged(
+                                sampleRateHz = facts.sampleRateHz,
+                                bitDepth = facts.bitDepth,
+                                channels = facts.channels,
+                                bitrateKbps = facts.bitrateKbps,
+                                hasEmbeddedArt = if (facts.hasEmbeddedArt) 1L else 0L,
+                                backfilledAtMs = nowMs,
+                                id = row.id,
+                                filePath = row.file_path,
+                                fileMtimeMs = row.file_mtime_ms,
+                                fileSizeBytes = row.file_size_bytes,
+                            )
+                        } else {
+                            // File missing / unsupported / no audio track / extractor threw. Stamp
+                            // it (guarded) so it leaves the IS NULL worklist (loop-safety, F-pattern).
+                            db.trackQueries.markBackfilledNoMetadataIfUnchanged(
+                                backfilledAtMs = nowMs,
+                                id = row.id,
+                                filePath = row.file_path,
+                                fileMtimeMs = row.file_mtime_ms,
+                                fileSizeBytes = row.file_size_bytes,
+                            )
+                        }
+                        // A concurrent rescan changed this row between the page read and now → the
+                        // guarded write matched 0 rows. Leave it un-stamped (re-backfills next pass)
+                        // and count it so the OFFSET scrolls past the stale tail.
+                        if (db.trackQueries.selectChanges().executeAsOne() == 0L) {
+                            pageStale++
+                        } else if (facts != null) {
+                            updated++
+                        }
                     }
                 }
             }
-            updated += pageFacts.count { it.second != null }
+            skippedTotal += pageStale
+            // All-stale short page → nothing processable remains past the stale tail. Without this,
+            // an entirely-stale short page would re-query the same OFFSET forever.
+            if (pageStale == page.size && page.size < PAGE_LIMIT.toInt()) break
         }
         updated
     }

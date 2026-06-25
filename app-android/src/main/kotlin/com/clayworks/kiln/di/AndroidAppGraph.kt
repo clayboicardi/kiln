@@ -26,7 +26,6 @@ import com.clayworks.kiln.data.library.db.KilnDatabase
 import com.clayworks.kiln.library.scan.AndroidFormatFactBackfill
 import com.clayworks.kiln.library.scan.AndroidMediaStoreScanner
 import com.clayworks.kiln.library.scan.LibraryScanner
-import com.clayworks.kiln.library.scan.LibraryWriteLock
 import com.clayworks.kiln.library.settings.SettingsRepository
 import com.clayworks.kiln.library.settings.SettingsRepositoryImpl
 import com.clayworks.kiln.library.source.LibraryStatsSource
@@ -144,16 +143,12 @@ abstract class AndroidAppGraph(
 
     @Singleton
     @Provides
-    protected fun formatBackfill(context: Context, db: KilnDatabase): AndroidFormatFactBackfill =
-        AndroidFormatFactBackfill(context, db, Dispatchers.IO)
-
-    /**
-     * Shared lock serializing the scanner and the analyzer — both write `track`
-     * over the single AndroidSqliteDriver connection. See [LibraryWriteLock].
-     */
-    @Singleton
-    @Provides
-    protected fun libraryWriteLock(): LibraryWriteLock = LibraryWriteLock()
+    protected fun formatBackfill(
+        context: Context,
+        db: KilnDatabase,
+        writer: DatabaseWriter,
+    ): AndroidFormatFactBackfill =
+        AndroidFormatFactBackfill(context, db, Dispatchers.IO, writer)
 
     @Singleton
     @Provides
@@ -163,7 +158,7 @@ abstract class AndroidAppGraph(
         db: KilnDatabase,
         driver: SqlDriver,
         backfill: AndroidFormatFactBackfill,
-        writeLock: LibraryWriteLock,
+        writer: DatabaseWriter,
     ): LibraryScanner = AndroidMediaStoreScanner(
         context = context,
         safTreeUrisFlow = settings.scanFolders,
@@ -171,7 +166,7 @@ abstract class AndroidAppGraph(
         driver = driver,
         ioDispatcher = Dispatchers.IO,
         backfill = backfill,
-        writeLock = writeLock,
+        writer = writer,
     )
 
     /**
@@ -216,11 +211,11 @@ abstract class AndroidAppGraph(
     protected fun analysisRunner(
         db: KilnDatabase,
         analyzer: TrackAnalyzer,
-        writeLock: LibraryWriteLock,
+        writer: DatabaseWriter,
     ): TrackAnalysisRunner = TrackAnalysisRunner(
         db = db,
         analyzer = analyzer,
         ioDispatcher = Dispatchers.IO,
-        writeLock = writeLock,
+        writer = writer,
     )
 }

@@ -35,7 +35,6 @@ import com.clayworks.kiln.data.library.db.KilnDatabase
 import com.clayworks.kiln.library.scan.JvmFilesystemScanner
 import com.clayworks.kiln.library.scan.LibraryScanner
 import com.clayworks.kiln.library.db.DatabaseWriter
-import com.clayworks.kiln.library.scan.LibraryWriteLock
 import com.clayworks.kiln.library.settings.SettingsRepository
 import com.clayworks.kiln.library.settings.SettingsRepositoryImpl
 import com.clayworks.kiln.library.source.LibraryStatsSource
@@ -154,14 +153,6 @@ abstract class DesktopAppGraph(
     protected fun libraryStatsSource(source: LocalLibrarySource): LibraryStatsSource = source
 
     /**
-     * Shared lock serializing the scanner and the analyzer — both write `track`
-     * over the single JdbcSqliteDriver connection. See [LibraryWriteLock].
-     */
-    @Singleton
-    @Provides
-    protected fun libraryWriteLock(): LibraryWriteLock = LibraryWriteLock()
-
-    /**
      * Track A: scan folders come from SettingsRepository.scanFolders, mapped
      * String→Path at the seam. The repo Flow emits its current value
      * immediately (defaults to empty when no row exists, otherwise the
@@ -180,12 +171,12 @@ abstract class DesktopAppGraph(
         settings: SettingsRepository,
         db: KilnDatabase,
         driver: SqlDriver,
-        writeLock: LibraryWriteLock,
+        writer: DatabaseWriter,
     ): LibraryScanner {
         val scanFoldersFlow: Flow<List<Path>> = settings.scanFolders.map { stored ->
             stored.map(Path::of)
         }
-        return JvmFilesystemScanner(scanFoldersFlow, db, driver, Dispatchers.IO, writeLock)
+        return JvmFilesystemScanner(scanFoldersFlow, db, driver, Dispatchers.IO, writer)
     }
 
     /**
@@ -245,11 +236,11 @@ abstract class DesktopAppGraph(
     protected fun analysisRunner(
         db: KilnDatabase,
         analyzer: TrackAnalyzer,
-        writeLock: LibraryWriteLock,
+        writer: DatabaseWriter,
     ): TrackAnalysisRunner = TrackAnalysisRunner(
         db = db,
         analyzer = analyzer,
         ioDispatcher = Dispatchers.IO,
-        writeLock = writeLock,
+        writer = writer,
     )
 }

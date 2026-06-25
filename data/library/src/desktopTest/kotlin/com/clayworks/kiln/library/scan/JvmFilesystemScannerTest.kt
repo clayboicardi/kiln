@@ -10,6 +10,7 @@ package com.clayworks.kiln.library.scan
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import arrow.core.Either
 import com.clayworks.kiln.data.library.db.KilnDatabase
+import com.clayworks.kiln.library.db.DatabaseWriter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
@@ -113,7 +114,7 @@ class JvmFilesystemScannerTest {
                 db = db,
                 driver = driver,
                 ioDispatcher = Dispatchers.Unconfined,
-                writeLock = LibraryWriteLock(),
+                writer = DatabaseWriter(db, Dispatchers.Unconfined),
             )
 
             val result = scanner.scanIncremental()
@@ -156,7 +157,7 @@ class JvmFilesystemScannerTest {
                 db = db,
                 driver = driver,
                 ioDispatcher = Dispatchers.Unconfined,
-                writeLock = LibraryWriteLock(),
+                writer = DatabaseWriter(db, Dispatchers.Unconfined),
             )
 
             val result = scanner.scanFull()
@@ -196,7 +197,7 @@ class JvmFilesystemScannerTest {
                 db = db,
                 driver = driver,
                 ioDispatcher = Dispatchers.Unconfined,
-                writeLock = LibraryWriteLock(),
+                writer = DatabaseWriter(db, Dispatchers.Unconfined),
             )
 
             val result = scanner.scanIncremental()
@@ -228,7 +229,7 @@ class JvmFilesystemScannerTest {
                 db = db,
                 driver = driver,
                 ioDispatcher = Dispatchers.Unconfined,
-                writeLock = LibraryWriteLock(),
+                writer = DatabaseWriter(db, Dispatchers.Unconfined),
             )
 
             val result = scanner.scanIncremental()
@@ -264,7 +265,7 @@ class JvmFilesystemScannerTest {
             val floor = System.currentTimeMillis()
             val scanner = JvmFilesystemScanner(
                 scanFoldersFlow = flowOf(listOf(tempDir)),
-                db = db, driver = driver, ioDispatcher = Dispatchers.Unconfined, writeLock = LibraryWriteLock(),
+                db = db, driver = driver, ioDispatcher = Dispatchers.Unconfined, writer = DatabaseWriter(db, Dispatchers.Unconfined),
             )
             val result = scanner.scanIncremental()
 
@@ -290,7 +291,7 @@ class JvmFilesystemScannerTest {
 
             val scanner = JvmFilesystemScanner(
                 scanFoldersFlow = flowOf(listOf(tempDir)),
-                db = db, driver = driver, ioDispatcher = Dispatchers.Unconfined, writeLock = LibraryWriteLock(),
+                db = db, driver = driver, ioDispatcher = Dispatchers.Unconfined, writer = DatabaseWriter(db, Dispatchers.Unconfined),
             )
             val result = scanner.scanIncremental()
 

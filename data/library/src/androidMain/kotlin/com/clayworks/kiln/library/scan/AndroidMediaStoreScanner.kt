@@ -23,6 +23,7 @@ import app.cash.sqldelight.db.SqlDriver
 import arrow.core.Either
 import co.touchlab.kermit.Logger
 import com.clayworks.kiln.data.library.db.KilnDatabase
+import com.clayworks.kiln.library.db.DatabaseWriter
 import com.clayworks.kiln.library.scan.internal.SafTagReader
 import com.clayworks.kiln.library.scan.internal.SafTreeWalker
 import com.clayworks.kiln.library.scan.internal.rebuildFtsIndex
@@ -31,7 +32,6 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 private val log = Logger.withTag("AndroidMediaStoreScanner")
@@ -48,130 +48,144 @@ class AndroidMediaStoreScanner(
     private val driver: SqlDriver,
     private val ioDispatcher: CoroutineDispatcher,
     private val backfill: AndroidFormatFactBackfill,
-    private val writeLock: LibraryWriteLock,
+    private val writer: DatabaseWriter,
 ) : LibraryScanner {
 
-    // Held for the whole scan via the shared LibraryWriteLock — serializes the
-    // three scan triggers against each other AND against the analyzer's writes
-    // over the single SQLite connection.
+    // The whole scan DB body runs inside one DatabaseWriter.write { } so every write serializes
+    // on the single writer thread (#31 item 3 — retires the former write-lock mutex). The suspend reads
+    // (safTreeUrisFlow.first(), backfill.runOnce()) stay OUTSIDE the (non-suspend) write block;
+    // the Either.catch at the top wraps BOTH the folder read AND the scan + backfill so a
+    // settings/flow/backfill failure maps to Left rather than throwing out of the scanner.
     override suspend fun scanIncremental(): Either<ScanError, ScanResult> =
-        withContext(ioDispatcher) { writeLock.mutex.withLock { runScan(forceFullRescan = false) } }
+        withContext(ioDispatcher) {
+            Either.catch { runScanWithBackfill(forceFullRescan = false) }.mapLeft(::classifyScanFailure)
+        }
 
     override suspend fun scanFull(): Either<ScanError, ScanResult> =
-        withContext(ioDispatcher) { writeLock.mutex.withLock { runScan(forceFullRescan = true) } }
+        withContext(ioDispatcher) {
+            Either.catch { runScanWithBackfill(forceFullRescan = true) }.mapLeft(::classifyScanFailure)
+        }
 
-    private suspend fun runScan(forceFullRescan: Boolean): Either<ScanError, ScanResult> =
-        Either.catch {
-            val scanStartedMs = System.currentTimeMillis()
-            val safTreeUris = safTreeUrisFlow.first()
-            var added = 0
-            var updated = 0
-            var unchanged = 0
-            var parseErrors = 0
+    // Reads SAF tree URIs (suspend, off-writer), runs the scan body on the writer thread, then
+    // runs the format-fact backfill. backfill.runOnce() runs ONLY on scan success (after
+    // writer.write returns); a failed scan never mutates backfill state, and a backfill exception
+    // is mapped by the callers' Either.catch rather than escaping the Either contract (codex C2).
+    private suspend fun runScanWithBackfill(forceFullRescan: Boolean): ScanResult {
+        val safTreeUris = safTreeUrisFlow.first()
+        val result = writer.write { runScanBlocking(safTreeUris, forceFullRescan) }
+        // Correct the scanner's placeholder format facts (sample rate / channels / bitrate /
+        // embedded art) for newly-scanned rows. The backfill's `metadata_backfilled_at_ms IS NULL`
+        // worklist makes this idempotent — an already-backfilled library costs only a COUNT and
+        // returns 0. Off-writer (suspend); the backfill routes its own page writes through `writer`.
+        val backfilled = backfill.runOnce()
+        log.i { "format-fact backfill: $backfilled rows corrected" }
+        return result
+    }
 
-            if (forceFullRescan) {
-                // INTENTIONAL: this UPDATE runs OUTSIDE the loop transaction below.
-                // A mid-scan crash leaves last_scanned_ms = 0 for all rows; the
-                // next scan's softDeleteUnscanned(scanStartedMs) only soft-deletes
-                // rows that the NEW scan loop did not touch — so the library is
-                // recoverable. /ultrareview flagged this in Session 10 and the
-                // refute is in docs/sessions/2026-05-19-session-10-addendum-re-review-fixes.md.
-                driver.execute(
-                    identifier = null,
-                    sql = "UPDATE track SET last_scanned_ms = 0",
-                    parameters = 0,
-                )
-            }
+    // Non-suspend: runs entirely on the writer thread inside DatabaseWriter.write { }. Throws on
+    // failure (the callers' Either.catch maps it). safTreeUris is read by the suspend caller.
+    private fun runScanBlocking(safTreeUris: List<String>, forceFullRescan: Boolean): ScanResult {
+        val scanStartedMs = System.currentTimeMillis()
+        var added = 0
+        var updated = 0
+        var unchanged = 0
+        var parseErrors = 0
 
-            val cursor = queryAudioMediaCursor()
-                ?: throw IllegalStateException("MediaStore.Audio.Media query returned null cursor")
+        if (forceFullRescan) {
+            // INTENTIONAL: this UPDATE runs OUTSIDE the loop transaction below.
+            // A mid-scan crash leaves last_scanned_ms = 0 for all rows; the
+            // next scan's softDeleteUnscanned(scanStartedMs) only soft-deletes
+            // rows that the NEW scan loop did not touch — so the library is
+            // recoverable. /ultrareview flagged this in Session 10 and the
+            // refute is in docs/sessions/2026-05-19-session-10-addendum-re-review-fixes.md.
+            driver.execute(
+                identifier = null,
+                sql = "UPDATE track SET last_scanned_ms = 0",
+                parameters = 0,
+            )
+        }
 
-            cursor.use { c ->
-                val cols = MediaCols.from(c)
-                // ONE transaction wrapping the whole scan loop (Session 10 Gemini G1).
-                // Per-track transactions cost one disk sync each, so the
-                // original code issued one sync per MediaStore row and blew
-                // the 5-min perf budget on libraries with 40k+ tracks.
-                // SQLite handles a single long transaction over tens of
-                // thousands of inserts comfortably; the trade-off is that a
-                // mid-scan crash rolls back the whole pass (chunked batching
-                // is a Phase 2a follow-up if real-world scans hit issues).
-                db.transaction {
-                    while (c.moveToNext()) {
-                        when (val outcome = scanOneTrack(c, cols, scanStartedMs)) {
-                            Outcome.Added -> added++
-                            Outcome.Updated -> updated++
-                            Outcome.Unchanged -> unchanged++
-                            is Outcome.ParseFailed -> {
-                                parseErrors++
-                                log.w(outcome.error) { "skipped media id ${outcome.mediaId}: ${outcome.error.message}" }
-                            }
+        val cursor = queryAudioMediaCursor()
+            ?: throw IllegalStateException("MediaStore.Audio.Media query returned null cursor")
+
+        cursor.use { c ->
+            val cols = MediaCols.from(c)
+            // ONE transaction wrapping the whole scan loop (Session 10 Gemini G1).
+            // Per-track transactions cost one disk sync each, so the
+            // original code issued one sync per MediaStore row and blew
+            // the 5-min perf budget on libraries with 40k+ tracks.
+            // SQLite handles a single long transaction over tens of
+            // thousands of inserts comfortably; the trade-off is that a
+            // mid-scan crash rolls back the whole pass (chunked batching
+            // is a Phase 2a follow-up if real-world scans hit issues).
+            db.transaction {
+                while (c.moveToNext()) {
+                    when (val outcome = scanOneTrack(c, cols, scanStartedMs)) {
+                        Outcome.Added -> added++
+                        Outcome.Updated -> updated++
+                        Outcome.Unchanged -> unchanged++
+                        is Outcome.ParseFailed -> {
+                            parseErrors++
+                            log.w(outcome.error) { "skipped media id ${outcome.mediaId}: ${outcome.error.message}" }
                         }
                     }
                 }
             }
+        }
 
-            // Phase 2a Track B: walk SAF-picked tree URIs from settings.scanFolders.
-            // These augment the system-wide MediaStore pass above — Android users
-            // who picked a folder via the SAF picker want files MediaStore doesn't
-            // know about (Downloads, sideloaded SD, etc.). Same upsert + soft-delete
-            // semantics; counts accumulate.
-            val (safAdded, safUpdated, safParseErrors) = scanSafTrees(safTreeUris, scanStartedMs)
-            added += safAdded
-            updated += safUpdated
-            parseErrors += safParseErrors
+        // Phase 2a Track B: walk SAF-picked tree URIs from settings.scanFolders.
+        // These augment the system-wide MediaStore pass above — Android users
+        // who picked a folder via the SAF picker want files MediaStore doesn't
+        // know about (Downloads, sideloaded SD, etc.). Same upsert + soft-delete
+        // semantics; counts accumulate.
+        val (safAdded, safUpdated, safParseErrors) = scanSafTrees(safTreeUris, scanStartedMs)
+        added += safAdded
+        updated += safUpdated
+        parseErrors += safParseErrors
 
-            // Soft-delete reconciliation, but ONLY when every configured SAF tree
-            // is currently readable. If a tree's grant/provider/SD card is
-            // unavailable, SafTreeWalker yields no documents, so reconciling would
-            // soft-delete every SAF-only track on startup. MediaStore is always
-            // available, so this guards the SAF-sourced rows. Mirrors the desktop
-            // inaccessible-root guard. (codex #4 Android twin)
-            val unreadableSafTrees = safTreeUris.filter { uriString ->
-                val uri = runCatching { Uri.parse(uriString) }.getOrNull() ?: return@filter true
-                uri.scheme == "content" && !SafTreeWalker.isTreeReadable(context.contentResolver, uri)
+        // Soft-delete reconciliation, but ONLY when every configured SAF tree
+        // is currently readable. If a tree's grant/provider/SD card is
+        // unavailable, SafTreeWalker yields no documents, so reconciling would
+        // soft-delete every SAF-only track on startup. MediaStore is always
+        // available, so this guards the SAF-sourced rows. Mirrors the desktop
+        // inaccessible-root guard. (codex #4 Android twin)
+        val unreadableSafTrees = safTreeUris.filter { uriString ->
+            val uri = runCatching { Uri.parse(uriString) }.getOrNull() ?: return@filter true
+            uri.scheme == "content" && !SafTreeWalker.isTreeReadable(context.contentResolver, uri)
+        }
+        val softDeleteCount = if (unreadableSafTrees.isEmpty()) {
+            val count = db.trackQueries.countUnscanned(scanStartedMs).executeAsOne().toInt()
+            if (count > 0) {
+                db.trackQueries.softDeleteUnscanned(
+                    deletedAtMs = scanStartedMs,
+                    scanStartedMs = scanStartedMs,
+                )
             }
-            val softDeleteCount = if (unreadableSafTrees.isEmpty()) {
-                val count = db.trackQueries.countUnscanned(scanStartedMs).executeAsOne().toInt()
-                if (count > 0) {
-                    db.trackQueries.softDeleteUnscanned(
-                        deletedAtMs = scanStartedMs,
-                        scanStartedMs = scanStartedMs,
-                    )
-                }
-                count
-            } else {
-                log.w {
-                    "skipping soft-delete: ${unreadableSafTrees.size} SAF tree(s) unreadable " +
-                        "($unreadableSafTrees) — refusing to wipe SAF-only tracks"
-                }
-                0
+            count
+        } else {
+            log.w {
+                "skipping soft-delete: ${unreadableSafTrees.size} SAF tree(s) unreadable " +
+                    "($unreadableSafTrees) — refusing to wipe SAF-only tracks"
             }
+            0
+        }
 
-            rebuildFtsIndex(db, driver)
+        rebuildFtsIndex(db, driver)
 
-            // Correct the scanner's placeholder format facts (sample rate /
-            // channels / bitrate / embedded art) for newly-scanned rows. The
-            // backfill's `metadata_backfilled_at_ms IS NULL` worklist makes this
-            // idempotent — an already-backfilled library costs only a COUNT and
-            // returns 0. We are already on ioDispatcher; runOnce() is suspend.
-            val backfilled = backfill.runOnce()
-            log.i { "format-fact backfill: $backfilled rows corrected" }
-
-            val durationMs = System.currentTimeMillis() - scanStartedMs
-            ScanResult(
-                tracksAdded = added,
-                tracksUpdated = updated,
-                tracksSoftDeleted = softDeleteCount,
-                tracksUnchanged = unchanged,
-                durationMs = durationMs,
-            ).also {
-                log.i {
-                    "scan complete: +$added ~$updated -$softDeleteCount ·$unchanged " +
-                        "($parseErrors parse errors) in ${durationMs}ms"
-                }
+        val durationMs = System.currentTimeMillis() - scanStartedMs
+        return ScanResult(
+            tracksAdded = added,
+            tracksUpdated = updated,
+            tracksSoftDeleted = softDeleteCount,
+            tracksUnchanged = unchanged,
+            durationMs = durationMs,
+        ).also {
+            log.i {
+                "scan complete: +$added ~$updated -$softDeleteCount ·$unchanged " +
+                    "($parseErrors parse errors) in ${durationMs}ms"
             }
-        }.mapLeft(::classifyScanFailure)
+        }
+    }
 
     private fun classifyScanFailure(e: Throwable): ScanError = when (e) {
         is SecurityException -> ScanError.PermissionDenied(

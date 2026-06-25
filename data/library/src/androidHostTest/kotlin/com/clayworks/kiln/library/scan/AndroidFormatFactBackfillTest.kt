@@ -28,6 +28,7 @@ import androidx.test.core.app.ApplicationProvider
 import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.driver.android.AndroidSqliteDriver
 import com.clayworks.kiln.data.library.db.KilnDatabase
+import com.clayworks.kiln.library.db.DatabaseWriter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import org.junit.Test
@@ -197,6 +198,7 @@ class AndroidFormatFactBackfillTest {
                 context = ApplicationProvider.getApplicationContext(),
                 db = db,
                 ioDispatcher = Dispatchers.Unconfined,
+                writer = DatabaseWriter(db, Dispatchers.Unconfined),
             )
             val updated = runBlocking { backfill.runOnce() }
 
@@ -221,6 +223,7 @@ class AndroidFormatFactBackfillTest {
                 context = ApplicationProvider.getApplicationContext(),
                 db = db,
                 ioDispatcher = Dispatchers.Unconfined,
+                writer = DatabaseWriter(db, Dispatchers.Unconfined),
             )
 
             // First run stamps the (unreadable) row out of the worklist.
