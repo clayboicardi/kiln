@@ -13,6 +13,7 @@ import app.cash.sqldelight.db.SqlDriver
 import arrow.core.Either
 import co.touchlab.kermit.Logger
 import com.clayworks.kiln.data.library.db.KilnDatabase
+import com.clayworks.kiln.library.db.DatabaseWriter
 import com.clayworks.kiln.library.scan.internal.parseChannels
 import com.clayworks.kiln.library.scan.internal.parseLeadingLong
 import com.clayworks.kiln.library.scan.internal.parseReplayGainDb
@@ -22,7 +23,6 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.jaudiotagger.audio.AudioFileIO
 import org.jaudiotagger.tag.FieldKey
@@ -44,7 +44,7 @@ class JvmFilesystemScanner(
     private val db: KilnDatabase,
     private val driver: SqlDriver,
     private val ioDispatcher: CoroutineDispatcher,
-    private val writeLock: LibraryWriteLock,
+    private val writer: DatabaseWriter,
 ) : LibraryScanner {
 
     init {
@@ -52,128 +52,141 @@ class JvmFilesystemScanner(
         java.util.logging.Logger.getLogger("org.jaudiotagger").level = Level.WARNING
     }
 
-    // Held for the whole scan via the shared LibraryWriteLock — serializes
-    // scan-vs-scan AND scan-vs-analyzer over the single SQLite connection.
+    // Both scans run their whole DB body inside one DatabaseWriter.write { } so every write
+    // serializes on the single writer thread (#31 item 3 — retires the former write-lock mutex). The
+    // suspend scanFoldersFlow.first() read stays OUTSIDE the (non-suspend) write block; both it
+    // and the write are wrapped in the same Either.catch so a settings/flow failure maps to Left
+    // rather than throwing out of the scanner.
     override suspend fun scanIncremental(): Either<ScanError, ScanResult> =
-        withContext(ioDispatcher) { writeLock.mutex.withLock { runScan(forceFullRescan = false) } }
+        withContext(ioDispatcher) {
+            Either.catch {
+                val scanFolders = scanFoldersFlow.first()
+                writer.write { runScanBlocking(scanFolders, forceFullRescan = false) }
+            }.mapLeft(::classifyScanFailure)
+        }
 
     override suspend fun scanFull(): Either<ScanError, ScanResult> =
-        withContext(ioDispatcher) { writeLock.mutex.withLock { runScan(forceFullRescan = true) } }
+        withContext(ioDispatcher) {
+            Either.catch {
+                val scanFolders = scanFoldersFlow.first()
+                writer.write { runScanBlocking(scanFolders, forceFullRescan = true) }
+            }.mapLeft(::classifyScanFailure)
+        }
 
-    private suspend fun runScan(forceFullRescan: Boolean): Either<ScanError, ScanResult> =
-        Either.catch {
-            val scanFolders = scanFoldersFlow.first()
-            val scanStartedMs = System.currentTimeMillis()
+    // Non-suspend: runs entirely on the writer thread inside DatabaseWriter.write { }. Throws on
+    // failure (the callers' Either.catch maps it). scanFolders is read by the suspend caller.
+    private fun runScanBlocking(scanFolders: List<Path>, forceFullRescan: Boolean): ScanResult {
+        val scanStartedMs = System.currentTimeMillis()
 
-            // GUARD: empty scanFolders is a data-loss bomb. Without this, the
-            // body below would (a) optionally bulk-reset every track's
-            // last_scanned_ms = 0 on forceFullRescan, (b) walk zero files →
-            // touch nothing, (c) softDeleteUnscanned(scanStartedMs) marks
-            // EVERY remaining live row as deleted because nothing was touched
-            // back up to scanStartedMs. Result: first-run-with-defaults or
-            // misconfig soft-deletes the entire library. Bail early instead.
-            if (scanFolders.isEmpty()) {
-                log.w {
-                    "scanIncremental/scanFull called with empty scanFolders; " +
-                        "skipping to avoid soft-deleting all tracks"
-                }
-                return@catch ScanResult(
-                    tracksAdded = 0,
-                    tracksUpdated = 0,
-                    tracksSoftDeleted = 0,
-                    tracksUnchanged = 0,
-                    durationMs = 0L,
-                )
+        // GUARD: empty scanFolders is a data-loss bomb. Without this, the
+        // body below would (a) optionally bulk-reset every track's
+        // last_scanned_ms = 0 on forceFullRescan, (b) walk zero files →
+        // touch nothing, (c) softDeleteUnscanned(scanStartedMs) marks
+        // EVERY remaining live row as deleted because nothing was touched
+        // back up to scanStartedMs. Result: first-run-with-defaults or
+        // misconfig soft-deletes the entire library. Bail early instead.
+        if (scanFolders.isEmpty()) {
+            log.w {
+                "scanIncremental/scanFull called with empty scanFolders; " +
+                    "skipping to avoid soft-deleting all tracks"
             }
+            return ScanResult(
+                tracksAdded = 0,
+                tracksUpdated = 0,
+                tracksSoftDeleted = 0,
+                tracksUnchanged = 0,
+                durationMs = 0L,
+            )
+        }
 
-            var added = 0
-            var updated = 0
-            var unchanged = 0
-            var parseErrors = 0
+        var added = 0
+        var updated = 0
+        var unchanged = 0
+        var parseErrors = 0
 
-            if (forceFullRescan) {
-                // Reset every row's last_scanned_ms; the per-file loop will then
-                // re-touch / re-upsert as if everything were new, and the post-loop
-                // softDelete sweep will catch any rows whose underlying files are
-                // gone. Run via raw driver — single bulk UPDATE; no per-row work.
-                //
-                // INTENTIONAL: this UPDATE runs OUTSIDE the loop transaction below.
-                // A mid-scan crash leaves last_scanned_ms = 0 for all rows; the
-                // next scan's softDeleteUnscanned(scanStartedMs) only soft-deletes
-                // rows that the NEW scan loop did not touch — so the library is
-                // recoverable. /ultrareview flagged this in Session 10 and the
-                // refute is in docs/sessions/2026-05-19-session-10-addendum-re-review-fixes.md.
-                driver.execute(
-                    identifier = null,
-                    sql = "UPDATE track SET last_scanned_ms = 0",
-                    parameters = 0,
-                )
-            }
+        if (forceFullRescan) {
+            // Reset every row's last_scanned_ms; the per-file loop will then
+            // re-touch / re-upsert as if everything were new, and the post-loop
+            // softDelete sweep will catch any rows whose underlying files are
+            // gone. Run via raw driver — single bulk UPDATE; no per-row work.
+            //
+            // INTENTIONAL: this UPDATE runs OUTSIDE the loop transaction below.
+            // A mid-scan crash leaves last_scanned_ms = 0 for all rows; the
+            // next scan's softDeleteUnscanned(scanStartedMs) only soft-deletes
+            // rows that the NEW scan loop did not touch — so the library is
+            // recoverable. /ultrareview flagged this in Session 10 and the
+            // refute is in docs/sessions/2026-05-19-session-10-addendum-re-review-fixes.md.
+            driver.execute(
+                identifier = null,
+                sql = "UPDATE track SET last_scanned_ms = 0",
+                parameters = 0,
+            )
+        }
 
-            val files = discoverAudioFiles(scanFolders)
-            log.i { "discovered ${files.size} candidate file(s) across ${scanFolders.size} folder(s)" }
+        val files = discoverAudioFiles(scanFolders)
+        log.i { "discovered ${files.size} candidate file(s) across ${scanFolders.size} folder(s)" }
 
-            // ONE transaction wrapping the whole scan loop (Session 10 Gemini G2).
-            // Per-file transactions cost one disk sync each, so the original
-            // code issued ~40k syncs for Clay's library and blew the 5-min
-            // perf budget. SQLite handles a single long transaction over tens
-            // of thousands of inserts comfortably; the trade-off is that a
-            // mid-scan crash rolls back the whole pass (chunked batching is
-            // a Phase 2a follow-up if real-world scans hit issues).
-            db.transaction {
-                for (file in files) {
-                    when (val outcome = scanOneFile(file, scanStartedMs)) {
-                        Outcome.Added -> added++
-                        Outcome.Updated -> updated++
-                        Outcome.Unchanged -> unchanged++
-                        is Outcome.ParseFailed -> {
-                            parseErrors++
-                            log.w(outcome.error) { "skipped ${file.name}: metadata parse failed" }
-                        }
+        // ONE transaction wrapping the whole scan loop (Session 10 Gemini G2).
+        // Per-file transactions cost one disk sync each, so the original
+        // code issued ~40k syncs for Clay's library and blew the 5-min
+        // perf budget. SQLite handles a single long transaction over tens
+        // of thousands of inserts comfortably; the trade-off is that a
+        // mid-scan crash rolls back the whole pass (chunked batching is
+        // a Phase 2a follow-up if real-world scans hit issues).
+        db.transaction {
+            for (file in files) {
+                when (val outcome = scanOneFile(file, scanStartedMs)) {
+                    Outcome.Added -> added++
+                    Outcome.Updated -> updated++
+                    Outcome.Unchanged -> unchanged++
+                    is Outcome.ParseFailed -> {
+                        parseErrors++
+                        log.w(outcome.error) { "skipped ${file.name}: metadata parse failed" }
                     }
                 }
             }
+        }
 
-            // Soft-delete reconciliation, but ONLY when every configured root was
-            // accessible this pass. If a root is inaccessible (unmounted external
-            // drive, missing D:\tiddl), its files weren't walked, so reconciling
-            // would soft-delete that root's entire library — catastrophic now that
-            // scan-on-launch fires automatically. Refuse to reconcile against a
-            // partial view; accessible roots still get their adds/updates. (codex #4)
-            val inaccessibleRoots = scanFolders.filter { !Files.exists(it) }
-            val softDeleteCount = if (inaccessibleRoots.isEmpty()) {
-                val count = db.trackQueries.countUnscanned(scanStartedMs).executeAsOne().toInt()
-                if (count > 0) {
-                    db.trackQueries.softDeleteUnscanned(
-                        deletedAtMs = scanStartedMs,
-                        scanStartedMs = scanStartedMs,
-                    )
-                }
-                count
-            } else {
-                log.w {
-                    "skipping soft-delete: ${inaccessibleRoots.size} configured root(s) inaccessible " +
-                        "($inaccessibleRoots) — refusing to reconcile against a partial view"
-                }
-                0
+        // Soft-delete reconciliation, but ONLY when every configured root was
+        // accessible this pass. If a root is inaccessible (unmounted external
+        // drive, missing D:\tiddl), its files weren't walked, so reconciling
+        // would soft-delete that root's entire library — catastrophic now that
+        // scan-on-launch fires automatically. Refuse to reconcile against a
+        // partial view; accessible roots still get their adds/updates. (codex #4)
+        val inaccessibleRoots = scanFolders.filter { !Files.exists(it) }
+        val softDeleteCount = if (inaccessibleRoots.isEmpty()) {
+            val count = db.trackQueries.countUnscanned(scanStartedMs).executeAsOne().toInt()
+            if (count > 0) {
+                db.trackQueries.softDeleteUnscanned(
+                    deletedAtMs = scanStartedMs,
+                    scanStartedMs = scanStartedMs,
+                )
             }
-
-            rebuildFtsIndex(db, driver)
-
-            val durationMs = System.currentTimeMillis() - scanStartedMs
-            ScanResult(
-                tracksAdded = added,
-                tracksUpdated = updated,
-                tracksSoftDeleted = softDeleteCount,
-                tracksUnchanged = unchanged,
-                durationMs = durationMs,
-            ).also {
-                log.i {
-                    "scan complete: +$added ~$updated -$softDeleteCount ·$unchanged " +
-                        "($parseErrors parse errors) in ${durationMs}ms"
-                }
+            count
+        } else {
+            log.w {
+                "skipping soft-delete: ${inaccessibleRoots.size} configured root(s) inaccessible " +
+                    "($inaccessibleRoots) — refusing to reconcile against a partial view"
             }
-        }.mapLeft(::classifyScanFailure)
+            0
+        }
+
+        rebuildFtsIndex(db, driver)
+
+        val durationMs = System.currentTimeMillis() - scanStartedMs
+        return ScanResult(
+            tracksAdded = added,
+            tracksUpdated = updated,
+            tracksSoftDeleted = softDeleteCount,
+            tracksUnchanged = unchanged,
+            durationMs = durationMs,
+        ).also {
+            log.i {
+                "scan complete: +$added ~$updated -$softDeleteCount ·$unchanged " +
+                    "($parseErrors parse errors) in ${durationMs}ms"
+            }
+        }
+    }
 
     private fun classifyScanFailure(e: Throwable): ScanError = when (e) {
         is SecurityException -> ScanError.PermissionDenied(e.message ?: "Filesystem access denied")

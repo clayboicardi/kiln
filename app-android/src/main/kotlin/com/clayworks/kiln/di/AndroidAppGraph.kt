@@ -26,13 +26,15 @@ import com.clayworks.kiln.data.library.db.KilnDatabase
 import com.clayworks.kiln.library.scan.AndroidFormatFactBackfill
 import com.clayworks.kiln.library.scan.AndroidMediaStoreScanner
 import com.clayworks.kiln.library.scan.LibraryScanner
-import com.clayworks.kiln.library.scan.LibraryWriteLock
 import com.clayworks.kiln.library.settings.SettingsRepository
 import com.clayworks.kiln.library.settings.SettingsRepositoryImpl
 import com.clayworks.kiln.library.source.LibraryStatsSource
 import com.clayworks.kiln.library.source.LocalLibrarySource
 import com.clayworks.kiln.library.source.MusicSource
+import com.clayworks.kiln.library.db.DatabaseWriter
+import java.util.concurrent.Executors
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.asCoroutineDispatcher
 import me.tatarka.inject.annotations.Component
 import me.tatarka.inject.annotations.Provides
 
@@ -71,9 +73,22 @@ abstract class AndroidAppGraph(
         name = "kiln.db",
         factory = RequerySQLiteOpenHelperFactory(),
         callback = object : AndroidSqliteDriver.Callback(KilnDatabase.Schema) {
+            override fun onConfigure(db: SupportSQLiteDatabase) {
+                super.onConfigure(db)
+                // #31 item 3: enabling WAL opens the framework connection pool, so FK enforcement
+                // must be configured pool-wide here — a raw `PRAGMA foreign_keys` in onOpen only
+                // covers the primary connection, and writes on other pooled connections would skip
+                // FK checks (codex, PR #34). enableWriteAheadLogging() configures WAL + the pool.
+                db.setForeignKeyConstraintsEnabled(true)
+                db.enableWriteAheadLogging()
+            }
+
             override fun onOpen(db: SupportSQLiteDatabase) {
                 super.onOpen(db)
-                db.execSQL("PRAGMA foreign_keys = ON")
+                // busy_timeout is best-effort on Android (WAL + the pool are the primary concurrency
+                // mechanism). PRAGMA busy_timeout returns a row, so issue it via query() + close the
+                // cursor rather than execSQL (which is documented for non-row statements; codex PR #34).
+                db.query("PRAGMA busy_timeout = 5000").use { it.moveToFirst() }
             }
         },
     )
@@ -83,6 +98,20 @@ abstract class AndroidAppGraph(
     protected fun database(driver: SqlDriver): KilnDatabase = KilnDatabase(driver)
 
     /**
+     * Single-writer seam (#31 item 3) — see DesktopAppGraph for the rationale. Dispatcher built
+     * inline; one daemon thread serializes all DB writes via `DatabaseWriter.write { }`.
+     */
+    @Singleton
+    @Provides
+    protected fun databaseWriter(db: KilnDatabase): DatabaseWriter =
+        DatabaseWriter(
+            db = db,
+            writerDispatcher = Executors.newSingleThreadExecutor { runnable ->
+                Thread(runnable, "kiln-db-writer").apply { isDaemon = true }
+            }.asCoroutineDispatcher(),
+        )
+
+    /**
      * SettingsRepository binds the impl-returning provider to the interface
      * type at the graph surface. Mirrors DesktopAppGraph's pattern: kotlin-inject
      * routes the interface consumers (MainActivity's KilnTheme wrap +
@@ -90,8 +119,8 @@ abstract class AndroidAppGraph(
      */
     @Singleton
     @Provides
-    protected fun settingsRepository(db: KilnDatabase): SettingsRepository =
-        SettingsRepositoryImpl(db, Dispatchers.IO)
+    protected fun settingsRepository(db: KilnDatabase, writer: DatabaseWriter): SettingsRepository =
+        SettingsRepositoryImpl(db, Dispatchers.IO, writer)
 
     /**
      * One LocalLibrarySource instance, bound to BOTH the MusicSource (browse /
@@ -114,16 +143,12 @@ abstract class AndroidAppGraph(
 
     @Singleton
     @Provides
-    protected fun formatBackfill(context: Context, db: KilnDatabase): AndroidFormatFactBackfill =
-        AndroidFormatFactBackfill(context, db, Dispatchers.IO)
-
-    /**
-     * Shared lock serializing the scanner and the analyzer — both write `track`
-     * over the single AndroidSqliteDriver connection. See [LibraryWriteLock].
-     */
-    @Singleton
-    @Provides
-    protected fun libraryWriteLock(): LibraryWriteLock = LibraryWriteLock()
+    protected fun formatBackfill(
+        context: Context,
+        db: KilnDatabase,
+        writer: DatabaseWriter,
+    ): AndroidFormatFactBackfill =
+        AndroidFormatFactBackfill(context, db, Dispatchers.IO, writer)
 
     @Singleton
     @Provides
@@ -133,7 +158,7 @@ abstract class AndroidAppGraph(
         db: KilnDatabase,
         driver: SqlDriver,
         backfill: AndroidFormatFactBackfill,
-        writeLock: LibraryWriteLock,
+        writer: DatabaseWriter,
     ): LibraryScanner = AndroidMediaStoreScanner(
         context = context,
         safTreeUrisFlow = settings.scanFolders,
@@ -141,7 +166,7 @@ abstract class AndroidAppGraph(
         driver = driver,
         ioDispatcher = Dispatchers.IO,
         backfill = backfill,
-        writeLock = writeLock,
+        writer = writer,
     )
 
     /**
@@ -186,11 +211,11 @@ abstract class AndroidAppGraph(
     protected fun analysisRunner(
         db: KilnDatabase,
         analyzer: TrackAnalyzer,
-        writeLock: LibraryWriteLock,
+        writer: DatabaseWriter,
     ): TrackAnalysisRunner = TrackAnalysisRunner(
         db = db,
         analyzer = analyzer,
         ioDispatcher = Dispatchers.IO,
-        writeLock = writeLock,
+        writer = writer,
     )
 }

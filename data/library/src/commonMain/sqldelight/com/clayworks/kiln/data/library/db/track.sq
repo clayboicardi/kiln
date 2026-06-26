@@ -251,18 +251,20 @@ WHERE track.deleted_at_ms IS NULL;
 
 -- Phase 2b-A (A2): Android format-fact backfill worklist (F10).
 -- Live rows whose Android format facts haven't been verified yet
--- (metadata_backfilled_at_ms IS NULL). Only id + file_path are projected: the
+-- (metadata_backfilled_at_ms IS NULL). id + file_path drive the loop; the
 -- backfill re-reads sample-rate + channels authoritatively from the file via
 -- MediaExtractor (the scanner's 44100/2 placeholders in those columns are
 -- exactly what the backfill corrects), so the stale DB values are deliberately
--- NOT carried into the pass. No OFFSET: every processed row is stamped, so it
--- leaves the IS NULL worklist immediately and a plain LIMIT loop terminates.
+-- NOT carried into the pass. file_mtime_ms + file_size_bytes are projected as
+-- the TOCTOU guard keys for the *IfUnchanged writes below (#31 item 3); ORDER BY
+-- id + OFFSET give stable paging as the runner advances past stale un-stamped rows.
 selectTracksNeedingBackfill:
-SELECT id, file_path
+SELECT id, file_path, file_mtime_ms, file_size_bytes
 FROM track
 WHERE metadata_backfilled_at_ms IS NULL
   AND deleted_at_ms IS NULL
-LIMIT :limit;
+ORDER BY id
+LIMIT :limit OFFSET :offset;
 
 -- Count for the backfill worklist — drives the loop-drain assertion + progress.
 countTracksNeedingBackfill:
@@ -283,11 +285,46 @@ SET sample_rate_hz = :sampleRateHz,
     metadata_backfilled_at_ms = :backfilledAtMs
 WHERE id = :id;
 
+-- Guarded format-fact persist (#31 item 3). Same TOCTOU class as
+-- updateTrackReplayGainIfUnchanged: the backfill reads the page + native facts
+-- off the writer thread, so a concurrent scan can change the row before the
+-- queued write. Matching id + file_path + file_mtime_ms + file_size_bytes (and
+-- not-deleted) drops a stale write (0 rows) so the row re-backfills next pass.
+updateTrackFormatFactsIfUnchanged:
+UPDATE track
+SET sample_rate_hz = :sampleRateHz,
+    bit_depth      = :bitDepth,
+    channels       = :channels,
+    bitrate_kbps   = :bitrateKbps,
+    has_embedded_art = :hasEmbeddedArt,
+    metadata_backfilled_at_ms = :backfilledAtMs
+WHERE id = :id
+  AND file_path = :filePath
+  AND file_mtime_ms = :fileMtimeMs
+  AND file_size_bytes = :fileSizeBytes
+  AND deleted_at_ms IS NULL;
+
 -- Stamp a row the backfill couldn't read (file missing / MMR threw / no audio
 -- header). Leaves format columns untouched; the stamp alone drains the row
 -- from the IS NULL worklist so the loop can't spin on it forever.
 markBackfilledNoMetadata:
 UPDATE track SET metadata_backfilled_at_ms = :backfilledAtMs WHERE id = :id;
+
+-- Guarded "no metadata" stamp (#31 item 3): same guard as the fact persist, so a
+-- row a concurrent scan reset isn't wrongly drained from the worklist.
+markBackfilledNoMetadataIfUnchanged:
+UPDATE track SET metadata_backfilled_at_ms = :backfilledAtMs
+WHERE id = :id
+  AND file_path = :filePath
+  AND file_mtime_ms = :fileMtimeMs
+  AND file_size_bytes = :fileSizeBytes
+  AND deleted_at_ms IS NULL;
+
+-- Rows affected by the most recent INSERT/UPDATE/DELETE on this connection. The
+-- backfill calls this immediately after a guarded write (same connection, inside
+-- the writer transaction) to detect a 0-row stale write (#31 item 3).
+selectChanges:
+SELECT changes() AS affected_rows;
 
 markPlayed:
 UPDATE track

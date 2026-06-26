@@ -34,7 +34,7 @@ import com.clayworks.kiln.library.scan.TrackAnalyzer
 import com.clayworks.kiln.data.library.db.KilnDatabase
 import com.clayworks.kiln.library.scan.JvmFilesystemScanner
 import com.clayworks.kiln.library.scan.LibraryScanner
-import com.clayworks.kiln.library.scan.LibraryWriteLock
+import com.clayworks.kiln.library.db.DatabaseWriter
 import com.clayworks.kiln.library.settings.SettingsRepository
 import com.clayworks.kiln.library.settings.SettingsRepositoryImpl
 import com.clayworks.kiln.library.source.LibraryStatsSource
@@ -88,7 +88,15 @@ abstract class DesktopAppGraph(
         java.nio.file.Files.createDirectories(userDataDir.path)
         return JdbcSqliteDriver(
             url = "jdbc:sqlite:${dbFile.toAbsolutePath()}",
-            properties = Properties().apply { put("foreign_keys", "true") },
+            properties = Properties().apply {
+                put("foreign_keys", "true")
+                // #31 item 3: WAL gives readers a lock-free committed snapshot while the single
+                // writer appends; busy_timeout waits out brief WAL-checkpoint locks instead of
+                // throwing SQLITE_BUSY. The desktop driver opens a connection per thread
+                // (ThreadedConnectionManager), so these properties apply to every connection.
+                put("journal_mode", "WAL")
+                put("busy_timeout", "5000")
+            },
             schema = KilnDatabase.Schema,
         )
     }
@@ -96,6 +104,22 @@ abstract class DesktopAppGraph(
     @Singleton
     @Provides
     protected fun database(driver: SqlDriver): KilnDatabase = KilnDatabase(driver)
+
+    /**
+     * Single-writer seam (#31 item 3). Owns one dedicated daemon thread; all DB writes route
+     * through `DatabaseWriter.write { }`, serializing them by construction. The dispatcher is
+     * built inline (not a separate `@Provides CoroutineDispatcher`) because `audioDispatcher`
+     * already provides that type and kotlin-inject can't disambiguate two same-typed bindings.
+     */
+    @Singleton
+    @Provides
+    protected fun databaseWriter(db: KilnDatabase): DatabaseWriter =
+        DatabaseWriter(
+            db = db,
+            writerDispatcher = Executors.newSingleThreadExecutor { runnable ->
+                Thread(runnable, "kiln-db-writer").apply { isDaemon = true }
+            }.asCoroutineDispatcher(),
+        )
 
     /**
      * SettingsRepository binds the impl-returning provider to the interface
@@ -106,8 +130,8 @@ abstract class DesktopAppGraph(
      */
     @Singleton
     @Provides
-    protected fun settingsRepository(db: KilnDatabase): SettingsRepository =
-        SettingsRepositoryImpl(db, Dispatchers.IO)
+    protected fun settingsRepository(db: KilnDatabase, writer: DatabaseWriter): SettingsRepository =
+        SettingsRepositoryImpl(db, Dispatchers.IO, writer)
 
     /**
      * One LocalLibrarySource instance, bound to BOTH the MusicSource (browse /
@@ -129,14 +153,6 @@ abstract class DesktopAppGraph(
     protected fun libraryStatsSource(source: LocalLibrarySource): LibraryStatsSource = source
 
     /**
-     * Shared lock serializing the scanner and the analyzer — both write `track`
-     * over the single JdbcSqliteDriver connection. See [LibraryWriteLock].
-     */
-    @Singleton
-    @Provides
-    protected fun libraryWriteLock(): LibraryWriteLock = LibraryWriteLock()
-
-    /**
      * Track A: scan folders come from SettingsRepository.scanFolders, mapped
      * String→Path at the seam. The repo Flow emits its current value
      * immediately (defaults to empty when no row exists, otherwise the
@@ -155,12 +171,12 @@ abstract class DesktopAppGraph(
         settings: SettingsRepository,
         db: KilnDatabase,
         driver: SqlDriver,
-        writeLock: LibraryWriteLock,
+        writer: DatabaseWriter,
     ): LibraryScanner {
         val scanFoldersFlow: Flow<List<Path>> = settings.scanFolders.map { stored ->
             stored.map(Path::of)
         }
-        return JvmFilesystemScanner(scanFoldersFlow, db, driver, Dispatchers.IO, writeLock)
+        return JvmFilesystemScanner(scanFoldersFlow, db, driver, Dispatchers.IO, writer)
     }
 
     /**
@@ -220,11 +236,11 @@ abstract class DesktopAppGraph(
     protected fun analysisRunner(
         db: KilnDatabase,
         analyzer: TrackAnalyzer,
-        writeLock: LibraryWriteLock,
+        writer: DatabaseWriter,
     ): TrackAnalysisRunner = TrackAnalysisRunner(
         db = db,
         analyzer = analyzer,
         ioDispatcher = Dispatchers.IO,
-        writeLock = writeLock,
+        writer = writer,
     )
 }

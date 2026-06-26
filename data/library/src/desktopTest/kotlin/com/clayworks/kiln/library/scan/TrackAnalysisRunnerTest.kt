@@ -1,6 +1,7 @@
 package com.clayworks.kiln.library.scan
 
 import arrow.core.Either
+import com.clayworks.kiln.library.db.DatabaseWriter
 import com.clayworks.kiln.library.source.TestDb
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.toList
@@ -22,7 +23,7 @@ class TrackAnalysisRunnerTest {
     @Test
     fun `empty library returns zero counts`() = runBlocking {
         val analyzer = FakeTrackAnalyzer(emptyMap())
-        val runner = TrackAnalysisRunner(testDb.db, analyzer, Dispatchers.Unconfined, LibraryWriteLock())
+        val runner = TrackAnalysisRunner(testDb.db, analyzer, Dispatchers.Unconfined, DatabaseWriter(testDb.db, Dispatchers.Unconfined))
         val result = runner.runOnce()
         assertEquals(0, result.tracksAnalyzed)
         assertEquals(0, result.tracksSkipped)
@@ -43,7 +44,7 @@ class TrackAnalysisRunnerTest {
             "/test/t2.flac" to Either.Right(TrackLoudness(integratedLufs = -18.0, truePeakDbtp =  0.0)),
             "/test/t3.flac" to Either.Right(TrackLoudness(integratedLufs = -28.0, truePeakDbtp = -3.0)),
         ))
-        val runner = TrackAnalysisRunner(testDb.db, analyzer, Dispatchers.Unconfined, LibraryWriteLock())
+        val runner = TrackAnalysisRunner(testDb.db, analyzer, Dispatchers.Unconfined, DatabaseWriter(testDb.db, Dispatchers.Unconfined))
 
         val result = runner.runOnce()
         assertEquals(3, result.tracksAnalyzed)
@@ -83,7 +84,7 @@ class TrackAnalysisRunnerTest {
             "/test/a.flac" to Either.Right(TrackLoudness(-23.0, -2.0)),
             "/test/b.flac" to Either.Right(TrackLoudness(-15.0, +1.0)),
         ))
-        val runner = TrackAnalysisRunner(testDb.db, analyzer, Dispatchers.Unconfined, LibraryWriteLock())
+        val runner = TrackAnalysisRunner(testDb.db, analyzer, Dispatchers.Unconfined, DatabaseWriter(testDb.db, Dispatchers.Unconfined))
         val result = runner.runOnce()
 
         assertEquals(2, result.tracksAnalyzed)
@@ -121,7 +122,7 @@ class TrackAnalysisRunnerTest {
             "/test/good.flac" to Either.Right(TrackLoudness(-18.0, -0.5)),
             "/test/bad.mp3"   to Either.Left(TrackAnalysisError.CodecUnsupported("MP3")),
         ))
-        val runner = TrackAnalysisRunner(testDb.db, analyzer, Dispatchers.Unconfined, LibraryWriteLock())
+        val runner = TrackAnalysisRunner(testDb.db, analyzer, Dispatchers.Unconfined, DatabaseWriter(testDb.db, Dispatchers.Unconfined))
         val result = runner.runOnce()
 
         assertEquals(1, result.tracksAnalyzed)
@@ -144,7 +145,7 @@ class TrackAnalysisRunnerTest {
         val analyzer = FakeTrackAnalyzer(mapOf(
             "/test/orph.flac" to Either.Right(TrackLoudness(-20.0, -1.5)),
         ))
-        val runner = TrackAnalysisRunner(testDb.db, analyzer, Dispatchers.Unconfined, LibraryWriteLock())
+        val runner = TrackAnalysisRunner(testDb.db, analyzer, Dispatchers.Unconfined, DatabaseWriter(testDb.db, Dispatchers.Unconfined))
         val result = runner.runOnce()
 
         assertEquals(1, result.tracksAnalyzed)
@@ -170,7 +171,7 @@ class TrackAnalysisRunnerTest {
         val analyzer = FakeTrackAnalyzer(mapOf(
             "/test/fresh.flac" to Either.Right(TrackLoudness(-22.0, -1.0)),
         ))
-        val runner = TrackAnalysisRunner(testDb.db, analyzer, Dispatchers.Unconfined, LibraryWriteLock())
+        val runner = TrackAnalysisRunner(testDb.db, analyzer, Dispatchers.Unconfined, DatabaseWriter(testDb.db, Dispatchers.Unconfined))
         val result = runner.runOnce()
 
         assertEquals(1, result.tracksAnalyzed)
@@ -200,7 +201,7 @@ class TrackAnalysisRunnerTest {
                 Either.Left(TrackAnalysisError.CodecUnsupported("MP3"))
             },
         )
-        val runner = TrackAnalysisRunner(testDb.db, analyzer, Dispatchers.Unconfined, LibraryWriteLock())
+        val runner = TrackAnalysisRunner(testDb.db, analyzer, Dispatchers.Unconfined, DatabaseWriter(testDb.db, Dispatchers.Unconfined))
 
         val result = runner.runOnce()
         assertEquals(0, result.tracksAnalyzed)
@@ -224,7 +225,7 @@ class TrackAnalysisRunnerTest {
             "/test/t1.flac" to Either.Right(TrackLoudness(-23.0, -1.0)),
             "/test/t2.flac" to Either.Right(TrackLoudness(-18.0,  0.0)),
         ))
-        val runner1 = TrackAnalysisRunner(testDb.db, analyzer1, Dispatchers.Unconfined, LibraryWriteLock())
+        val runner1 = TrackAnalysisRunner(testDb.db, analyzer1, Dispatchers.Unconfined, DatabaseWriter(testDb.db, Dispatchers.Unconfined))
         val r1 = runner1.runOnce()
         assertEquals(2, r1.tracksAnalyzed)
         assertEquals(1, r1.tracksSkipped)
@@ -237,7 +238,7 @@ class TrackAnalysisRunnerTest {
         val analyzer2 = FakeTrackAnalyzer(mapOf(
             "/test/t3.flac" to Either.Right(TrackLoudness(-28.0, -3.0)),
         ))
-        val runner2 = TrackAnalysisRunner(testDb.db, analyzer2, Dispatchers.Unconfined, LibraryWriteLock())
+        val runner2 = TrackAnalysisRunner(testDb.db, analyzer2, Dispatchers.Unconfined, DatabaseWriter(testDb.db, Dispatchers.Unconfined))
         val r2 = runner2.runOnce()
         assertEquals(1, r2.tracksAnalyzed)
         assertEquals(0, r2.tracksSkipped)
@@ -264,7 +265,7 @@ class TrackAnalysisRunnerTest {
             "/test/t1.flac" to Either.Right(TrackLoudness(-20.0, -1.0)),
             "/test/t2.flac" to Either.Right(TrackLoudness(-18.0, -0.5)),
         ))
-        val runner = TrackAnalysisRunner(testDb.db, analyzer, Dispatchers.Unconfined, LibraryWriteLock())
+        val runner = TrackAnalysisRunner(testDb.db, analyzer, Dispatchers.Unconfined, DatabaseWriter(testDb.db, Dispatchers.Unconfined))
 
         val emissions = runner.runOnceWithProgress().toList()
         assertTrue(emissions.size >= 2, "expected >= 2 emissions, got ${emissions.size}")
@@ -280,7 +281,7 @@ class TrackAnalysisRunnerTest {
     @Test
     fun `runOnceWithProgress on empty library emits Started 0 then Complete 0`() = runBlocking {
         val analyzer = FakeTrackAnalyzer(emptyMap())
-        val runner = TrackAnalysisRunner(testDb.db, analyzer, Dispatchers.Unconfined, LibraryWriteLock())
+        val runner = TrackAnalysisRunner(testDb.db, analyzer, Dispatchers.Unconfined, DatabaseWriter(testDb.db, Dispatchers.Unconfined))
         val emissions = runner.runOnceWithProgress().toList()
         assertTrue(emissions.first() is AnalysisProgress.Started)
         assertEquals(0, (emissions.first() as AnalysisProgress.Started).total)
@@ -306,7 +307,7 @@ class TrackAnalysisRunnerTest {
                 return arrow.core.Either.Right(TrackLoudness(-20.0, -1.0))
             }
         }
-        val runner = TrackAnalysisRunner(testDb.db, analyzer, ioDispatcher, LibraryWriteLock())
+        val runner = TrackAnalysisRunner(testDb.db, analyzer, ioDispatcher, DatabaseWriter(testDb.db, Dispatchers.Unconfined))
 
         // Collect on the test's runBlocking thread (= main-thread in production analog).
         val mainThreadName = Thread.currentThread().name
@@ -380,7 +381,7 @@ class TrackAnalysisRunnerTest {
                 return Either.Right(TrackLoudness(integratedLufs = -20.0, truePeakDbtp = -1.0))
             }
         }
-        val runner = TrackAnalysisRunner(testDb.db, analyzer, Dispatchers.Unconfined, LibraryWriteLock())
+        val runner = TrackAnalysisRunner(testDb.db, analyzer, Dispatchers.Unconfined, DatabaseWriter(testDb.db, Dispatchers.Unconfined))
         runner.runOnce()
 
         // The guarded persist must have matched 0 rows; RG stays NULL.
