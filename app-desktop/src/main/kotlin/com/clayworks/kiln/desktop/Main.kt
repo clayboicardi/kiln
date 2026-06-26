@@ -266,7 +266,12 @@ private fun DesktopSettingsRoute(
                 coroutineScope.launch { graph.settings.setReplayGainPreAmpDb(db) }
             },
             onTriggerBackfill = {
-                coroutineScope.launch {
+                // appScope (process-lifetime) so closing Settings mid-backfill doesn't cancel the
+                // analyzer — mirrors runScanNow above. Pre-fix this ran on the composition-bound
+                // rememberCoroutineScope, so leaving Settings aborted the (multi-hour) RG backfill,
+                // persisting only a subset. Dispatchers.Main keeps backfillState writes on the UI
+                // thread; the analysis work hops to ioDispatcher inside the runner. (#28 item 3)
+                appScope.launch(Dispatchers.Main) {
                     var startedTotal = 0
                     graph.analysisRunner.runOnceWithProgress().collect { progress ->
                         backfillState = when (progress) {
