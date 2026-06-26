@@ -1,36 +1,23 @@
 // JavaSoundPlayerImpl — Desktop PlatformPlayer backed by javax.sound.sampled +
 // the JNA libFLAC Decoder pipeline.
 //
-// Architecture mirrors Media3ExoPlayerImpl (Android side): 5 MutableStateFlows
-// for state/positionMs/queue/volume/processors; the playbackJob owns the
-// SourceDataLine + DecodedStream for the duration of one track; loadQueue
-// resolves MediaItems via the injected MusicSource and starts playback by
-// opening the Decoder for the start item; advanceOnEof chains tracks.
+// Concurrency model (#28 — command/actor): ONE long-lived actor coroutine on
+// [audioDispatcher] is the SOLE owner/mutator of the SourceDataLine + DecodedStream +
+// queue index + the five StateFlows. Every control op is a non-suspending
+// `commands.trySend(PlayerCommand.X)` to an UNLIMITED channel — so control ops can never
+// be starved by, or race, the playback loop. Decode runs on its own [decodeDispatcher]
+// (frames arrive via produceIn), so the actor thread is never blocked by libFLAC decode —
+// only by the bounded SourceDataLine.write. The actor `select`s frame-vs-command,
+// command-biased (it drains queued commands before consuming a frame), so a skip/track-
+// change is serviced within ~one write even mid-playback.
 //
-// MVP scope (H5): loadQueue + autoPlay path is the load-bearing functional
-// requirement (H7 will call it from a single button). play/pause/stop/release
-// work. seekTo, skipToNext/Previous/skipTo, setRepeatMode, setShuffleMode,
-// setVolume, setMuted, addAudioProcessor are implemented but only loosely
-// validated; full polish lands in Phase 2a.
+// This retired the prior design where loadQueue/skip*/stop/seekTo used
+// withContext(audioDispatcher) and queued behind the blocking decode+write loop (they only
+// ran once the track hit EOF). See docs/superpowers/specs/2026-06-25-issue-28-*.
 //
-// Threading: javax.sound.sampled Line + Control methods are documented as
-// thread-safe ("Implementations of this interface must be safe for use by
-// multiple threads" — Line javadoc). The audioDispatcher (single-thread
-// MAX_PRIORITY executor from DI) is still used as the playback-loop's
-// dispatcher AND for ops that mutate non-line internal state (queue swap,
-// teardown). Flag-only control methods (play/pause/setRepeatMode/
-// setShuffleMode) do NOT marshal through audioDispatcher — they would
-// otherwise queue behind a blocking sourceLine.write() call and stall for
-// up to ~100ms (or indefinitely if write blocks pathologically) per the
-// /ultrareview + Gemini findings at Session 9 close.
-//
-// Pause signaling: `_paused: MutableStateFlow<Boolean>` replaces an earlier
-// `@Volatile pauseRequested` flag + busy-wait `while (pauseRequested) delay(...)`
-// loop. The playback loop now suspends on `_paused.first { !it }`, which is
-// idiomatic Kotlin Flow and consumes zero CPU while paused. play()/pause()
-// just flip the flow value + call line.start()/stop() directly (the latter
-// for instant-pause UX — the loop's flip-based check would otherwise add
-// ~one-frame latency).
+// The ONLY cross-thread touch of the line is a best-effort thread-safe `line.stop()` in
+// pause/stop/skip/release (the "write-interrupt seam") — it unblocks a stuck write() so the
+// actor can make progress; the actor remains the authority on all subsequent line state.
 
 package com.clayworks.kiln.audio.playback
 
@@ -51,49 +38,63 @@ import javax.sound.sampled.AudioSystem
 import javax.sound.sampled.DataLine
 import javax.sound.sampled.FloatControl
 import javax.sound.sampled.SourceDataLine
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.ChannelResult
+import kotlinx.coroutines.channels.ReceiveChannel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.isActive
+import kotlinx.coroutines.flow.produceIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withContext
 
 private val log = Logger.withTag("JavaSoundPlayer")
 
 private const val POSITION_TICK_MS = 250L
-private const val BUFFER_MS = 100   // SourceDataLine internal buffer size (latency budget)
+private const val BUFFER_MS = 100  // SourceDataLine internal buffer size (latency budget)
+
+private val realLineFactory: (AudioFormat) -> SourceDataLine = { format ->
+    AudioSystem.getLine(DataLine.Info(SourceDataLine::class.java, format)) as SourceDataLine
+}
 
 /**
- * Construct the Desktop [PlatformPlayer]. Public factory keeps the
- * [JavaSoundPlayerImpl] class itself internal — consumers receive only the
- * [PlatformPlayer] interface from commonMain. Caller supplies the audio
- * dispatcher (a single-thread MAX_PRIORITY executor is recommended; the DI
- * graph provides one), the [Decoder] to use (typically [createJvmFlacDecoder]),
- * and the [MusicSource] for resolving [MediaItem]s into [Playable]s.
+ * Construct the Desktop [PlatformPlayer]. Keeps [JavaSoundPlayerImpl] internal — consumers
+ * receive only the [PlatformPlayer] interface. Caller supplies the single-thread
+ * [audioDispatcher] (MAX_PRIORITY recommended) for the actor + line writes, a single-thread
+ * [decodeDispatcher] for libFLAC decode, the [decoder], the [source] for resolving
+ * [MediaItem]s, [settings], and the shared [rgProcessor].
  */
 fun createJavaSoundPlayer(
     audioDispatcher: CoroutineDispatcher,
+    decodeDispatcher: CoroutineDispatcher,
     decoder: Decoder,
     source: MusicSource,
     settings: SettingsRepository,
     rgProcessor: ReplayGainProcessor,
-): PlatformPlayer = JavaSoundPlayerImpl(audioDispatcher, decoder, source, settings, rgProcessor)
+): PlatformPlayer = JavaSoundPlayerImpl(audioDispatcher, decodeDispatcher, decoder, source, settings, rgProcessor)
 
 internal class JavaSoundPlayerImpl(
     private val audioDispatcher: CoroutineDispatcher,
+    private val decodeDispatcher: CoroutineDispatcher,
     private val decoder: Decoder,
     private val source: MusicSource,
     private val settings: SettingsRepository,
     private val rgProcessor: ReplayGainProcessor,
+    private val lineFactory: (AudioFormat) -> SourceDataLine = realLineFactory,
 ) : PlatformPlayer {
+
+    private enum class Mode { IDLE, PLAYING, PAUSED }
 
     private val _state = MutableStateFlow<PlayerState>(PlayerState.Idle)
     override val state: StateFlow<PlayerState> = _state.asStateFlow()
@@ -112,42 +113,376 @@ internal class JavaSoundPlayerImpl(
     private val _processors = MutableStateFlow<List<AudioProcessor>>(emptyList())
     override val processors: StateFlow<List<AudioProcessor>> = _processors.asStateFlow()
 
-    private val scope = CoroutineScope(audioDispatcher + SupervisorJob())
+    private val scope = CoroutineScope(SupervisorJob())
+    private val commands = Channel<PlayerCommand>(Channel.UNLIMITED)
 
+    // ----- actor-owned state — mutated ONLY on the actor (audioDispatcher). -----
+    // `line` + `released` are @Volatile because the write-interrupt seam (pause/stop/skip/
+    // release) and awaitDrained() read them from other threads.
     @Volatile private var line: SourceDataLine? = null
-    @Volatile private var currentStream: DecodedStream? = null
-    @Volatile private var playbackJob: Job? = null
-
-    /**
-     * Pause signal observed by the playback loop. `true` = loop should stop the
-     * line + suspend on `.first { !it }`; `false` = loop should start the line
-     * (if not running) and write frames. Flipped by play()/pause() without
-     * marshalling through the audioDispatcher — those control methods MUST
-     * remain non-blocking so they can interrupt the loop even when it's
-     * currently in `sourceLine.write`.
-     */
-    private val _paused = MutableStateFlow(false)
-
     @Volatile private var released: Boolean = false
-
-    @Volatile private var currentPlayable: Playable? = null
+    private var currentStream: DecodedStream? = null
+    private var currentPlayable: Playable? = null
+    private var frameChan: ReceiveChannel<AudioFrame>? = null
+    private var producerScope: CoroutineScope? = null
+    private var generation: Long = 0L
+    private var mode: Mode = Mode.IDLE
+    private var lastTickedMs: Long = 0L
 
     init {
-        // Add the RG processor to the chain at construction time.
-        _processors.value = _processors.value + rgProcessor
-
-        // Observe settings changes; recompute + apply RG gain whenever mode
-        // or pre-amp changes (while a track is playing).
+        _processors.value = listOf(rgProcessor)
+        scope.launch(audioDispatcher) { runActor() }
+        // Settings-change RG: post a command so the actor (sole owner of currentPlayable)
+        // recomputes + applies gain. No direct cross-thread mutation.
         scope.launch {
             combine(
                 settings.replayGainMode.distinctUntilChanged(),
                 settings.replayGainPreAmpDb.distinctUntilChanged(),
             ) { mode, preAmp -> mode to preAmp }
-                .collect { (mode, preAmp) ->
-                    val playable = currentPlayable ?: return@collect
-                    applyRgGain(playable, mode, preAmp)
-                }
+                .collect { (m, p) -> commands.trySend(PlayerCommand.ReapplyGain(m, p)) }
         }
+    }
+
+    // ---------- PlatformPlayer: every op posts a command (non-blocking) ----------
+    override suspend fun loadQueue(items: List<MediaItem>, startIndex: Int, autoPlay: Boolean) {
+        commands.trySend(PlayerCommand.LoadQueue(items, startIndex, autoPlay))
+    }
+    override suspend fun play() { commands.trySend(PlayerCommand.Play) }
+    override suspend fun pause() { runCatching { line?.stop() }; commands.trySend(PlayerCommand.Pause) }
+    override suspend fun stop() { runCatching { line?.stop() }; commands.trySend(PlayerCommand.Stop) }
+    override suspend fun seekTo(positionMs: Long) { commands.trySend(PlayerCommand.SeekTo(positionMs)) }
+    override suspend fun skipToNext() { runCatching { line?.stop() }; commands.trySend(PlayerCommand.SkipToNext) }
+    override suspend fun skipToPrevious() { runCatching { line?.stop() }; commands.trySend(PlayerCommand.SkipToPrevious) }
+    override suspend fun skipTo(queueIndex: Int) { runCatching { line?.stop() }; commands.trySend(PlayerCommand.SkipTo(queueIndex)) }
+    override suspend fun setRepeatMode(mode: RepeatMode) { commands.trySend(PlayerCommand.SetRepeat(mode)) }
+    override suspend fun setShuffleMode(enabled: Boolean) { commands.trySend(PlayerCommand.SetShuffle(enabled)) }
+    override suspend fun setVolume(linear: Float) { commands.trySend(PlayerCommand.SetVolume(linear)) }
+    override suspend fun setMuted(muted: Boolean) { commands.trySend(PlayerCommand.SetMuted(muted)) }
+    override fun addAudioProcessor(processor: AudioProcessor) { commands.trySend(PlayerCommand.AddProcessor(processor)) }
+    override fun removeAudioProcessor(processor: AudioProcessor) { commands.trySend(PlayerCommand.RemoveProcessor(processor)) }
+    override suspend fun release() { runCatching { line?.stop() }; commands.trySend(PlayerCommand.Release) }
+    override suspend fun enterMeasurementMode(): MeasurementSession? = null
+
+    /** Test-only: suspend until the actor has processed all commands sent so far. */
+    internal suspend fun awaitDrained() {
+        if (released) return
+        val ack = CompletableDeferred<Unit>()
+        commands.trySend(PlayerCommand.Barrier(ack))
+        ack.await()
+    }
+
+    // ---------- actor ----------
+    private suspend fun runActor() {
+        try {
+            while (!released) {
+                // Command-biased: service any already-queued command before consuming a frame.
+                val queued = commands.tryReceive().getOrNull()
+                if (queued != null) {
+                    handleCommandBatch(queued)
+                    continue
+                }
+                val fc = frameChan
+                if (mode == Mode.PLAYING && fc != null) {
+                    select {
+                        commands.onReceive { c -> handleCommandBatch(c) }
+                        fc.onReceiveCatching { result -> onFrameResult(result) }
+                    }
+                } else {
+                    // IDLE / PAUSED: only a command can change anything; block (zero CPU).
+                    handleCommandBatch(commands.receive())
+                }
+            }
+        } finally {
+            teardownActivePlayback()
+            scope.cancel()
+        }
+    }
+
+    /** Fold [first] + every already-queued command (collapses skip-spam), then apply. */
+    private suspend fun handleCommandBatch(first: PlayerCommand) {
+        var targetOp: PlayerCommand? = null       // last of Load/Skip*/Stop/SeekTo
+        var runState: PlayerCommand? = null        // last of Play/Pause
+        var volume: Float? = null
+        var muted: Boolean? = null
+        var repeat: RepeatMode? = null
+        var shuffle: Boolean? = null
+        var reapply: PlayerCommand.ReapplyGain? = null
+        val addP = ArrayList<AudioProcessor>()
+        val removeP = ArrayList<AudioProcessor>()
+        val barriers = ArrayList<CompletableDeferred<Unit>>()
+        var release = false
+
+        var c: PlayerCommand? = first
+        while (true) {
+            val cmd = c ?: break
+            when (cmd) {
+                is PlayerCommand.LoadQueue, is PlayerCommand.SkipToNext, is PlayerCommand.SkipToPrevious,
+                is PlayerCommand.SkipTo, is PlayerCommand.Stop, is PlayerCommand.SeekTo -> targetOp = cmd
+                is PlayerCommand.Play, is PlayerCommand.Pause -> runState = cmd
+                is PlayerCommand.SetVolume -> volume = cmd.linear
+                is PlayerCommand.SetMuted -> muted = cmd.muted
+                is PlayerCommand.SetRepeat -> repeat = cmd.mode
+                is PlayerCommand.SetShuffle -> shuffle = cmd.enabled
+                is PlayerCommand.AddProcessor -> addP.add(cmd.processor)
+                is PlayerCommand.RemoveProcessor -> removeP.add(cmd.processor)
+                is PlayerCommand.ReapplyGain -> reapply = cmd
+                is PlayerCommand.Barrier -> barriers.add(cmd.ack)
+                is PlayerCommand.Release -> release = true
+            }
+            c = commands.tryReceive().getOrNull()
+        }
+
+        // 1. cheap state updates (no stream change)
+        repeat?.let { _queue.value = _queue.value.copy(repeatMode = it) }
+        shuffle?.let { _queue.value = _queue.value.copy(shuffleEnabled = it) }
+        if (addP.isNotEmpty() || removeP.isNotEmpty()) {
+            _processors.value = _processors.value + addP - removeP.toSet()
+        }
+        if (volume != null || muted != null) {
+            _volume.value = _volume.value.copy(
+                linear = volume?.coerceIn(0.0f, 1.0f) ?: _volume.value.linear,
+                muted = muted ?: _volume.value.muted,
+            )
+            applyGain()
+        }
+        // Release short-circuits — complete any in-batch barriers so awaitDrained doesn't hang.
+        if (release) {
+            released = true
+            barriers.forEach { it.complete(Unit) }
+            return
+        }
+        // 2. target op (stream change) — last-wins (collapses skip-spam to one open)
+        when (val t = targetOp) {
+            is PlayerCommand.LoadQueue -> handleLoadQueue(t)
+            is PlayerCommand.SkipToNext -> handleSkip(nextIndexOrNull(_queue.value))
+            is PlayerCommand.SkipToPrevious -> handleSkip(previousIndexOrNull(_queue.value))
+            is PlayerCommand.SkipTo -> handleSkip(t.index.takeIf { it in _queue.value.items.indices })
+            is PlayerCommand.Stop -> {
+                teardownActivePlayback(); mode = Mode.IDLE; _state.value = PlayerState.Idle
+            }
+            is PlayerCommand.SeekTo -> handleSeek(t.positionMs)
+            else -> {}
+        }
+        // 3. run-state (play/pause) — orthogonal to the target op
+        when (runState) {
+            is PlayerCommand.Play -> resumePlayback()
+            is PlayerCommand.Pause -> pausePlayback()
+            else -> {}
+        }
+        // 4. RG reapply for the current track
+        reapply?.let { rg -> currentPlayable?.let { applyRgGain(it, rg.mode, rg.preAmpDb) } }
+
+        barriers.forEach { it.complete(Unit) }
+    }
+
+    private suspend fun handleLoadQueue(cmd: PlayerCommand.LoadQueue) {
+        _state.value = PlayerState.Loading
+        // Triple(originalIndex, item, playable) preserves the user's pre-filter index mapping
+        // through the resolve (so "play track 5" doesn't drift if track 2 failed to resolve).
+        val resolved: List<Triple<Int, MediaItem, Playable>> = cmd.items.mapIndexedNotNull { idx, item ->
+            when (val r = source.getPlayable(item.itemId)) {
+                is Either.Right -> Triple(idx, item, r.value)
+                is Either.Left -> {
+                    log.w { "loadQueue: skipping ${item.itemId.value}: ${r.value}" }
+                    null
+                }
+            }
+        }
+        val resolvedItems = resolved.map { it.second }
+        if (resolved.isEmpty()) {
+            teardownActivePlayback()
+            _queue.value = _queue.value.copy(items = emptyList(), currentIndex = -1)
+            mode = Mode.IDLE
+            _state.value = PlayerState.Idle
+            return
+        }
+        val coercedStart = if (cmd.startIndex <= 0) {
+            0
+        } else {
+            val matchOrSuccessor = resolved.indexOfFirst { (originalIdx, _, _) -> originalIdx >= cmd.startIndex }
+            if (matchOrSuccessor != -1) matchOrSuccessor else resolvedItems.lastIndex
+        }
+        _queue.value = _queue.value.copy(items = resolvedItems, currentIndex = coercedStart)
+        openAndStart(resolved[coercedStart].third, autoPlay = cmd.autoPlay)
+    }
+
+    private suspend fun handleSkip(targetIndex: Int?) {
+        if (targetIndex == null) return
+        _queue.value = _queue.value.copy(currentIndex = targetIndex)
+        val item = _queue.value.currentItem ?: return
+        when (val r = source.getPlayable(item.itemId)) {
+            is Either.Left -> {
+                teardownActivePlayback(); mode = Mode.IDLE
+                _state.value = PlayerState.Error(PlayerError.Internal("resolve ${item.itemId.value}: ${r.value}"))
+            }
+            is Either.Right -> openAndStart(r.value, autoPlay = true)
+        }
+    }
+
+    private suspend fun handleSeek(positionMs: Long) {
+        val stream = currentStream ?: return
+        try {
+            withContext(decodeDispatcher) { stream.seekTo(positionMs.coerceAtLeast(0L)) }
+        } catch (e: Throwable) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            teardownActivePlayback(); mode = Mode.IDLE
+            _state.value = PlayerState.Error(PlayerError.DecodeFailed(e))
+            return
+        }
+        runCatching { line?.flush() }
+        _positionMs.value = positionMs.coerceAtLeast(0L)
+    }
+
+    /**
+     * Tear down current playback, open [playable] on the decode thread, mint a fresh
+     * generation + frame channel, apply RG gain for THIS generation before the first frame,
+     * open the line, and set the mode. Sole stream-start path.
+     */
+    private suspend fun openAndStart(playable: Playable, autoPlay: Boolean) {
+        teardownActivePlayback()
+        generation++
+        val stream = when (val r = withContext(decodeDispatcher) { decoder.open(playable) }) {
+            is Either.Left -> {
+                log.w { "openAndStart: decoder.open failed for ${playable.itemId.value}: ${r.value}" }
+                mode = Mode.IDLE
+                _state.value = PlayerState.Error(toPlayerError(r.value))
+                return
+            }
+            is Either.Right -> r.value
+        }
+        currentStream = stream
+        currentPlayable = playable
+        rgProcessor.onFormatChange(stream.format)
+        // RG gain for THIS generation, applied BEFORE the first frame is written (no async
+        // launch racing a newer transition — retires the bug_003 class).
+        applyRgGain(playable, settings.replayGainMode.first(), settings.replayGainPreAmpDb.first())
+
+        val format = audioFormatOf(stream)
+        val sourceLine = try {
+            lineFactory(format).also { it.open(format, bufferBytesOf(stream)) }
+        } catch (e: Exception) {
+            withContext(decodeDispatcher) { runCatching { stream.close() } }
+            currentStream = null
+            currentPlayable = null
+            mode = Mode.IDLE
+            log.e(e) { "Could not open SourceDataLine for $format" }
+            _state.value = PlayerState.Error(PlayerError.DeviceUnavailable(e.message ?: "audio line open failed"))
+            return
+        }
+        line = sourceLine
+        lastTickedMs = 0L
+        _positionMs.value = 0L
+        val ps = CoroutineScope(decodeDispatcher + SupervisorJob())
+        producerScope = ps
+        frameChan = stream.frames.produceIn(ps)
+        applyGain()
+        if (autoPlay) {
+            runCatching { sourceLine.start() }
+            mode = Mode.PLAYING
+            _state.value = PlayerState.Ready(isPlaying = true)
+        } else {
+            mode = Mode.PAUSED
+            _state.value = PlayerState.Ready(isPlaying = false)
+        }
+    }
+
+    private suspend fun onFrameResult(result: ChannelResult<AudioFrame>) {
+        val frame = result.getOrNull()
+        if (frame == null) {
+            // Channel closed: a cause means decode error; no cause means EOF.
+            val cause = result.exceptionOrNull()
+            if (cause != null) {
+                log.e(cause) { "playback decode error" }
+                teardownActivePlayback()
+                mode = Mode.IDLE
+                _state.value = PlayerState.Error(PlayerError.DecodeFailed(cause))
+            } else {
+                advanceOnEof()
+            }
+            return
+        }
+        val l = line ?: return
+        var processed: AudioFrame = frame
+        for (processor in _processors.value) {
+            processed = processor.process(processed)
+        }
+        runCatching { l.write(processed.bytes, 0, processed.byteCount) }
+        val pos = currentStream?.positionMs ?: 0L
+        if (pos - lastTickedMs >= POSITION_TICK_MS) {
+            _positionMs.value = pos
+            lastTickedMs = pos
+        }
+    }
+
+    private suspend fun advanceOnEof() {
+        val next = nextIndexOrNull(_queue.value)
+        // Play out the buffered tail of the finished track. On EOF the line buffer is nearly
+        // empty, so this returns quickly; we do NOT drain on skip (teardown stops the line).
+        runCatching { line?.drain() }
+        teardownActivePlayback()
+        if (next == null) {
+            mode = Mode.IDLE
+            _state.value = PlayerState.Idle
+            return
+        }
+        _queue.value = _queue.value.copy(currentIndex = next)
+        val item = _queue.value.currentItem ?: run {
+            mode = Mode.IDLE
+            _state.value = PlayerState.Idle
+            return
+        }
+        when (val r = source.getPlayable(item.itemId)) {
+            is Either.Left -> {
+                mode = Mode.IDLE
+                _state.value = PlayerState.Error(PlayerError.Internal("resolve ${item.itemId.value}: ${r.value}"))
+            }
+            is Either.Right -> openAndStart(r.value, autoPlay = true)
+        }
+    }
+
+    private fun resumePlayback() {
+        if (currentStream == null) return
+        runCatching { line?.takeUnless { it.isRunning }?.start() }
+        mode = Mode.PLAYING
+        _state.value = PlayerState.Ready(isPlaying = true)
+    }
+
+    private fun pausePlayback() {
+        if (currentStream == null) return
+        runCatching { line?.stop() }
+        mode = Mode.PAUSED
+        _state.value = PlayerState.Ready(isPlaying = false)
+    }
+
+    /**
+     * Idempotent teardown. Cancels + JOINS the decode producer before closing the stream
+     * (libFLAC delete must not race an in-flight decode — process_single can't be interrupted
+     * mid-call, so we let it finish, bounded by one frame, then close on the decode thread).
+     */
+    private suspend fun teardownActivePlayback() {
+        producerScope?.coroutineContext?.get(Job)?.cancelAndJoin()
+        producerScope = null
+        frameChan = null
+        val s = currentStream
+        if (s != null) {
+            withContext(decodeDispatcher) { runCatching { s.close() } }
+        }
+        currentStream = null
+        currentPlayable = null
+        line?.let { l -> runCatching { l.stop() }; runCatching { l.close() } }
+        line = null
+    }
+
+    // ----- helpers carried over from the pre-actor impl (unchanged behaviour) -----
+
+    private fun applyGain() {
+        val l = line ?: return
+        if (!l.isControlSupported(FloatControl.Type.MASTER_GAIN)) return
+        val ctl = l.getControl(FloatControl.Type.MASTER_GAIN) as FloatControl
+        val v = _volume.value
+        val effectiveLinear = if (v.muted) 0f else v.linear
+        val targetDb = if (effectiveLinear <= 0f) ctl.minimum else 20.0f * kotlin.math.log10(effectiveLinear)
+        ctl.value = targetDb.coerceIn(ctl.minimum, ctl.maximum)
     }
 
     private fun applyRgGain(playable: Playable, mode: ReplayGainMode, preAmpDb: Double) {
@@ -166,401 +501,6 @@ internal class JavaSoundPlayerImpl(
             preAmpDb = preAmpDb,
         )
         rgProcessor.setLinearGain(gain)
-    }
-
-    // ---------- PlatformPlayer ----------
-
-    override suspend fun loadQueue(
-        items: List<MediaItem>,
-        startIndex: Int,
-        autoPlay: Boolean,
-    ) = withContext(audioDispatcher) {
-        if (released) return@withContext
-
-        cancelCurrentPlayback()
-        _state.value = PlayerState.Loading
-
-        // Triple(originalIndex, item, playable) preserves the mapping from
-        // the user's pre-filter items list to the post-filter resolved list.
-        // Without it, a user clicking "play track 5" when track 2 failed to
-        // resolve would get track 6 (or worse, the clamped-to-last item).
-        val resolved: List<Triple<Int, MediaItem, Playable>> = items.mapIndexedNotNull { idx, item ->
-            when (val r = source.getPlayable(item.itemId)) {
-                is Either.Right -> Triple(idx, item, r.value)
-                is Either.Left -> {
-                    log.w { "loadQueue: skipping ${item.itemId.value}: ${r.value}" }
-                    null
-                }
-            }
-        }
-        val resolvedItems = resolved.map { it.second }
-        if (resolved.isEmpty()) {
-            _queue.value = _queue.value.copy(items = emptyList(), currentIndex = -1)
-            _state.value = PlayerState.Idle
-            return@withContext
-        }
-
-        // Map user's startIndex (original-list space) to resolved-list space.
-        // - startIndex ≤ 0 → start at the first resolved item (safe default).
-        // - exact match found → start at that resolved index.
-        // - user's requested item failed to resolve → fall FORWARD to the next
-        //   surviving item (preserves "start at or after this position" intent).
-        // - no surviving item at or after startIndex → fall BACK to the last
-        //   surviving item (rather than wrap or clamp incorrectly).
-        val coercedStart = if (startIndex <= 0) {
-            0
-        } else {
-            val matchOrSuccessor = resolved.indexOfFirst { (originalIdx, _, _) -> originalIdx >= startIndex }
-            if (matchOrSuccessor != -1) matchOrSuccessor else resolvedItems.lastIndex
-        }
-        _queue.value = _queue.value.copy(items = resolvedItems, currentIndex = coercedStart)
-
-        // Pass the already-resolved Playable for the start item to avoid the
-        // redundant getPlayable round-trip in startPlaybackForCurrentIndex.
-        // Skip-next/prev/skipTo paths still resolve on demand because they
-        // target a different item than the originally-loaded start.
-        startPlaybackForCurrentIndex(autoPlay, preResolved = resolved[coercedStart].third)
-    }
-
-    override suspend fun play() {
-        // No withContext(audioDispatcher) — would otherwise stall behind a
-        // blocking sourceLine.write() call in the playback loop. Line.start()
-        // is thread-safe per javax.sound spec; setting _paused.value is
-        // thread-safe via MutableStateFlow.
-        //
-        // runCatching wraps the start() call because there's a race window:
-        // between the `line?.takeUnless` read and the .start() call, a
-        // concurrent teardown (cancelCurrentPlayback / release) could close
-        // the line, leaving us to call .start() on a closed line which
-        // throws IllegalStateException. Logged + swallowed — if the line
-        // was torn down, the user-visible intent ("start playing") is
-        // already moot.
-        if (released) return
-        _paused.value = false
-        runCatching { line?.takeUnless { it.isRunning }?.start() }
-            .onFailure { e -> log.w(e) { "play(): line.start() failed (likely concurrent teardown)" } }
-        updateReadyState()
-    }
-
-    override suspend fun pause() {
-        // No withContext(audioDispatcher) — see play() rationale above. The
-        // loop also observes _paused via its `.first { !it }` gate and will
-        // stop the line on its next iteration; calling line.stop() here
-        // additionally is for instant-pause UX. Both are idempotent.
-        // runCatching guards the same race-against-teardown that play() handles.
-        if (released) return
-        _paused.value = true
-        runCatching { line?.stop() }
-            .onFailure { e -> log.w(e) { "pause(): line.stop() failed (likely concurrent teardown)" } }
-        updateReadyState()
-    }
-
-    override suspend fun stop() = withContext(audioDispatcher) {
-        if (released) return@withContext
-        cancelCurrentPlayback()
-        _state.value = PlayerState.Idle
-    }
-
-    override suspend fun seekTo(positionMs: Long) = withContext(audioDispatcher) {
-        if (released) return@withContext
-        try {
-            currentStream?.seekTo(positionMs.coerceAtLeast(0L))
-        } catch (e: Exception) {
-            if (e is kotlinx.coroutines.CancellationException) throw e
-            // Failed seek (e.g., libFLAC SEEK_ERROR from JvmFlacDecodedStream)
-            // surfaces here. Tear down + flip to Error so the user sees a
-            // clean state — without this catch, the exception would propagate
-            // to whatever scope invoked player.seekTo (UI scope at H7) and
-            // could cancel that scope silently.
-            log.w(e) { "seekTo failed — flipping to Error state" }
-            teardownActivePlayback(stopLineFirst = true)
-            _state.value = PlayerState.Error(PlayerError.DecodeFailed(e))
-            return@withContext
-        }
-        line?.flush()
-        _positionMs.value = positionMs.coerceAtLeast(0L)
-    }
-
-    override suspend fun skipToNext() = withContext(audioDispatcher) {
-        if (released) return@withContext
-        val q = _queue.value
-        val nextIndex = nextIndexOrNull(q) ?: return@withContext
-        cancelCurrentPlayback()
-        _queue.value = q.copy(currentIndex = nextIndex)
-        startPlaybackForCurrentIndex(autoPlay = true)
-    }
-
-    override suspend fun skipToPrevious() = withContext(audioDispatcher) {
-        if (released) return@withContext
-        val q = _queue.value
-        val prevIndex = previousIndexOrNull(q) ?: return@withContext
-        cancelCurrentPlayback()
-        _queue.value = q.copy(currentIndex = prevIndex)
-        startPlaybackForCurrentIndex(autoPlay = true)
-    }
-
-    override suspend fun skipTo(queueIndex: Int) = withContext(audioDispatcher) {
-        if (released) return@withContext
-        val q = _queue.value
-        if (queueIndex !in q.items.indices) return@withContext
-        cancelCurrentPlayback()
-        _queue.value = q.copy(currentIndex = queueIndex)
-        startPlaybackForCurrentIndex(autoPlay = true)
-    }
-
-    override suspend fun setRepeatMode(mode: RepeatMode) {
-        // Pure flag-flip on a thread-safe StateFlow — no dispatcher needed.
-        _queue.value = _queue.value.copy(repeatMode = mode)
-    }
-
-    override suspend fun setShuffleMode(enabled: Boolean) {
-        // Pure flag-flip; shuffle ORDER generation is deferred to Phase 2a
-        // (vetting Item 12). Queue order does not yet actually shuffle.
-        _queue.value = _queue.value.copy(shuffleEnabled = enabled)
-    }
-
-    override suspend fun setVolume(linear: Float) = withContext(audioDispatcher) {
-        val clamped = linear.coerceIn(0.0f, 1.0f)
-        _volume.value = _volume.value.copy(linear = clamped)
-        applyGain()
-    }
-
-    override suspend fun setMuted(muted: Boolean) = withContext(audioDispatcher) {
-        _volume.value = _volume.value.copy(muted = muted)
-        applyGain()
-    }
-
-    override fun addAudioProcessor(processor: AudioProcessor) {
-        // Processors are recorded but not yet invoked on frames — :audio:dsp has
-        // no concrete processors before MVP Sessions 16-22. Once they exist, the
-        // playback loop's `processors.value.forEach { it.process(frame) }` call
-        // (already wired below) will start transforming output.
-        _processors.value = _processors.value + processor
-    }
-
-    override fun removeAudioProcessor(processor: AudioProcessor) {
-        _processors.value = _processors.value - processor
-    }
-
-    override suspend fun release() = withContext(audioDispatcher) {
-        if (released) return@withContext
-        released = true
-        cancelCurrentPlayback()
-        scope.cancel()
-    }
-
-    override suspend fun enterMeasurementMode(): MeasurementSession? = null
-
-    // ---------- internals ----------
-
-    /**
-     * Open the decoder for the current queue item + launch playback.
-     *
-     * @param preResolved if non-null, used directly instead of calling
-     *   source.getPlayable again — set by loadQueue to skip a redundant DB
-     *   round-trip for the queue's start item (it was already resolved during
-     *   the queue's eager-validation mapNotNull). advanceOnEof / skipToNext /
-     *   skipToPrevious / skipTo leave it null because they target a different
-     *   item than the originally-loaded start.
-     */
-    private suspend fun startPlaybackForCurrentIndex(
-        autoPlay: Boolean,
-        preResolved: Playable? = null,
-    ) {
-        val q = _queue.value
-        val item = q.currentItem ?: run {
-            _state.value = PlayerState.Idle
-            return
-        }
-        val playable = preResolved ?: when (val r = source.getPlayable(item.itemId)) {
-            is Either.Left -> {
-                log.w { "startPlayback: getPlayable failed for ${item.itemId.value}: ${r.value}" }
-                _state.value = PlayerState.Error(
-                    PlayerError.Internal("Could not resolve ${item.itemId.value}: ${r.value}"),
-                )
-                return
-            }
-            is Either.Right -> r.value
-        }
-        val stream = when (val r = decoder.open(playable)) {
-            is Either.Left -> {
-                log.w { "startPlayback: decoder.open failed for ${item.itemId.value}: ${r.value}" }
-                _state.value = PlayerState.Error(toPlayerError(r.value))
-                return
-            }
-            is Either.Right -> r.value
-        }
-        startStream(stream, autoPlay, playable)
-    }
-
-    private fun startStream(stream: DecodedStream, autoPlay: Boolean, playable: Playable) {
-        val format = AudioFormat(
-            stream.format.sampleRateHz.toFloat(),
-            stream.format.bitDepth,
-            stream.format.channels,
-            /* signed = */ true,
-            /* bigEndian = */ false,
-        )
-        val info = DataLine.Info(SourceDataLine::class.java, format)
-        val sourceLine = try {
-            (AudioSystem.getLine(info) as SourceDataLine).also {
-                val bytesPerSecond = stream.format.sampleRateHz *
-                    stream.format.channels *
-                    (stream.format.bitDepth / 8)
-                val bufferBytes = (bytesPerSecond * BUFFER_MS / 1000).coerceAtLeast(4096)
-                it.open(format, bufferBytes)
-            }
-        } catch (e: Exception) {
-            stream.close()
-            log.e(e) { "Could not open SourceDataLine for $format" }
-            _state.value = PlayerState.Error(PlayerError.DeviceUnavailable(e.message ?: "audio line open failed"))
-            return
-        }
-
-        line = sourceLine
-        currentStream = stream
-        currentPlayable = playable
-        rgProcessor.onFormatChange(stream.format)
-
-        // Compute initial gain for this track. startStream is called from the
-        // playback coroutine context — launch a one-shot child coroutine to
-        // do the settings I/O without making startStream itself suspend.
-        // The settings-change collector (init block) handles subsequent updates.
-        //
-        // Race-fix (bug_003): the two settings .first() reads are genuine
-        // suspension points on ioDispatcher; under rapid track-skip an older
-        // launch can resume AFTER a newer transition has updated
-        // currentPlayable. Re-read @Volatile currentPlayable inside the lambda
-        // so we apply the LATEST track's gain, not whichever transition's
-        // launch happens to complete first. Mirrors Media3ExoPlayerImpl
-        // onMediaItemTransition (Android sibling).
-        scope.launch {
-            val mode = settings.replayGainMode.first()
-            val preAmpDb = settings.replayGainPreAmpDb.first()
-            val latest = currentPlayable ?: return@launch
-            applyRgGain(latest, mode, preAmpDb)
-        }
-
-        _paused.value = !autoPlay
-        applyGain()
-        if (autoPlay) sourceLine.start()
-
-        _state.value = PlayerState.Ready(isPlaying = autoPlay)
-        _positionMs.value = 0L
-
-        playbackJob = scope.launch {
-            var lastTickedMs = 0L
-            try {
-                stream.frames.collect { frame ->
-                    // Apply processors in order. Each may mutate the AudioFrame's bytes
-                    // (typically returning the same instance). D-B Session 15 added
-                    // ReplayGainProcessor to the chain at init; future EQ, room correction,
-                    // etc. will join the same list via DI wiring. The processor implementations
-                    // themselves live in :audio:dsp per Concentric Modules.
-                    var processedFrame = frame
-                    _processors.value.forEach { processor ->
-                        processedFrame = processor.process(processedFrame)
-                    }
-                    // Pause gate. _paused.first { !it } suspends the coroutine
-                    // (zero CPU while paused) until pause() flips the flow to
-                    // false. StateFlow.first(predicate) replays the current
-                    // value first, so this returns immediately if not paused.
-                    if (_paused.value) {
-                        runCatching { sourceLine.stop() }
-                        _paused.first { !it }
-                        if (!isActive) return@collect
-                        runCatching { sourceLine.start() }
-                    }
-                    if (!isActive) return@collect
-                    sourceLine.write(processedFrame.bytes, 0, processedFrame.byteCount)
-                    val pos = stream.positionMs
-                    if (pos - lastTickedMs >= POSITION_TICK_MS) {
-                        _positionMs.value = pos
-                        lastTickedMs = pos
-                    }
-                }
-                // End of stream: try to advance to next item.
-                sourceLine.drain()
-                advanceOnEof()
-            } catch (e: Exception) {
-                if (e is kotlinx.coroutines.CancellationException) throw e
-                log.e(e) { "playback loop error" }
-                // CRITICAL: close the line + stream BEFORE flipping state. Otherwise
-                // OS-level resources leak (audio device handle via SourceDataLine,
-                // libFLAC native decoder handle via JvmFlacDecodedStream) until the
-                // next loadQueue / stop / skip*. play() and pause() do NOT call
-                // cancelCurrentPlayback, so if the user reacts to the error state
-                // by hitting play they'd operate on a dead line and the leaked
-                // resources would persist indefinitely.
-                teardownActivePlayback(stopLineFirst = true)
-                _state.value = PlayerState.Error(PlayerError.DecodeFailed(e))
-            }
-        }
-    }
-
-    /**
-     * Idempotent teardown of the active line + stream. Used by the EOF path,
-     * the cancel path, AND the catch-on-error path so all three converge on
-     * identical resource hygiene. Pass `stopLineFirst = true` for paths where
-     * the line might still be RUNNING (cancel + error); the EOF path already
-     * called drain() so a stop() before close() is redundant but harmless.
-     */
-    private fun teardownActivePlayback(stopLineFirst: Boolean) {
-        line?.let { l ->
-            if (stopLineFirst) {
-                runCatching { l.stop() }
-            }
-            runCatching { l.close() }
-        }
-        line = null
-        runCatching { currentStream?.close() }
-        currentStream = null
-        currentPlayable = null
-        // NOTE: Don't reset rgProcessor.linearGain to 1.0 here — the next
-        // startStream call will set it anyway, and resetting between tracks
-        // could produce a transient pop.
-    }
-
-    private suspend fun advanceOnEof() {
-        val q = _queue.value
-        val nextIndex = nextIndexOrNull(q)
-        teardownActivePlayback(stopLineFirst = false)
-        if (nextIndex == null) {
-            _state.value = PlayerState.Idle
-            return
-        }
-        _queue.value = q.copy(currentIndex = nextIndex)
-        startPlaybackForCurrentIndex(autoPlay = true)
-    }
-
-    private fun cancelCurrentPlayback() {
-        playbackJob?.cancel()
-        playbackJob = null
-        teardownActivePlayback(stopLineFirst = true)
-        _paused.value = false
-    }
-
-    private fun updateReadyState() {
-        val l = line ?: return
-        val current = _state.value
-        if (current is PlayerState.Ready) {
-            val isPlaying = l.isRunning && !_paused.value
-            if (current.isPlaying != isPlaying) {
-                _state.value = PlayerState.Ready(isPlaying)
-            }
-        }
-    }
-
-    private fun applyGain() {
-        val l = line ?: return
-        if (!l.isControlSupported(FloatControl.Type.MASTER_GAIN)) return
-        val ctl = l.getControl(FloatControl.Type.MASTER_GAIN) as FloatControl
-        val v = _volume.value
-        val effectiveLinear = if (v.muted) 0f else v.linear
-        // Convert linear 0..1 to dB attenuation. 0 → most-negative (silence);
-        // 1 → 0 dB (unity). Clamp to the control's reported range.
-        val targetDb = if (effectiveLinear <= 0f) ctl.minimum else 20.0f * kotlin.math.log10(effectiveLinear)
-        ctl.value = targetDb.coerceIn(ctl.minimum, ctl.maximum)
     }
 
     private fun nextIndexOrNull(q: QueueState): Int? = when {
@@ -584,5 +524,18 @@ internal class JavaSoundPlayerImpl(
         is DecoderError.IoError -> PlayerError.IoError(decoderError.cause)
         is DecoderError.NativeBindingFailed -> PlayerError.DecodeFailed(IllegalStateException(decoderError.message))
         is DecoderError.Internal -> PlayerError.Internal(decoderError.message)
+    }
+
+    private fun audioFormatOf(stream: DecodedStream): AudioFormat = AudioFormat(
+        stream.format.sampleRateHz.toFloat(),
+        stream.format.bitDepth,
+        stream.format.channels,
+        /* signed = */ true,
+        /* bigEndian = */ false,
+    )
+
+    private fun bufferBytesOf(stream: DecodedStream): Int {
+        val bytesPerSecond = stream.format.sampleRateHz * stream.format.channels * (stream.format.bitDepth / 8)
+        return (bytesPerSecond * BUFFER_MS / 1000).coerceAtLeast(4096)
     }
 }
