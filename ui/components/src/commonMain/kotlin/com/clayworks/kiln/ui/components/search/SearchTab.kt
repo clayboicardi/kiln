@@ -56,8 +56,12 @@ class SearchTab(
             onQueryChange = { query = it },
             results = results,
             onResultClick = { result ->
+                // Play-from-here: queue the whole results list, starting at the clicked result,
+                // so next/skip walks the results (#28 item 2a). Mirrors LibraryTab.
+                val items = results.map { it.item }
+                val start = results.indexOfFirst { it.item.itemId == result.item.itemId }.coerceAtLeast(0)
                 coroutineScope.launch {
-                    player.loadQueue(items = listOf(result.item), startIndex = 0, autoPlay = true)
+                    player.loadQueue(items = items, startIndex = start, autoPlay = true)
                 }
             },
         )

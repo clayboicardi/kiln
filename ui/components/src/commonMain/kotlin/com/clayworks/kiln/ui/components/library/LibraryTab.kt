@@ -52,8 +52,12 @@ class LibraryTab(
         LibraryContent(
             tracks = tracks,
             onTrackClick = { item ->
+                // Play-from-here: the queue is the whole loaded list, starting at the clicked
+                // track, so next/skip walks the list (#28 item 2a). The single-item queue this
+                // replaced made skipToNext a no-op (nextIndexOrNull returned null).
+                val start = tracks.indexOf(item).coerceAtLeast(0)
                 coroutineScope.launch {
-                    player.loadQueue(items = listOf(item), startIndex = 0, autoPlay = true)
+                    player.loadQueue(items = tracks, startIndex = start, autoPlay = true)
                 }
             },
         )
