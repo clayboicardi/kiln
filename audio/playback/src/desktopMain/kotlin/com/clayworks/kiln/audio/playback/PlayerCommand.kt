@@ -9,10 +9,18 @@ package com.clayworks.kiln.audio.playback
 import com.clayworks.kiln.audio.dsp.AudioProcessor
 import com.clayworks.kiln.library.settings.ReplayGainMode
 import com.clayworks.kiln.library.source.MediaItem
+import com.clayworks.kiln.library.source.Playable
 import kotlinx.coroutines.CompletableDeferred
 
 internal sealed interface PlayerCommand {
-    data class LoadQueue(val items: List<MediaItem>, val startIndex: Int, val autoPlay: Boolean) : PlayerCommand
+    /** [resolved] = (originalIndex, item, playable) triples, resolved OFF the actor in
+     *  JavaSoundPlayerImpl.loadQueue() so the ~500-item page isn't resolved on the audio thread
+     *  (codex round 4). originalIndex preserves the pre-filter index for startIndex coercion. */
+    data class LoadQueue(
+        val resolved: List<Triple<Int, MediaItem, Playable>>,
+        val startIndex: Int,
+        val autoPlay: Boolean,
+    ) : PlayerCommand
     data object Play : PlayerCommand
     data object Pause : PlayerCommand
     data object Stop : PlayerCommand

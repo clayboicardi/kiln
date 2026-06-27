@@ -391,6 +391,10 @@ class Media3ExoPlayerImpl(
 
     override suspend fun stop() = withContext(Dispatchers.Main.immediate) {
         if (released) return@withContext
+        // Supersede any in-flight loadQueue still resolving on IO: bump the generation so its
+        // Main-thread apply sees gen != loadGeneration and drops, instead of clobbering this stop
+        // with a late setMediaItems + play (codex round 4).
+        ++loadGeneration
         exo.stop()
     }
 
