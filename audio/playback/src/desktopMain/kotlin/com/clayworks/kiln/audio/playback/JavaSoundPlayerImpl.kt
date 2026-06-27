@@ -283,7 +283,13 @@ internal class JavaSoundPlayerImpl(
     }
 
     private suspend fun handleSkip(targetIndex: Int?) {
-        if (targetIndex == null) return
+        if (targetIndex == null) {
+            // No target (Next on last track / Prev on first / invalid skipTo): the public skip method
+            // already fired the write-interrupt line.stop() seam, so resume the current track instead
+            // of leaving it stopped-but-Ready(playing) with frames written silently (codex round 3).
+            if (mode == Mode.PLAYING) runCatching { line?.start() }
+            return
+        }
         _queue.value = _queue.value.copy(currentIndex = targetIndex)
         val item = _queue.value.currentItem ?: return
         when (val r = source.getPlayable(item.itemId)) {
@@ -421,9 +427,11 @@ internal class JavaSoundPlayerImpl(
 
     private suspend fun advanceOnEof() {
         val next = nextIndexOrNull(_queue.value)
-        // Play out the buffered tail of the finished track. On EOF the line buffer is nearly
-        // empty, so this returns quickly; we do NOT drain on skip (teardown stops the line).
-        runCatching { line?.drain() }
+        // Play out the buffered tail of the finished track — but ONLY if the line is still running.
+        // If EOF coincides with a Pause/Stop/Skip/Release (which fire the line.stop() write-interrupt
+        // seam), drain() on a stopped line with buffered audio blocks forever → the actor stalls and
+        // a release() caller hangs (codex round 3). A stopped line means a command is incoming anyway.
+        if (line?.isRunning == true) runCatching { line?.drain() }
         teardownActivePlayback()
         if (next == null) {
             mode = Mode.IDLE
@@ -464,7 +472,11 @@ internal class JavaSoundPlayerImpl(
      * (libFLAC delete must not race an in-flight decode — process_single can't be interrupted
      * mid-call, so we let it finish, bounded by one frame, then close on the decode thread).
      */
-    private suspend fun teardownActivePlayback() {
+    private suspend fun teardownActivePlayback() = withContext(kotlinx.coroutines.NonCancellable) {
+        // NonCancellable: teardown runs from runActor's finally, which may execute in a cancelled
+        // context (scope cancellation / app shutdown). cancelAndJoin is suspending and would throw
+        // CancellationException immediately, aborting before close() runs → leaked native libFLAC
+        // handles + audio lines (gemini round 3). Force the whole cleanup to completion.
         producerScope?.coroutineContext?.get(Job)?.cancelAndJoin()
         producerScope = null
         frameChan = null

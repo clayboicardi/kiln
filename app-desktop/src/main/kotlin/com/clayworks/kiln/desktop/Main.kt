@@ -310,6 +310,11 @@ private fun DesktopSettingsRoute(
                                     )
                             }
                         }
+                    } catch (e: Throwable) {
+                        // Don't leave the process-lifetime state stuck InProgress on a DB/decode error
+                        // — reset to Idle so Settings re-enables Analyze/scan (gemini + codex round 3).
+                        if (e is kotlinx.coroutines.CancellationException) throw e
+                        backfillStateFlow.value = BackfillUiState.Idle(missingCount)
                     } finally {
                         backfillRunning.set(false)
                     }
