@@ -286,6 +286,10 @@ private fun DesktopSettingsRoute(
                 // rememberCoroutineScope, so leaving Settings aborted the (multi-hour) RG backfill,
                 // persisting only a subset. Dispatchers.Main keeps backfillState writes on the UI
                 // thread; the analysis work hops to ioDispatcher inside the runner. (#28 item 3)
+                // Snapshot missingCount (a Compose State delegate via collectAsState) as a primitive
+                // BEFORE launching on the process-lifetime appScope: capturing the delegate in a
+                // coroutine that outlives this composable retains the whole composition (gemini r5).
+                val currentMissing = missingCount
                 appScope.launch(Dispatchers.Main) {
                     // Single-flight: a backfill already running must not be duplicated by a reopened
                     // Settings re-triggering against the same worklist (codex).
@@ -314,7 +318,7 @@ private fun DesktopSettingsRoute(
                         // Don't leave the process-lifetime state stuck InProgress on a DB/decode error
                         // — reset to Idle so Settings re-enables Analyze/scan (gemini + codex round 3).
                         if (e is kotlinx.coroutines.CancellationException) throw e
-                        backfillStateFlow.value = BackfillUiState.Idle(missingCount)
+                        backfillStateFlow.value = BackfillUiState.Idle(currentMissing)
                     } finally {
                         backfillRunning.set(false)
                     }

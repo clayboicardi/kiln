@@ -396,6 +396,10 @@ class Media3ExoPlayerImpl(
         // with a late setMediaItems + play (codex round 4).
         ++loadGeneration
         exo.stop()
+        // Publish Idle explicitly: loadQueue already set _state = Loading, and if exo is already idle
+        // (the dropped load never started playback) exo.stop() fires no STATE_IDLE transition for the
+        // listener — without this the UI stays stuck in Loading after the stale load drops (codex r5 C4).
+        _state.value = PlayerState.Idle
     }
 
     override suspend fun seekTo(positionMs: Long) = withContext(Dispatchers.Main.immediate) {

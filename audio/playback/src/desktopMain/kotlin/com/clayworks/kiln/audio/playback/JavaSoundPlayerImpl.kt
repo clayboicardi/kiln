@@ -41,7 +41,6 @@ import javax.sound.sampled.SourceDataLine
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
@@ -122,11 +121,6 @@ internal class JavaSoundPlayerImpl(
     // release) and awaitDrained() read them from other threads.
     @Volatile private var line: SourceDataLine? = null
     @Volatile private var released: Boolean = false
-    // Set by interruptAndFlushLine() (the track-change seam); cleared when the resulting track-change
-    // command (LoadQueue / Stop / Skip*) runs on the actor. While true the actor drops frame results
-    // for the OUTGOING track, so an off-actor LoadQueue resolve can't busy-spin + jump position on a
-    // track that's about to be torn down (codex round 4).
-    @Volatile private var superseding: Boolean = false
     private var currentStream: DecodedStream? = null
     private var currentPlayable: Playable? = null
     private var frameChan: ReceiveChannel<AudioFrame>? = null
@@ -161,7 +155,6 @@ internal class JavaSoundPlayerImpl(
     // (gemini round 4). Discarding the buffer is correct here (we're switching tracks / tearing
     // down). pause() deliberately does NOT flush (it must keep the buffer to resume gaplessly).
     private fun interruptAndFlushLine() {
-        superseding = true
         runCatching { line?.stop() }
         runCatching { line?.flush() }
     }
@@ -169,22 +162,7 @@ internal class JavaSoundPlayerImpl(
     // ---------- PlatformPlayer: every op posts a command (non-blocking) ----------
     override suspend fun loadQueue(items: List<MediaItem>, startIndex: Int, autoPlay: Boolean) {
         interruptAndFlushLine()
-        // Resolve OFF the audio actor: source.getPlayable is a synchronous SQLDelight read, and a
-        // play-from-here click passes the whole loaded page (~500 items) — resolving them inside the
-        // actor would block command processing on the MAX_PRIORITY audio thread (codex round 4). The
-        // actor's handler then just applies the pre-resolved queue. (Desktop analog of the Media3 fix.)
-        val resolved: List<Triple<Int, MediaItem, Playable>> = withContext(Dispatchers.IO) {
-            items.mapIndexedNotNull { idx, item ->
-                when (val r = source.getPlayable(item.itemId)) {
-                    is Either.Right -> Triple(idx, item, r.value)
-                    is Either.Left -> {
-                        log.w { "loadQueue: skipping ${item.itemId.value}: ${r.value}" }
-                        null
-                    }
-                }
-            }
-        }
-        commands.trySend(PlayerCommand.LoadQueue(resolved, startIndex, autoPlay))
+        commands.trySend(PlayerCommand.LoadQueue(items, startIndex, autoPlay))
     }
     override suspend fun play() { commands.trySend(PlayerCommand.Play) }
     override suspend fun pause() { runCatching { line?.stop() }; commands.trySend(PlayerCommand.Pause) }
@@ -267,7 +245,7 @@ internal class JavaSoundPlayerImpl(
             is PlayerCommand.SkipToNext -> handleSkip(nextIndexOrNull(_queue.value))
             is PlayerCommand.SkipToPrevious -> handleSkip(previousIndexOrNull(_queue.value))
             is PlayerCommand.SkipTo -> handleSkip(cmd.index.takeIf { it in _queue.value.items.indices })
-            is PlayerCommand.Stop -> { superseding = false; teardownActivePlayback(); mode = Mode.IDLE; _state.value = PlayerState.Idle }
+            is PlayerCommand.Stop -> { teardownActivePlayback(); mode = Mode.IDLE; _state.value = PlayerState.Idle }
             is PlayerCommand.SeekTo -> handleSeek(cmd.positionMs)
             is PlayerCommand.Play -> resumePlayback()
             is PlayerCommand.Pause -> pausePlayback()
@@ -286,13 +264,24 @@ internal class JavaSoundPlayerImpl(
     }
 
     private suspend fun handleLoadQueue(cmd: PlayerCommand.LoadQueue) {
-        superseding = false  // this command is the resolution of the seam fired in loadQueue()
         _state.value = PlayerState.Loading
-        // Items were already resolved OFF the actor in loadQueue() (codex round 4 — a play-from-here
-        // click passes the whole loaded page, ~500 items, and getPlayable is a synchronous DB read;
-        // resolving on the MAX_PRIORITY audio actor would stall command processing). The Triple keeps
-        // the user's pre-filter index mapping (so "play track 5" doesn't drift if track 2 failed).
-        val resolved = cmd.resolved
+        // Resolve ON the actor: FIFO command ordering keeps load/stop strictly sequenced, so a stale
+        // result can never apply over a newer click or a stop. A play-from-here click passes the bounded
+        // <=500-item page (LibraryTab .take(500)); ~500 indexed getPlayable point-lookups is ~tens of ms
+        // with no audio playing during the load. The round-4 off-actor resolve traded those tens of ms
+        // for a stale-application race + a closed-channel spin in its supersede window (codex round 5
+        // C1/C3) — not worth it. Lazy/progressive resolution is the Track-C2 pagination work.
+        // Triple(originalIndex, item, playable) preserves the user's pre-filter index mapping (so "play
+        // track 5" doesn't drift if track 2 failed to resolve).
+        val resolved: List<Triple<Int, MediaItem, Playable>> = cmd.items.mapIndexedNotNull { idx, item ->
+            when (val r = source.getPlayable(item.itemId)) {
+                is Either.Right -> Triple(idx, item, r.value)
+                is Either.Left -> {
+                    log.w { "loadQueue: skipping ${item.itemId.value}: ${r.value}" }
+                    null
+                }
+            }
+        }
         val resolvedItems = resolved.map { it.second }
         if (resolved.isEmpty()) {
             teardownActivePlayback()
@@ -312,7 +301,6 @@ internal class JavaSoundPlayerImpl(
     }
 
     private suspend fun handleSkip(targetIndex: Int?) {
-        superseding = false  // this command is the resolution of the seam fired in skip*()
         if (targetIndex == null) {
             // No target (Next on last track / Prev on first / invalid skipTo): the public skip method
             // already fired the write-interrupt line.stop() seam, so resume the current track instead
@@ -423,12 +411,6 @@ internal class JavaSoundPlayerImpl(
     }
 
     private suspend fun onFrameResult(result: ChannelResult<AudioFrame>) {
-        // Superseded by a track-change seam (interruptAndFlushLine stopped the line cross-thread while
-        // a LoadQueue resolves off-actor / a skip/stop is inbound): drop ALL results for the outgoing
-        // track — data, EOF, and error — until the track-change command runs and clears the flag.
-        // Writing to the just-stopped line would race the buffer + jump position on a track we're
-        // about to tear down (codex round 4).
-        if (superseding) return
         val frame = result.getOrNull()
         if (frame == null) {
             // Channel closed: a cause means decode error; no cause means EOF.
@@ -499,9 +481,23 @@ internal class JavaSoundPlayerImpl(
         }
     }
 
-    private fun resumePlayback() {
+    private suspend fun resumePlayback() {
         if (currentStream == null) return
-        runCatching { line?.takeUnless { it.isRunning }?.start() }
+        val l = line ?: return
+        if (!l.isRunning) {
+            try {
+                l.start()
+            } catch (e: Exception) {
+                // Mirror openAndStart: a failed resume (output device gone) must NOT report
+                // Ready(isPlaying=true) on a line that never restarted (codex round 5 C2). Tear down
+                // + surface Error rather than writing subsequent frames to a non-running line.
+                teardownActivePlayback()
+                mode = Mode.IDLE
+                log.e(e) { "SourceDataLine.start() failed on resume" }
+                _state.value = PlayerState.Error(PlayerError.DeviceUnavailable(e.message ?: "audio line resume failed"))
+                return
+            }
+        }
         mode = Mode.PLAYING
         _state.value = PlayerState.Ready(isPlaying = true)
     }
