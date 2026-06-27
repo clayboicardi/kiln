@@ -128,7 +128,12 @@ internal class JavaSoundPlayerImpl(
     private var generation: Long = 0L
     private var mode: Mode = Mode.IDLE
     private var lastTickedMs: Long = 0L
-    private var releaseAck: CompletableDeferred<Unit>? = null  // completed after teardown in runActor's finally
+    // Public release single-flight: the first caller flips releaseRequested + sends Release; ALL
+    // callers await the shared releaseComplete (codex round 2 — the old `if (released) return` guard
+    // let two concurrent callers both enqueue Release, but the actor acks only the first, so the
+    // second awaited forever).
+    private val releaseRequested = java.util.concurrent.atomic.AtomicBoolean(false)
+    private val releaseComplete = CompletableDeferred<Unit>()
 
     init {
         _processors.value = listOf(rgProcessor)
@@ -163,11 +168,11 @@ internal class JavaSoundPlayerImpl(
     override fun addAudioProcessor(processor: AudioProcessor) { commands.trySend(PlayerCommand.AddProcessor(processor)) }
     override fun removeAudioProcessor(processor: AudioProcessor) { commands.trySend(PlayerCommand.RemoveProcessor(processor)) }
     override suspend fun release() {
-        if (released) return
-        runCatching { line?.stop() }
-        val ack = CompletableDeferred<Unit>()
-        commands.trySend(PlayerCommand.Release(ack))
-        ack.await()  // returns only after the actor has torn down line/stream/scope (codex)
+        if (releaseRequested.compareAndSet(false, true)) {
+            runCatching { line?.stop() }
+            commands.trySend(PlayerCommand.Release)
+        }
+        releaseComplete.await()  // every caller returns only after the actor has torn down (codex)
     }
     override suspend fun enterMeasurementMode(): MeasurementSession? = null
 
@@ -202,7 +207,7 @@ internal class JavaSoundPlayerImpl(
             }
         } finally {
             teardownActivePlayback()
-            releaseAck?.complete(Unit)  // unblock a release() caller — teardown is done
+            releaseComplete.complete(Unit)  // unblock all release() callers — teardown is done
             scope.cancel()
         }
     }
@@ -242,7 +247,7 @@ internal class JavaSoundPlayerImpl(
             is PlayerCommand.RemoveProcessor -> _processors.value = _processors.value - cmd.processor
             is PlayerCommand.ReapplyGain -> currentPlayable?.let { applyRgGain(it, cmd.mode, cmd.preAmpDb) }
             is PlayerCommand.Barrier -> cmd.ack.complete(Unit)
-            is PlayerCommand.Release -> { releaseAck = cmd.ack; released = true }
+            is PlayerCommand.Release -> released = true
         }
     }
 
@@ -292,6 +297,13 @@ internal class JavaSoundPlayerImpl(
 
     private suspend fun handleSeek(positionMs: Long) {
         val stream = currentStream ?: return
+        // Cancel + JOIN the producer BEFORE seeking, then recreate it after. A plain channel drain
+        // misses a send already suspended mid-rendezvous, which would resume after seekTo and emit one
+        // pre-seek frame (codex round 2). Cancelling the producer + minting a fresh channel guarantees
+        // no pre-seek frame survives; re-collecting stream.frames resumes from the post-seek position.
+        producerScope?.coroutineContext?.get(Job)?.cancelAndJoin()
+        producerScope = null
+        frameChan = null
         try {
             withContext(decodeDispatcher) { stream.seekTo(positionMs.coerceAtLeast(0L)) }
         } catch (e: Throwable) {
@@ -301,10 +313,11 @@ internal class JavaSoundPlayerImpl(
             return
         }
         runCatching { line?.flush() }
-        // Drop pre-seek frames the producer already queued so post-seek audio starts at the target
-        // position (codex). The rendezvous producer holds ~1 frame; discard whatever is buffered.
-        while (frameChan?.tryReceive()?.getOrNull() != null) { /* discard pre-seek frame */ }
+        val ps = CoroutineScope(decodeDispatcher + SupervisorJob())
+        producerScope = ps
+        frameChan = stream.frames.produceIn(ps)
         _positionMs.value = positionMs.coerceAtLeast(0L)
+        lastTickedMs = positionMs.coerceAtLeast(0L)
     }
 
     /**

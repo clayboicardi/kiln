@@ -75,6 +75,13 @@ import kotlinx.coroutines.withContext
 // against the same worklist (codex). One backfill per process.
 private val backfillRunning = java.util.concurrent.atomic.AtomicBoolean(false)
 
+// Process-lifetime backfill UI state. The appScope backfill coroutine writes HERE, not a
+// route-local remember — otherwise it leaks the disposed Composable for the (multi-hour) run, and a
+// reopened Settings resets to Idle (dead Analyze button + scan controls wrongly re-enabled while the
+// analyzer is still running). Collected via collectAsState in DesktopSettingsRoute. (gemini round 2)
+private val backfillStateFlow =
+    kotlinx.coroutines.flow.MutableStateFlow<BackfillUiState>(BackfillUiState.Idle(0))
+
 fun main() {
     // Process-lifetime graph — hoisted OUTSIDE application { } so its scope is
     // not Composable-bound. application { } is a Composable-scoped coroutine
@@ -187,10 +194,12 @@ private fun DesktopSettingsRoute(
     }
     val missingCount by missingCountFlow.collectAsState(initial = 0)
 
-    var backfillState: BackfillUiState by remember { mutableStateOf<BackfillUiState>(BackfillUiState.Idle(0)) }
+    // Collected from the process-lifetime backfillStateFlow so a backfill that outlives this route is
+    // reflected when Settings reopens (gemini round 2). Only refresh the Idle count, not in-flight state.
+    val backfillState by backfillStateFlow.collectAsState()
     LaunchedEffect(missingCount) {
-        if (backfillState is BackfillUiState.Idle) {
-            backfillState = BackfillUiState.Idle(missingCount)
+        if (backfillStateFlow.value is BackfillUiState.Idle) {
+            backfillStateFlow.value = BackfillUiState.Idle(missingCount)
         }
     }
 
@@ -284,7 +293,7 @@ private fun DesktopSettingsRoute(
                     try {
                         var startedTotal = 0
                         graph.analysisRunner.runOnceWithProgress().collect { progress ->
-                            backfillState = when (progress) {
+                            backfillStateFlow.value = when (progress) {
                                 is AnalysisProgress.Started -> {
                                     startedTotal = progress.total
                                     BackfillUiState.InProgress(0, 0, progress.total)

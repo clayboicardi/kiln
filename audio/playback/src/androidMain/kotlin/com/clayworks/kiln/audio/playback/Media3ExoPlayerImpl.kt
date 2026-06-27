@@ -112,6 +112,10 @@ class Media3ExoPlayerImpl(
      */
     private val playablesById: MutableMap<String, Playable> = mutableMapOf()
 
+    // Monotonic loadQueue generation (Main-thread-only). Captured before the off-Main resolve and
+    // re-checked after, so a slow first resolve can't apply on top of a newer click's result (codex).
+    private var loadGeneration = 0L
+
     /**
      * The currently-playing Playable, set on every onMediaItemTransition
      * and cleared on release. The settings-flow collector closes over this
@@ -306,7 +310,10 @@ class Media3ExoPlayerImpl(
         autoPlay: Boolean,
     ) {
         if (released) return
-        withContext(Dispatchers.Main.immediate) { _state.value = PlayerState.Loading }
+        val gen = withContext(Dispatchers.Main.immediate) {
+            _state.value = PlayerState.Loading
+            ++loadGeneration
+        }
 
         // Resolve each MediaItem to a Playable OFF the Main thread. source.getPlayable runs a
         // SYNCHRONOUS SQLDelight query (LocalLibrarySource.getPlayable → executeAsOneOrNull, no
@@ -328,7 +335,10 @@ class Media3ExoPlayerImpl(
         }
 
         withContext(Dispatchers.Main.immediate) {
-            if (released) return@withContext
+            // Drop a stale resolution: a newer loadQueue (e.g. a second rapid click) bumped the
+            // generation while we resolved on IO, so applying ours would clobber the user's latest
+            // selection (codex round 2).
+            if (released || gen != loadGeneration) return@withContext
             // Repopulate the Playable cache (Main-thread state per ExoPlayer's single-thread contract)
             // from the off-Main resolution. onMediaItemTransition looks Playables up here by mediaId.
             playablesById.clear()
