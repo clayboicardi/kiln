@@ -31,7 +31,9 @@ internal sealed interface PlayerCommand {
      *  collector so the actor (sole owner of currentPlayable) applies the change. */
     data class ReapplyGain(val mode: ReplayGainMode, val preAmpDb: Double) : PlayerCommand
 
-    data object Release : PlayerCommand
+    /** [ack] (if present) is completed by the actor AFTER teardown, so a caller awaiting
+     *  release() doesn't return until the line/stream/scope are actually closed. */
+    data class Release(val ack: CompletableDeferred<Unit>? = null) : PlayerCommand
 
     /** Test-only barrier: the actor completes [ack] once this command is processed, so a
      *  test can await that all previously-sent commands have drained. Never sent by prod. */

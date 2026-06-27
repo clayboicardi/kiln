@@ -304,81 +304,69 @@ class Media3ExoPlayerImpl(
         items: List<MediaItem>,
         startIndex: Int,
         autoPlay: Boolean,
-    ) = withContext(Dispatchers.Main.immediate) {
-        if (released) return@withContext
-        _state.value = PlayerState.Loading
+    ) {
+        if (released) return
+        withContext(Dispatchers.Main.immediate) { _state.value = PlayerState.Loading }
 
-        // Clear the previous queue's Playable cache before re-populating.
-        playablesById.clear()
-
-        // Resolve each MediaItem to a Playable via the Source Protocol. Items
-        // that fail to resolve (file deleted, transient I/O error, etc.) are
-        // skipped — the published queue reflects only the items that will
-        // actually play, keeping currentIndex aligned with ExoPlayer's
-        // media-item indices.
-        //
-        // Triple(originalIndex, item, playable) preserves the mapping from user's
-        // pre-filter items list to the post-filter resolved list — see
-        // JavaSoundPlayerImpl for the analogous fix (U1) and rationale.
-        val resolved: List<Triple<Int, MediaItem, Playable>> = items.mapIndexedNotNull { idx, item ->
-            when (val r = source.getPlayable(item.itemId)) {
-                is Either.Right -> {
-                    playablesById[item.itemId.value] = r.value
-                    Triple(idx, item, r.value)
-                }
-                is Either.Left -> {
-                    log.w { "loadQueue: skipping ${item.itemId.value}: ${r.value}" }
-                    null
+        // Resolve each MediaItem to a Playable OFF the Main thread. source.getPlayable runs a
+        // SYNCHRONOUS SQLDelight query (LocalLibrarySource.getPlayable → executeAsOneOrNull, no
+        // internal dispatch), and a "play from here" click now passes the whole loaded page
+        // (~500 items, #28 item 2a) — resolving them on Main.immediate would block the UI thread for
+        // hundreds of DB reads (codex). Items that fail to resolve are skipped; the published queue
+        // reflects only playable items. Triple(originalIndex, item, playable) preserves the user's
+        // pre-filter index mapping (U1) — see JavaSoundPlayerImpl for the analogous rationale.
+        val resolved: List<Triple<Int, MediaItem, Playable>> = withContext(Dispatchers.IO) {
+            items.mapIndexedNotNull { idx, item ->
+                when (val r = source.getPlayable(item.itemId)) {
+                    is Either.Right -> Triple(idx, item, r.value)
+                    is Either.Left -> {
+                        log.w { "loadQueue: skipping ${item.itemId.value}: ${r.value}" }
+                        null
+                    }
                 }
             }
         }
 
-        // Build Media3 MediaItems with explicit mediaId = itemId.value so
-        // onMediaItemTransition can look the Playable up in playablesById.
-        // Default Builder.setUri(...) sets mediaId = uri, which would alias
-        // across two ItemIds pointing to the same URI (defensive — current
-        // scanner doesn't produce that but it's cheap insurance).
-        //
-        // Future MediaSessionService note: when service binding lands, the
-        // service's onGetItem(mediaId) handler must resolve via playablesById
-        // (or re-query the Source Protocol) rather than treating mediaId as a
-        // URI. itemId.value is the Kiln-internal ID, NOT a URI.
-        val media3Items = resolved.map { (_, item, playable) ->
-            androidx.media3.common.MediaItem.Builder()
-                .setUri(playable.uri)
-                .setMediaId(item.itemId.value)
-                .build()
-        }
+        withContext(Dispatchers.Main.immediate) {
+            if (released) return@withContext
+            // Repopulate the Playable cache (Main-thread state per ExoPlayer's single-thread contract)
+            // from the off-Main resolution. onMediaItemTransition looks Playables up here by mediaId.
+            playablesById.clear()
+            resolved.forEach { (_, item, playable) -> playablesById[item.itemId.value] = playable }
 
-        val resolvedItems = resolved.map { it.second }
-        // Map user's startIndex (original-list space) to resolved-list space.
-        // - empty → -1
-        // - ≤ 0 → first resolved
-        // - exact match → that resolved index
-        // - user's item failed → fall FORWARD to next surviving
-        // - none at or after → fall BACK to last resolved
-        val coercedStart = when {
-            resolvedItems.isEmpty() -> -1
-            startIndex <= 0 -> 0
-            else -> {
-                val matchOrSuccessor = resolved.indexOfFirst { (originalIdx, _, _) -> originalIdx >= startIndex }
-                if (matchOrSuccessor != -1) matchOrSuccessor else resolvedItems.lastIndex
+            // Explicit mediaId = itemId.value so onMediaItemTransition can map back to the Playable.
+            // Default Builder.setUri(...) sets mediaId = uri, which would alias two ItemIds at the
+            // same URI. (Future MediaSessionService onGetItem must resolve via playablesById, not URI.)
+            val media3Items = resolved.map { (_, item, playable) ->
+                androidx.media3.common.MediaItem.Builder()
+                    .setUri(playable.uri)
+                    .setMediaId(item.itemId.value)
+                    .build()
             }
+
+            val resolvedItems = resolved.map { it.second }
+            // Map user's startIndex (original-list space) to resolved-list space:
+            // empty → -1; ≤0 → first; exact → that index; missing → fall FORWARD; none after → last.
+            val coercedStart = when {
+                resolvedItems.isEmpty() -> -1
+                startIndex <= 0 -> 0
+                else -> {
+                    val matchOrSuccessor = resolved.indexOfFirst { (originalIdx, _, _) -> originalIdx >= startIndex }
+                    if (matchOrSuccessor != -1) matchOrSuccessor else resolvedItems.lastIndex
+                }
+            }
+
+            _queue.value = _queue.value.copy(items = resolvedItems, currentIndex = coercedStart)
+
+            if (media3Items.isEmpty()) {
+                _state.value = PlayerState.Idle
+                return@withContext
+            }
+
+            exo.setMediaItems(media3Items, coercedStart.coerceAtLeast(0), /* startPositionMs = */ 0L)
+            exo.prepare()
+            if (autoPlay) exo.play()
         }
-
-        _queue.value = _queue.value.copy(
-            items = resolvedItems,
-            currentIndex = coercedStart,
-        )
-
-        if (media3Items.isEmpty()) {
-            _state.value = PlayerState.Idle
-            return@withContext
-        }
-
-        exo.setMediaItems(media3Items, coercedStart.coerceAtLeast(0), /* startPositionMs = */ 0L)
-        exo.prepare()
-        if (autoPlay) exo.play()
     }
 
     override suspend fun play() = withContext(Dispatchers.Main.immediate) {

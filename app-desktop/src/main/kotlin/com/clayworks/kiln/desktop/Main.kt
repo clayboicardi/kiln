@@ -69,6 +69,12 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.swing.Swing
 import kotlinx.coroutines.withContext
 
+// Process-wide single-flight guard for the RG backfill (#28 item 3). The analyzer job runs on
+// appScope and outlives the Settings route, but its InProgress UI state is route-local — so a
+// reopened Settings would otherwise re-enable Analyze and launch a SECOND concurrent backfill
+// against the same worklist (codex). One backfill per process.
+private val backfillRunning = java.util.concurrent.atomic.AtomicBoolean(false)
+
 fun main() {
     // Process-lifetime graph — hoisted OUTSIDE application { } so its scope is
     // not Composable-bound. application { } is a Composable-scoped coroutine
@@ -272,24 +278,31 @@ private fun DesktopSettingsRoute(
                 // persisting only a subset. Dispatchers.Main keeps backfillState writes on the UI
                 // thread; the analysis work hops to ioDispatcher inside the runner. (#28 item 3)
                 appScope.launch(Dispatchers.Main) {
-                    var startedTotal = 0
-                    graph.analysisRunner.runOnceWithProgress().collect { progress ->
-                        backfillState = when (progress) {
-                            is AnalysisProgress.Started -> {
-                                startedTotal = progress.total
-                                BackfillUiState.InProgress(0, 0, progress.total)
+                    // Single-flight: a backfill already running must not be duplicated by a reopened
+                    // Settings re-triggering against the same worklist (codex).
+                    if (!backfillRunning.compareAndSet(false, true)) return@launch
+                    try {
+                        var startedTotal = 0
+                        graph.analysisRunner.runOnceWithProgress().collect { progress ->
+                            backfillState = when (progress) {
+                                is AnalysisProgress.Started -> {
+                                    startedTotal = progress.total
+                                    BackfillUiState.InProgress(0, 0, progress.total)
+                                }
+                                is AnalysisProgress.Progress ->
+                                    BackfillUiState.InProgress(progress.analyzed, progress.skipped, progress.total)
+                                is AnalysisProgress.Complete ->
+                                    BackfillUiState.Complete(
+                                        analyzed = progress.result.tracksAnalyzed,
+                                        skipped = progress.result.tracksSkipped,
+                                        total = startedTotal,
+                                        albumsAggregated = progress.result.albumsAggregated,
+                                        durationMs = progress.result.durationMs,
+                                    )
                             }
-                            is AnalysisProgress.Progress ->
-                                BackfillUiState.InProgress(progress.analyzed, progress.skipped, progress.total)
-                            is AnalysisProgress.Complete ->
-                                BackfillUiState.Complete(
-                                    analyzed = progress.result.tracksAnalyzed,
-                                    skipped = progress.result.tracksSkipped,
-                                    total = startedTotal,
-                                    albumsAggregated = progress.result.albumsAggregated,
-                                    durationMs = progress.result.durationMs,
-                                )
                         }
+                    } finally {
+                        backfillRunning.set(false)
                     }
                 }
             },

@@ -128,6 +128,7 @@ internal class JavaSoundPlayerImpl(
     private var generation: Long = 0L
     private var mode: Mode = Mode.IDLE
     private var lastTickedMs: Long = 0L
+    private var releaseAck: CompletableDeferred<Unit>? = null  // completed after teardown in runActor's finally
 
     init {
         _processors.value = listOf(rgProcessor)
@@ -145,6 +146,7 @@ internal class JavaSoundPlayerImpl(
 
     // ---------- PlatformPlayer: every op posts a command (non-blocking) ----------
     override suspend fun loadQueue(items: List<MediaItem>, startIndex: Int, autoPlay: Boolean) {
+        runCatching { line?.stop() }  // write-interrupt seam: unblock a stuck write so the switch is instant
         commands.trySend(PlayerCommand.LoadQueue(items, startIndex, autoPlay))
     }
     override suspend fun play() { commands.trySend(PlayerCommand.Play) }
@@ -160,7 +162,13 @@ internal class JavaSoundPlayerImpl(
     override suspend fun setMuted(muted: Boolean) { commands.trySend(PlayerCommand.SetMuted(muted)) }
     override fun addAudioProcessor(processor: AudioProcessor) { commands.trySend(PlayerCommand.AddProcessor(processor)) }
     override fun removeAudioProcessor(processor: AudioProcessor) { commands.trySend(PlayerCommand.RemoveProcessor(processor)) }
-    override suspend fun release() { runCatching { line?.stop() }; commands.trySend(PlayerCommand.Release) }
+    override suspend fun release() {
+        if (released) return
+        runCatching { line?.stop() }
+        val ack = CompletableDeferred<Unit>()
+        commands.trySend(PlayerCommand.Release(ack))
+        ack.await()  // returns only after the actor has torn down line/stream/scope (codex)
+    }
     override suspend fun enterMeasurementMode(): MeasurementSession? = null
 
     /** Test-only: suspend until the actor has processed all commands sent so far. */
@@ -194,85 +202,48 @@ internal class JavaSoundPlayerImpl(
             }
         } finally {
             teardownActivePlayback()
+            releaseAck?.complete(Unit)  // unblock a release() caller — teardown is done
             scope.cancel()
         }
     }
 
-    /** Fold [first] + every already-queued command (collapses skip-spam), then apply. */
+    /**
+     * Process [first] + every already-queued command in FIFO order (command-biased drain). We do
+     * NOT fold/collapse: relative skips must accumulate (four queued Next = advance four — codex),
+     * and play/pause vs load must preserve send order (a Pause before a later autoplay LoadQueue
+     * must not pause the new track — codex). Skip-spam therefore does N opens — bounded and correct.
+     */
     private suspend fun handleCommandBatch(first: PlayerCommand) {
-        var targetOp: PlayerCommand? = null       // last of Load/Skip*/Stop/SeekTo
-        var runState: PlayerCommand? = null        // last of Play/Pause
-        var volume: Float? = null
-        var muted: Boolean? = null
-        var repeat: RepeatMode? = null
-        var shuffle: Boolean? = null
-        var reapply: PlayerCommand.ReapplyGain? = null
-        val addP = ArrayList<AudioProcessor>()
-        val removeP = ArrayList<AudioProcessor>()
-        val barriers = ArrayList<CompletableDeferred<Unit>>()
-        var release = false
-
         var c: PlayerCommand? = first
-        while (true) {
-            val cmd = c ?: break
-            when (cmd) {
-                is PlayerCommand.LoadQueue, is PlayerCommand.SkipToNext, is PlayerCommand.SkipToPrevious,
-                is PlayerCommand.SkipTo, is PlayerCommand.Stop, is PlayerCommand.SeekTo -> targetOp = cmd
-                is PlayerCommand.Play, is PlayerCommand.Pause -> runState = cmd
-                is PlayerCommand.SetVolume -> volume = cmd.linear
-                is PlayerCommand.SetMuted -> muted = cmd.muted
-                is PlayerCommand.SetRepeat -> repeat = cmd.mode
-                is PlayerCommand.SetShuffle -> shuffle = cmd.enabled
-                is PlayerCommand.AddProcessor -> addP.add(cmd.processor)
-                is PlayerCommand.RemoveProcessor -> removeP.add(cmd.processor)
-                is PlayerCommand.ReapplyGain -> reapply = cmd
-                is PlayerCommand.Barrier -> barriers.add(cmd.ack)
-                is PlayerCommand.Release -> release = true
-            }
+        while (c != null) {
+            applyCommand(c)
+            if (released) return  // Release seen → stop draining; runActor's finally tears down + acks
             c = commands.tryReceive().getOrNull()
         }
+    }
 
-        // 1. cheap state updates (no stream change)
-        repeat?.let { _queue.value = _queue.value.copy(repeatMode = it) }
-        shuffle?.let { _queue.value = _queue.value.copy(shuffleEnabled = it) }
-        if (addP.isNotEmpty() || removeP.isNotEmpty()) {
-            _processors.value = _processors.value + addP - removeP.toSet()
-        }
-        if (volume != null || muted != null) {
-            _volume.value = _volume.value.copy(
-                linear = volume?.coerceIn(0.0f, 1.0f) ?: _volume.value.linear,
-                muted = muted ?: _volume.value.muted,
-            )
-            applyGain()
-        }
-        // Release short-circuits — complete any in-batch barriers so awaitDrained doesn't hang.
-        if (release) {
-            released = true
-            barriers.forEach { it.complete(Unit) }
-            return
-        }
-        // 2. target op (stream change) — last-wins (collapses skip-spam to one open)
-        when (val t = targetOp) {
-            is PlayerCommand.LoadQueue -> handleLoadQueue(t)
+    private suspend fun applyCommand(cmd: PlayerCommand) {
+        when (cmd) {
+            is PlayerCommand.LoadQueue -> handleLoadQueue(cmd)
             is PlayerCommand.SkipToNext -> handleSkip(nextIndexOrNull(_queue.value))
             is PlayerCommand.SkipToPrevious -> handleSkip(previousIndexOrNull(_queue.value))
-            is PlayerCommand.SkipTo -> handleSkip(t.index.takeIf { it in _queue.value.items.indices })
-            is PlayerCommand.Stop -> {
-                teardownActivePlayback(); mode = Mode.IDLE; _state.value = PlayerState.Idle
-            }
-            is PlayerCommand.SeekTo -> handleSeek(t.positionMs)
-            else -> {}
-        }
-        // 3. run-state (play/pause) — orthogonal to the target op
-        when (runState) {
+            is PlayerCommand.SkipTo -> handleSkip(cmd.index.takeIf { it in _queue.value.items.indices })
+            is PlayerCommand.Stop -> { teardownActivePlayback(); mode = Mode.IDLE; _state.value = PlayerState.Idle }
+            is PlayerCommand.SeekTo -> handleSeek(cmd.positionMs)
             is PlayerCommand.Play -> resumePlayback()
             is PlayerCommand.Pause -> pausePlayback()
-            else -> {}
+            is PlayerCommand.SetVolume -> {
+                _volume.value = _volume.value.copy(linear = cmd.linear.coerceIn(0.0f, 1.0f)); applyGain()
+            }
+            is PlayerCommand.SetMuted -> { _volume.value = _volume.value.copy(muted = cmd.muted); applyGain() }
+            is PlayerCommand.SetRepeat -> _queue.value = _queue.value.copy(repeatMode = cmd.mode)
+            is PlayerCommand.SetShuffle -> _queue.value = _queue.value.copy(shuffleEnabled = cmd.enabled)
+            is PlayerCommand.AddProcessor -> _processors.value = _processors.value + cmd.processor
+            is PlayerCommand.RemoveProcessor -> _processors.value = _processors.value - cmd.processor
+            is PlayerCommand.ReapplyGain -> currentPlayable?.let { applyRgGain(it, cmd.mode, cmd.preAmpDb) }
+            is PlayerCommand.Barrier -> cmd.ack.complete(Unit)
+            is PlayerCommand.Release -> { releaseAck = cmd.ack; released = true }
         }
-        // 4. RG reapply for the current track
-        reapply?.let { rg -> currentPlayable?.let { applyRgGain(it, rg.mode, rg.preAmpDb) } }
-
-        barriers.forEach { it.complete(Unit) }
     }
 
     private suspend fun handleLoadQueue(cmd: PlayerCommand.LoadQueue) {
@@ -330,6 +301,9 @@ internal class JavaSoundPlayerImpl(
             return
         }
         runCatching { line?.flush() }
+        // Drop pre-seek frames the producer already queued so post-seek audio starts at the target
+        // position (codex). The rendezvous producer holds ~1 frame; discard whatever is buffered.
+        while (frameChan?.tryReceive()?.getOrNull() != null) { /* discard pre-seek frame */ }
         _positionMs.value = positionMs.coerceAtLeast(0L)
     }
 
@@ -341,6 +315,9 @@ internal class JavaSoundPlayerImpl(
     private suspend fun openAndStart(playable: Playable, autoPlay: Boolean) {
         teardownActivePlayback()
         generation++
+        // ACCEPTED (codex): a slow/hung decoder.open (bad or network-backed file) suspends the actor
+        // here, so commands queued during Loading wait until it returns. libFLAC open isn't
+        // cancellable; on this transitional engine that's accepted (the WASAPI engine can revisit).
         val stream = when (val r = withContext(decodeDispatcher) { decoder.open(playable) }) {
             is Either.Left -> {
                 log.w { "openAndStart: decoder.open failed for ${playable.itemId.value}: ${r.value}" }
@@ -402,15 +379,30 @@ internal class JavaSoundPlayerImpl(
             return
         }
         val l = line ?: return
-        var processed: AudioFrame = frame
-        for (processor in _processors.value) {
-            processed = processor.process(processed)
-        }
-        runCatching { l.write(processed.bytes, 0, processed.byteCount) }
-        val pos = currentStream?.positionMs ?: 0L
-        if (pos - lastTickedMs >= POSITION_TICK_MS) {
-            _positionMs.value = pos
-            lastTickedMs = pos
+        // Process + write inside a try: the actor is single-threaded and owns line lifecycle, so a
+        // throw here is a GENUINE fatal error (dead output line, or a misbehaving processor) — NOT a
+        // benign concurrent-close. Swallowing it would spin through the whole queue silently at 100%
+        // CPU (gemini-critical) or, for a processor throw, escape onFrameResult and kill the actor
+        // (codex). Mirror the pre-actor loop: tear down + surface PlayerState.Error.
+        try {
+            var processed: AudioFrame = frame
+            for (processor in _processors.value) {
+                processed = processor.process(processed)
+            }
+            l.write(processed.bytes, 0, processed.byteCount)
+            // Position from the frame just WRITTEN, not the decoder's prefetched stream.positionMs
+            // (which runs ahead of audible playback through the produceIn channel) — codex.
+            val pos = frame.timestampMs
+            if (pos - lastTickedMs >= POSITION_TICK_MS) {
+                _positionMs.value = pos
+                lastTickedMs = pos
+            }
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            log.e(e) { "playback write/process error" }
+            teardownActivePlayback()
+            mode = Mode.IDLE
+            _state.value = PlayerState.Error(PlayerError.DecodeFailed(e))
         }
     }
 
@@ -481,6 +473,8 @@ internal class JavaSoundPlayerImpl(
         val ctl = l.getControl(FloatControl.Type.MASTER_GAIN) as FloatControl
         val v = _volume.value
         val effectiveLinear = if (v.muted) 0f else v.linear
+        // Convert linear 0..1 to dB attenuation. 0 → most-negative (silence); 1 → 0 dB (unity).
+        // Clamp to the control's reported range.
         val targetDb = if (effectiveLinear <= 0f) ctl.minimum else 20.0f * kotlin.math.log10(effectiveLinear)
         ctl.value = targetDb.coerceIn(ctl.minimum, ctl.maximum)
     }
