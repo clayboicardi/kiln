@@ -116,6 +116,11 @@ class Media3ExoPlayerImpl(
     // re-checked after, so a slow first resolve can't apply on top of a newer click's result (codex).
     private var loadGeneration = 0L
 
+    // Main-thread-only. Set true by pause() and cleared at the start of each loadQueue, so a pause()
+    // that lands during a load's off-Main resolve window suppresses that load's autoplay instead of
+    // being overridden by it (codex round 6). A stop() in the window is handled by loadGeneration.
+    private var suppressAutoPlayForLoad = false
+
     /**
      * The currently-playing Playable, set on every onMediaItemTransition
      * and cleared on release. The settings-flow collector closes over this
@@ -311,71 +316,90 @@ class Media3ExoPlayerImpl(
     ) {
         if (released) return
         val gen = withContext(Dispatchers.Main.immediate) {
+            suppressAutoPlayForLoad = false  // fresh load: clear any prior pause's autoplay-suppression (codex r6 P6-3)
             _state.value = PlayerState.Loading
             ++loadGeneration
         }
 
-        // Resolve each MediaItem to a Playable OFF the Main thread. source.getPlayable runs a
-        // SYNCHRONOUS SQLDelight query (LocalLibrarySource.getPlayable → executeAsOneOrNull, no
-        // internal dispatch), and a "play from here" click now passes the whole loaded page
-        // (~500 items, #28 item 2a) — resolving them on Main.immediate would block the UI thread for
-        // hundreds of DB reads (codex). Items that fail to resolve are skipped; the published queue
-        // reflects only playable items. Triple(originalIndex, item, playable) preserves the user's
-        // pre-filter index mapping (U1) — see JavaSoundPlayerImpl for the analogous rationale.
-        val resolved: List<Triple<Int, MediaItem, Playable>> = withContext(Dispatchers.IO) {
-            items.mapIndexedNotNull { idx, item ->
-                when (val r = source.getPlayable(item.itemId)) {
-                    is Either.Right -> Triple(idx, item, r.value)
-                    is Either.Left -> {
-                        log.w { "loadQueue: skipping ${item.itemId.value}: ${r.value}" }
-                        null
+        try {
+            // Resolve each MediaItem to a Playable OFF the Main thread. source.getPlayable runs a
+            // SYNCHRONOUS SQLDelight query (LocalLibrarySource.getPlayable → executeAsOneOrNull, no
+            // internal dispatch), and a "play from here" click now passes the whole loaded page
+            // (~500 items, #28 item 2a) — resolving them on Main.immediate would block the UI thread for
+            // hundreds of DB reads (codex). Items that fail to resolve are skipped; the published queue
+            // reflects only playable items. Triple(originalIndex, item, playable) preserves the user's
+            // pre-filter index mapping (U1) — see JavaSoundPlayerImpl for the analogous rationale.
+            val resolved: List<Triple<Int, MediaItem, Playable>> = withContext(Dispatchers.IO) {
+                items.mapIndexedNotNull { idx, item ->
+                    when (val r = source.getPlayable(item.itemId)) {
+                        is Either.Right -> Triple(idx, item, r.value)
+                        is Either.Left -> {
+                            log.w { "loadQueue: skipping ${item.itemId.value}: ${r.value}" }
+                            null
+                        }
                     }
                 }
             }
-        }
 
-        withContext(Dispatchers.Main.immediate) {
-            // Drop a stale resolution: a newer loadQueue (e.g. a second rapid click) bumped the
-            // generation while we resolved on IO, so applying ours would clobber the user's latest
-            // selection (codex round 2).
-            if (released || gen != loadGeneration) return@withContext
-            // Repopulate the Playable cache (Main-thread state per ExoPlayer's single-thread contract)
-            // from the off-Main resolution. onMediaItemTransition looks Playables up here by mediaId.
-            playablesById.clear()
-            resolved.forEach { (_, item, playable) -> playablesById[item.itemId.value] = playable }
+            withContext(Dispatchers.Main.immediate) {
+                // Drop a stale resolution: a newer loadQueue (e.g. a second rapid click) bumped the
+                // generation while we resolved on IO, so applying ours would clobber the user's latest
+                // selection (codex round 2).
+                if (released || gen != loadGeneration) return@withContext
+                // Repopulate the Playable cache (Main-thread state per ExoPlayer's single-thread contract)
+                // from the off-Main resolution. onMediaItemTransition looks Playables up here by mediaId.
+                playablesById.clear()
+                resolved.forEach { (_, item, playable) -> playablesById[item.itemId.value] = playable }
 
-            // Explicit mediaId = itemId.value so onMediaItemTransition can map back to the Playable.
-            // Default Builder.setUri(...) sets mediaId = uri, which would alias two ItemIds at the
-            // same URI. (Future MediaSessionService onGetItem must resolve via playablesById, not URI.)
-            val media3Items = resolved.map { (_, item, playable) ->
-                androidx.media3.common.MediaItem.Builder()
-                    .setUri(playable.uri)
-                    .setMediaId(item.itemId.value)
-                    .build()
+                // Explicit mediaId = itemId.value so onMediaItemTransition can map back to the Playable.
+                // Default Builder.setUri(...) sets mediaId = uri, which would alias two ItemIds at the
+                // same URI. (Future MediaSessionService onGetItem must resolve via playablesById, not URI.)
+                val media3Items = resolved.map { (_, item, playable) ->
+                    androidx.media3.common.MediaItem.Builder()
+                        .setUri(playable.uri)
+                        .setMediaId(item.itemId.value)
+                        .build()
+                }
+
+                val resolvedItems = resolved.map { it.second }
+                // Map user's startIndex (original-list space) to resolved-list space:
+                // empty → -1; ≤0 → first; exact → that index; missing → fall FORWARD; none after → last.
+                val coercedStart = when {
+                    resolvedItems.isEmpty() -> -1
+                    startIndex <= 0 -> 0
+                    else -> {
+                        val matchOrSuccessor = resolved.indexOfFirst { (originalIdx, _, _) -> originalIdx >= startIndex }
+                        if (matchOrSuccessor != -1) matchOrSuccessor else resolvedItems.lastIndex
+                    }
+                }
+
+                _queue.value = _queue.value.copy(items = resolvedItems, currentIndex = coercedStart)
+
+                if (media3Items.isEmpty()) {
+                    _state.value = PlayerState.Idle
+                    return@withContext
+                }
+
+                exo.setMediaItems(media3Items, coercedStart.coerceAtLeast(0), /* startPositionMs = */ 0L)
+                exo.prepare()
+                // Respect a pause() that landed during the off-Main resolve window: applying autoplay
+                // here would override the user's intent, leaving the track playing instead of cued+paused
+                // (codex round 6 P6-3). A stop() in the window instead bumps loadGeneration, so we'd have
+                // already returned at the stale-check above.
+                if (autoPlay && !suppressAutoPlayForLoad) exo.play()
             }
-
-            val resolvedItems = resolved.map { it.second }
-            // Map user's startIndex (original-list space) to resolved-list space:
-            // empty → -1; ≤0 → first; exact → that index; missing → fall FORWARD; none after → last.
-            val coercedStart = when {
-                resolvedItems.isEmpty() -> -1
-                startIndex <= 0 -> 0
-                else -> {
-                    val matchOrSuccessor = resolved.indexOfFirst { (originalIdx, _, _) -> originalIdx >= startIndex }
-                    if (matchOrSuccessor != -1) matchOrSuccessor else resolvedItems.lastIndex
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // The caller scope (composition-bound in LibraryTab/SearchTab) was cancelled mid-resolve —
+            // e.g. the user navigated away while the off-Main resolution ran. Without this the apply
+            // block never executes and the player is left stuck in Loading forever (codex round 6 P6-2).
+            withContext(kotlinx.coroutines.NonCancellable) {
+                withContext(Dispatchers.Main.immediate) {
+                    if (!released && gen == loadGeneration && _state.value is PlayerState.Loading) {
+                        _state.value = PlayerState.Idle
+                    }
                 }
             }
-
-            _queue.value = _queue.value.copy(items = resolvedItems, currentIndex = coercedStart)
-
-            if (media3Items.isEmpty()) {
-                _state.value = PlayerState.Idle
-                return@withContext
-            }
-
-            exo.setMediaItems(media3Items, coercedStart.coerceAtLeast(0), /* startPositionMs = */ 0L)
-            exo.prepare()
-            if (autoPlay) exo.play()
+            throw e
         }
     }
 
@@ -386,6 +410,9 @@ class Media3ExoPlayerImpl(
 
     override suspend fun pause() = withContext(Dispatchers.Main.immediate) {
         if (released) return@withContext
+        // If a loadQueue is mid-resolve, mark its autoplay suppressed so it cues the track paused
+        // instead of overriding this pause when it applies (codex round 6 P6-3).
+        suppressAutoPlayForLoad = true
         exo.pause()
     }
 

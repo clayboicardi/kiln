@@ -455,11 +455,22 @@ internal class JavaSoundPlayerImpl(
 
     private suspend fun advanceOnEof() {
         val next = nextIndexOrNull(_queue.value)
-        // Play out the buffered tail of the finished track — but ONLY if the line is still running.
-        // If EOF coincides with a Pause/Stop/Skip/Release (which fire the line.stop() write-interrupt
-        // seam), drain() on a stopped line with buffered audio blocks forever → the actor stalls and
-        // a release() caller hangs (codex round 3). A stopped line means a command is incoming anyway.
-        if (line?.isRunning == true) runCatching { line?.drain() }
+        // Play out the line's buffered tail (<=BUFFER_MS) so the track end isn't clipped — but via a
+        // BOUNDED park, NEVER line.drain(). drain() blocks until the buffer empties, which never happens
+        // if a concurrent pause() stop()s the line in the gap between an isRunning check and the drain
+        // (pause stops without flushing); since control ops now only enqueue commands, the actor would
+        // wedge with no way to recover (codex round 6 — the round-3 isRunning guard wasn't enough, the
+        // stop can land after the check). A bounded park can't wedge; a concurrent pause just ends the
+        // tail early, which is fine at EOF.
+        val l = line
+        val fmt = currentStream?.format
+        if (l != null && fmt != null && l.isRunning) {
+            val queuedBytes = (l.bufferSize - l.available()).coerceAtLeast(0)
+            val bytesPerSec = (fmt.sampleRateHz * fmt.channels * (fmt.bitDepth / 8)).coerceAtLeast(1)
+            val tailNanos = (queuedBytes.toLong() * 1_000_000_000L / bytesPerSec)
+                .coerceAtMost(BUFFER_MS.toLong() * 2 * 1_000_000L)
+            if (tailNanos > 0L) java.util.concurrent.locks.LockSupport.parkNanos(tailNanos)
+        }
         teardownActivePlayback()
         if (next == null) {
             mode = Mode.IDLE
