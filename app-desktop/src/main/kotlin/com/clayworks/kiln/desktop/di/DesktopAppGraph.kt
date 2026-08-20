@@ -221,6 +221,13 @@ abstract class DesktopAppGraph(
         rgProcessor: ReplayGainProcessor,
     ): PlatformPlayer = createJavaSoundPlayer(
         audioDispatcher = audioDispatcher,
+        // libFLAC decode runs on its own single-thread dispatcher (NOT MAX_PRIORITY — only the
+        // audio output thread needs that) so blocking decode never starves the player actor or
+        // Main/IO (#31 item 3 audio-thread analog; #28). Built inline because kotlin-inject can't
+        // disambiguate two CoroutineDispatcher bindings (audioDispatcher already provides that type).
+        decodeDispatcher = Executors.newSingleThreadExecutor { runnable ->
+            Thread(runnable, "kiln-flac-decode").apply { isDaemon = true }
+        }.asCoroutineDispatcher(),
         decoder = decoder,
         source = source,
         settings = settings,

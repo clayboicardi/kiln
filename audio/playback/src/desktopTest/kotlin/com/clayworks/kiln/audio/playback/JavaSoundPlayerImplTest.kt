@@ -1,7 +1,9 @@
-// Lightweight smoke test for JavaSoundPlayerImpl. Verifies construction,
-// state-flow defaults, and error paths through loadQueue. Does NOT exercise
-// the SourceDataLine output path — that requires audio hardware and is
-// validated at H7 (the end-to-end "play a FLAC" milestone) by Clay manually.
+// Smoke test for JavaSoundPlayerImpl. Verifies construction, state-flow defaults,
+// loadQueue start-index mapping, and the non-playback control ops. Does NOT exercise
+// the SourceDataLine output path (that needs the fake-line harness in
+// JavaSoundPlayerActorTest). #28: the player is now a command/actor, so control ops are
+// async (trySend); tests construct the impl directly (to call the internal awaitDrained
+// test seam) and await the actor before asserting post-mutation state.
 
 package com.clayworks.kiln.audio.playback
 
@@ -31,7 +33,6 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertTrue
 
 class JavaSoundPlayerImplTest {
 
@@ -76,15 +77,14 @@ class JavaSoundPlayerImplTest {
             }
     }
 
-    // Stub Decoder — never asked because the source always fails first.
+    // Stub Decoder — open always fails (Left), so no SourceDataLine is opened by these tests.
     private class StubDecoder : Decoder {
         override fun supports(codec: AudioCodec): Boolean = false
         override suspend fun open(playable: Playable): Either<DecoderError, DecodedStream> =
             Either.Left(DecoderError.UnsupportedCodec(playable.codec))
     }
 
-    // Minimal SettingsRepository stub: returns Off / 0.0 for RG settings;
-    // default values for the rest. No writes exercised by these tests.
+    // Minimal SettingsRepository stub: returns Off / 0.0 for RG settings; defaults for the rest.
     private class StubSettingsRepository : SettingsRepository {
         override val themeMode: Flow<ThemeMode> = flowOf(ThemeMode.System)
         override suspend fun setThemeMode(mode: ThemeMode) = Unit
@@ -100,9 +100,12 @@ class JavaSoundPlayerImplTest {
         override suspend fun setReplayGainPreAmpDb(db: Double) = Unit
     }
 
-    private fun newPlayer(source: MusicSource = AlwaysFailingSource(), decoder: Decoder = StubDecoder()) =
-        createJavaSoundPlayer(
+    // Construct the impl directly (internal, same module) so tests can call awaitDrained().
+    // Both dispatchers are Unconfined so command processing runs inline on the sending thread.
+    private fun newPlayer(source: MusicSource = AlwaysFailingSource(), decoder: Decoder = StubDecoder()): JavaSoundPlayerImpl =
+        JavaSoundPlayerImpl(
             audioDispatcher = Dispatchers.Unconfined,
+            decodeDispatcher = Dispatchers.Unconfined,
             decoder = decoder,
             source = source,
             settings = StubSettingsRepository(),
@@ -129,6 +132,7 @@ class JavaSoundPlayerImplTest {
     fun `loadQueue with empty list — stays Idle, queue is empty`() = runBlocking {
         val player = newPlayer()
         player.loadQueue(items = emptyList(), startIndex = 0, autoPlay = true)
+        player.awaitDrained()
         assertEquals(PlayerState.Idle, player.state.value)
         assertEquals(0, player.queue.value.items.size)
         assertEquals(-1, player.queue.value.currentIndex)
@@ -139,6 +143,7 @@ class JavaSoundPlayerImplTest {
         val player = newPlayer(source = AlwaysFailingSource())
         val items = listOf(makeMediaItem("a"), makeMediaItem("b"))
         player.loadQueue(items, startIndex = 0, autoPlay = true)
+        player.awaitDrained()
         // All items skipped by the source → queue ends up empty → state Idle.
         assertEquals(PlayerState.Idle, player.state.value)
         assertEquals(0, player.queue.value.items.size)
@@ -148,13 +153,12 @@ class JavaSoundPlayerImplTest {
 
     @Test
     fun `loadQueue startIndex maps to correct surviving item when earlier items fail to resolve`() = runBlocking {
-        // items = [a, b, c, d, e] (5 items in user-facing list); B and D fail.
-        // Resolved list becomes [a, c, e] (3 items). User clicks "play C" →
-        // startIndex = 2 in the original-list. Post-fix, this maps to resolved
-        // index 1 (where C lives). Pre-fix, coercedStart.coerceIn(0,2) gave 2 → E.
+        // items = [a, b, c, d, e]; B and D fail. Resolved = [a, c, e]. User clicks "play C"
+        // (startIndex = 2) → maps to resolved index 1 (where C lives).
         val player = newPlayer(source = SelectivelyResolvingSource(resolvableIds = setOf("a", "c", "e")))
         val items = listOf("a", "b", "c", "d", "e").map { makeMediaItem(it) }
         player.loadQueue(items, startIndex = 2, autoPlay = false)
+        player.awaitDrained()
 
         val q = player.queue.value
         assertEquals(3, q.items.size, "only a, c, e should have survived")
@@ -164,12 +168,12 @@ class JavaSoundPlayerImplTest {
 
     @Test
     fun `loadQueue falls forward when the requested item itself fails to resolve`() = runBlocking {
-        // items = [a, b, c, d, e]; only a and e resolve. User clicks "play C"
-        // (startIndex=2), but C failed. Should fall forward to E (the first
-        // surviving item at or after original index 2).
+        // items = [a, b, c, d, e]; only a and e resolve. Click "play C" (startIndex=2), C failed
+        // → fall forward to E (first surviving at or after original index 2).
         val player = newPlayer(source = SelectivelyResolvingSource(resolvableIds = setOf("a", "e")))
         val items = listOf("a", "b", "c", "d", "e").map { makeMediaItem(it) }
         player.loadQueue(items, startIndex = 2, autoPlay = false)
+        player.awaitDrained()
 
         val q = player.queue.value
         assertEquals(2, q.items.size, "only a and e survived")
@@ -179,11 +183,12 @@ class JavaSoundPlayerImplTest {
 
     @Test
     fun `loadQueue falls back to last when no resolved item exists at or after startIndex`() = runBlocking {
-        // items = [a, b, c, d, e]; only a and b resolve. User clicks "play D"
-        // (startIndex=3), but C, D, E all failed. Fall back to last surviving (B).
+        // items = [a, b, c, d, e]; only a and b resolve. Click "play D" (startIndex=3), C/D/E all
+        // failed → fall back to last surviving (B).
         val player = newPlayer(source = SelectivelyResolvingSource(resolvableIds = setOf("a", "b")))
         val items = listOf("a", "b", "c", "d", "e").map { makeMediaItem(it) }
         player.loadQueue(items, startIndex = 3, autoPlay = false)
+        player.awaitDrained()
 
         val q = player.queue.value
         assertEquals(2, q.items.size, "only a and b survived")
@@ -193,10 +198,10 @@ class JavaSoundPlayerImplTest {
 
     @Test
     fun `loadQueue startIndex zero with all items resolving picks index zero`() = runBlocking {
-        // Sanity check that the new mapping logic doesn't regress the happy path.
         val player = newPlayer(source = SelectivelyResolvingSource(resolvableIds = setOf("a", "b", "c")))
         val items = listOf("a", "b", "c").map { makeMediaItem(it) }
         player.loadQueue(items, startIndex = 0, autoPlay = false)
+        player.awaitDrained()
 
         val q = player.queue.value
         assertEquals(3, q.items.size)
@@ -207,12 +212,11 @@ class JavaSoundPlayerImplTest {
     @Test
     fun `setRepeatMode + setShuffleMode update queue flow without playback`() = runBlocking {
         val player = newPlayer()
-        player.setRepeatMode(RepeatMode.All)
+        player.setRepeatMode(RepeatMode.All); player.awaitDrained()
         assertEquals(RepeatMode.All, player.queue.value.repeatMode)
-        player.setShuffleMode(true)
+        player.setShuffleMode(true); player.awaitDrained()
         assertEquals(true, player.queue.value.shuffleEnabled)
-        player.setRepeatMode(RepeatMode.Off)
-        player.setShuffleMode(false)
+        player.setRepeatMode(RepeatMode.Off); player.setShuffleMode(false); player.awaitDrained()
         assertEquals(RepeatMode.Off, player.queue.value.repeatMode)
         assertEquals(false, player.queue.value.shuffleEnabled)
     }
@@ -220,18 +224,17 @@ class JavaSoundPlayerImplTest {
     @Test
     fun `setVolume + setMuted update volume flow without playback`() = runBlocking {
         val player = newPlayer()
-        player.setVolume(0.5f)
+        player.setVolume(0.5f); player.awaitDrained()
         assertEquals(0.5f, player.volume.value.linear)
-        player.setMuted(true)
+        player.setMuted(true); player.awaitDrained()
         assertEquals(true, player.volume.value.muted)
-        player.setVolume(1.0f)
-        player.setMuted(false)
+        player.setVolume(1.0f); player.setMuted(false); player.awaitDrained()
         assertEquals(1.0f, player.volume.value.linear)
         assertEquals(false, player.volume.value.muted)
     }
 
     @Test
-    fun `addAudioProcessor + removeAudioProcessor mutate processors flow`() {
+    fun `addAudioProcessor + removeAudioProcessor mutate processors flow`() = runBlocking {
         val player = newPlayer()
         // The init block already adds rgProcessor — size starts at 1.
         assertEquals(1, player.processors.value.size)
@@ -240,9 +243,9 @@ class JavaSoundPlayerImplTest {
             override fun onFormatChange(format: DecodedAudioFormat) = Unit
             override fun process(frame: AudioFrame): AudioFrame = frame
         }
-        player.addAudioProcessor(processor)
+        player.addAudioProcessor(processor); player.awaitDrained()
         assertEquals(2, player.processors.value.size)
-        player.removeAudioProcessor(processor)
+        player.removeAudioProcessor(processor); player.awaitDrained()
         assertEquals(1, player.processors.value.size)
     }
 
@@ -253,6 +256,7 @@ class JavaSoundPlayerImplTest {
         player.play()
         player.pause()
         player.stop()
+        player.awaitDrained()
         // State stays Idle.
         assertEquals(PlayerState.Idle, player.state.value)
     }
@@ -262,6 +266,8 @@ class JavaSoundPlayerImplTest {
         val player = newPlayer()
         val stateBeforeRelease = player.state.value
         player.release()
+        // No awaitDrained here: the actor exits on Release, so a trailing Barrier would never be
+        // processed. release() doesn't mutate _state, so the assertion below holds regardless.
         // Further suspend calls should be safe no-ops (no crash, no state mutation).
         player.play()
         player.pause()

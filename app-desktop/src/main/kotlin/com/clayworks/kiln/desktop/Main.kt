@@ -69,6 +69,19 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.swing.Swing
 import kotlinx.coroutines.withContext
 
+// Process-wide single-flight guard for the RG backfill (#28 item 3). The analyzer job runs on
+// appScope and outlives the Settings route, but its InProgress UI state is route-local — so a
+// reopened Settings would otherwise re-enable Analyze and launch a SECOND concurrent backfill
+// against the same worklist (codex). One backfill per process.
+private val backfillRunning = java.util.concurrent.atomic.AtomicBoolean(false)
+
+// Process-lifetime backfill UI state. The appScope backfill coroutine writes HERE, not a
+// route-local remember — otherwise it leaks the disposed Composable for the (multi-hour) run, and a
+// reopened Settings resets to Idle (dead Analyze button + scan controls wrongly re-enabled while the
+// analyzer is still running). Collected via collectAsState in DesktopSettingsRoute. (gemini round 2)
+private val backfillStateFlow =
+    kotlinx.coroutines.flow.MutableStateFlow<BackfillUiState>(BackfillUiState.Idle(0))
+
 fun main() {
     // Process-lifetime graph — hoisted OUTSIDE application { } so its scope is
     // not Composable-bound. application { } is a Composable-scoped coroutine
@@ -181,10 +194,12 @@ private fun DesktopSettingsRoute(
     }
     val missingCount by missingCountFlow.collectAsState(initial = 0)
 
-    var backfillState: BackfillUiState by remember { mutableStateOf<BackfillUiState>(BackfillUiState.Idle(0)) }
+    // Collected from the process-lifetime backfillStateFlow so a backfill that outlives this route is
+    // reflected when Settings reopens (gemini round 2). Only refresh the Idle count, not in-flight state.
+    val backfillState by backfillStateFlow.collectAsState()
     LaunchedEffect(missingCount) {
-        if (backfillState is BackfillUiState.Idle) {
-            backfillState = BackfillUiState.Idle(missingCount)
+        if (backfillStateFlow.value is BackfillUiState.Idle) {
+            backfillStateFlow.value = BackfillUiState.Idle(missingCount)
         }
     }
 
@@ -266,25 +281,46 @@ private fun DesktopSettingsRoute(
                 coroutineScope.launch { graph.settings.setReplayGainPreAmpDb(db) }
             },
             onTriggerBackfill = {
-                coroutineScope.launch {
-                    var startedTotal = 0
-                    graph.analysisRunner.runOnceWithProgress().collect { progress ->
-                        backfillState = when (progress) {
-                            is AnalysisProgress.Started -> {
-                                startedTotal = progress.total
-                                BackfillUiState.InProgress(0, 0, progress.total)
+                // appScope (process-lifetime) so closing Settings mid-backfill doesn't cancel the
+                // analyzer — mirrors runScanNow above. Pre-fix this ran on the composition-bound
+                // rememberCoroutineScope, so leaving Settings aborted the (multi-hour) RG backfill,
+                // persisting only a subset. Dispatchers.Main keeps backfillState writes on the UI
+                // thread; the analysis work hops to ioDispatcher inside the runner. (#28 item 3)
+                // Snapshot missingCount (a Compose State delegate via collectAsState) as a primitive
+                // BEFORE launching on the process-lifetime appScope: capturing the delegate in a
+                // coroutine that outlives this composable retains the whole composition (gemini r5).
+                val currentMissing = missingCount
+                appScope.launch(Dispatchers.Main) {
+                    // Single-flight: a backfill already running must not be duplicated by a reopened
+                    // Settings re-triggering against the same worklist (codex).
+                    if (!backfillRunning.compareAndSet(false, true)) return@launch
+                    try {
+                        var startedTotal = 0
+                        graph.analysisRunner.runOnceWithProgress().collect { progress ->
+                            backfillStateFlow.value = when (progress) {
+                                is AnalysisProgress.Started -> {
+                                    startedTotal = progress.total
+                                    BackfillUiState.InProgress(0, 0, progress.total)
+                                }
+                                is AnalysisProgress.Progress ->
+                                    BackfillUiState.InProgress(progress.analyzed, progress.skipped, progress.total)
+                                is AnalysisProgress.Complete ->
+                                    BackfillUiState.Complete(
+                                        analyzed = progress.result.tracksAnalyzed,
+                                        skipped = progress.result.tracksSkipped,
+                                        total = startedTotal,
+                                        albumsAggregated = progress.result.albumsAggregated,
+                                        durationMs = progress.result.durationMs,
+                                    )
                             }
-                            is AnalysisProgress.Progress ->
-                                BackfillUiState.InProgress(progress.analyzed, progress.skipped, progress.total)
-                            is AnalysisProgress.Complete ->
-                                BackfillUiState.Complete(
-                                    analyzed = progress.result.tracksAnalyzed,
-                                    skipped = progress.result.tracksSkipped,
-                                    total = startedTotal,
-                                    albumsAggregated = progress.result.albumsAggregated,
-                                    durationMs = progress.result.durationMs,
-                                )
                         }
+                    } catch (e: Throwable) {
+                        // Don't leave the process-lifetime state stuck InProgress on a DB/decode error
+                        // — reset to Idle so Settings re-enables Analyze/scan (gemini + codex round 3).
+                        if (e is kotlinx.coroutines.CancellationException) throw e
+                        backfillStateFlow.value = BackfillUiState.Idle(currentMissing)
+                    } finally {
+                        backfillRunning.set(false)
                     }
                 }
             },
