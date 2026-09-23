@@ -30,7 +30,8 @@ The fix is a **command/actor desktop player** (see the `CLAUDE.md` gotcha "The d
 
 ## In-flight items, in order
 
-1. **#28 smoke, desktop** (`:app-desktop:run`, real library `D:\tiddl`):
+0. **NEW #37 (found during the smoke): desktop can't play ANY 24/32-bit FLAC.** Java Sound on Windows only exposes 8/16-bit `SourceDataLine`s. A `jshell` probe on Cortex showed 16-bit opens at 44.1–192 kHz while 24-bit and float32 never do. That's 5,760 tracks (~21%). This is pre-existing, NOT a #35 regression: the pre-actor code opened the line identically. The proposed fix is to try the source depth first and fall back to 16-bit with TPDF-dithered requantize after RG (in `:audio:dsp`), with the output format shown honestly in the UI. **Needs Clay's call before implementing.**
+1. **#28 smoke, desktop** (`:app-desktop:run`, real library `D:\tiddl`). **Use 16-bit tracks** until #37 lands, because 24-bit fails at line-open no matter what. Successful plays write NOTHING to the log, so the 7 logged failures on 2026-09-23 don't mean the smoke failed:
    - [ ] Click track B while track A plays → B starts promptly
    - [ ] Next / Previous work mid-playback
    - [ ] Pause → skip → the new track loads (paused or playing, but it doesn't wedge)
