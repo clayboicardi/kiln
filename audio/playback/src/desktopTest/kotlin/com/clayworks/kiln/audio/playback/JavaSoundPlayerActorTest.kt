@@ -1,7 +1,8 @@
 // Behavioural tests for the JavaSoundPlayerImpl command/actor model (#28). Each proves a
 // defect fix or a falsify safeguard, using the FakeDecodedStream/FakeDecoder/FakeLine doubles.
-// Both dispatchers are Unconfined so command + frame processing runs inline (deterministic);
-// awaitDrained() barriers the actor before each assertion.
+// Both dispatchers are Unconfined so command + frame processing runs inline when driven from the
+// test thread; awaitDrained() barriers the actor before each assertion. Stream events (EOF / decode
+// error) are NOT commands, so those tests wait on the observable outcome via awaitStreamEvent first.
 
 package com.clayworks.kiln.audio.playback
 
@@ -26,8 +27,10 @@ import com.clayworks.kiln.library.source.SourceId
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -160,6 +163,7 @@ class JavaSoundPlayerActorTest {
         player.loadQueue(listOf(item("a"), item("b")), startIndex = 0, autoPlay = true)
         player.awaitDrained()
         sA.signalEof()  // stream A ends normally
+        awaitStreamEvent { player.queue.first { it.currentIndex == 1 } }
         player.awaitDrained()
         assertEquals(1, player.queue.value.currentIndex, "EOF should advance to B")
         assertEquals("b", player.queue.value.currentItem?.itemId?.value)
@@ -174,6 +178,7 @@ class JavaSoundPlayerActorTest {
         player.loadQueue(listOf(item("a"), item("b")), startIndex = 0, autoPlay = true)
         player.awaitDrained()
         sA.signalError(RuntimeException("decode boom"))  // stream A fails
+        awaitStreamEvent { player.state.first { it is PlayerState.Error } }
         player.awaitDrained()
         assertTrue(player.state.value is PlayerState.Error, "decode error must surface as Error, not EOF")
         assertEquals(0, player.queue.value.currentIndex, "must NOT advance to B on a decode error")
@@ -187,5 +192,17 @@ class JavaSoundPlayerActorTest {
         player.awaitDrained()
         player.release()  // no awaitDrained — the actor exits on Release
         assertTrue(sA.closed, "release must tear down the active stream")
+    }
+
+    /**
+     * Wait for the observable outcome of a STREAM event (EOF / decode error). awaitDrained() is a
+     * command Barrier and only orders against other commands. The actor is command-biased, so a
+     * Barrier queued after signalEof() can be acked before the actor handles the closed frame
+     * channel. That happens whenever the actor isn't running inline on the test thread: the init
+     * settings collector posts ReapplyGain from Dispatchers.Default, which resumes the Unconfined
+     * actor on a Default worker (CI flake on PR #36, reproduced 7/300 locally).
+     */
+    private suspend fun awaitStreamEvent(condition: suspend () -> Unit) {
+        withTimeout(5_000) { condition() }
     }
 }
