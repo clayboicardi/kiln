@@ -50,7 +50,7 @@ fun KilnHomeScreen(
     // PlatformPlayer from LocalPlayer (provided at the app root). See A5 /
     // LocalLibraryStats.kt for the Voyager Screen-serialization rationale.
     val nowPlayingTab = remember { NowPlayingTab() }
-    val searchTab = remember(musicSource, player) { SearchTab(musicSource, player) }
+    val searchTab = remember(musicSource, player, libraryRevision) { SearchTab(musicSource, player, libraryRevision) }
 
     TabNavigator(libraryTab) {
         Scaffold(
