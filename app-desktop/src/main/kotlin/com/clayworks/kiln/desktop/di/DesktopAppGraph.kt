@@ -32,7 +32,9 @@ import com.clayworks.kiln.audio.playback.createJvmFlacTrackAnalyzer
 import com.clayworks.kiln.library.scan.TrackAnalysisRunner
 import com.clayworks.kiln.library.scan.TrackAnalyzer
 import com.clayworks.kiln.data.library.db.KilnDatabase
+import com.clayworks.kiln.library.scan.ChangeNotifyingLibraryScanner
 import com.clayworks.kiln.library.scan.JvmFilesystemScanner
+import com.clayworks.kiln.library.scan.LibraryChangeSignal
 import com.clayworks.kiln.library.scan.LibraryScanner
 import com.clayworks.kiln.library.db.DatabaseWriter
 import com.clayworks.kiln.library.settings.SettingsRepository
@@ -68,6 +70,7 @@ abstract class DesktopAppGraph(
     abstract val musicSource: MusicSource
     abstract val libraryStats: LibraryStatsSource
     abstract val scanner: LibraryScanner
+    abstract val libraryChanges: LibraryChangeSignal
     abstract val player: PlatformPlayer
     abstract val settings: SettingsRepository
     abstract val kilnDatabase: KilnDatabase
@@ -172,12 +175,19 @@ abstract class DesktopAppGraph(
         db: KilnDatabase,
         driver: SqlDriver,
         writer: DatabaseWriter,
-    ): LibraryScanner {
+    ): ChangeNotifyingLibraryScanner {
         val scanFoldersFlow: Flow<List<Path>> = settings.scanFolders.map { stored ->
             stored.map(Path::of)
         }
-        return JvmFilesystemScanner(scanFoldersFlow, db, driver, Dispatchers.IO, writer)
+        return ChangeNotifyingLibraryScanner(JvmFilesystemScanner(scanFoldersFlow, db, driver, Dispatchers.IO, writer))
     }
+
+    /** Every scan path goes through the change-notifying wrapper so LibraryTab reloads after a scan (#38). */
+    @Provides
+    protected fun libraryScanner(scanner: ChangeNotifyingLibraryScanner): LibraryScanner = scanner
+
+    @Provides
+    protected fun libraryChangeSignal(scanner: ChangeNotifyingLibraryScanner): LibraryChangeSignal = scanner
 
     /**
      * Single-thread MAX_PRIORITY executor backing the audio output pipeline.

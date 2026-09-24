@@ -35,15 +35,17 @@ import com.clayworks.kiln.library.source.MusicSource
 import com.clayworks.kiln.ui.components.library.LibraryTab
 import com.clayworks.kiln.ui.components.nowplaying.NowPlayingTab
 import com.clayworks.kiln.ui.components.search.SearchTab
+import kotlinx.coroutines.flow.StateFlow
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun KilnHomeScreen(
     musicSource: MusicSource,
     player: PlatformPlayer,
+    libraryRevision: StateFlow<Long>,
     onOpenSettings: () -> Unit,
 ) {
-    val libraryTab = remember(musicSource, player) { LibraryTab(musicSource, player) }
+    val libraryTab = remember(musicSource, player, libraryRevision) { LibraryTab(musicSource, player, libraryRevision) }
     // NowPlayingTab takes no constructor dependency — its inner Screens read the
     // PlatformPlayer from LocalPlayer (provided at the app root). See A5 /
     // LocalLibraryStats.kt for the Voyager Screen-serialization rationale.

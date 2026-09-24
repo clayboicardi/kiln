@@ -152,6 +152,7 @@ fun main() {
                             KilnHomeScreen(
                                 musicSource = graph.musicSource,
                                 player = graph.player,
+                                libraryRevision = graph.libraryChanges.revision,
                                 onOpenSettings = { showSettings = true },
                             )
                         }

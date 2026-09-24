@@ -25,6 +25,8 @@ import com.clayworks.kiln.library.scan.TrackAnalyzer
 import com.clayworks.kiln.data.library.db.KilnDatabase
 import com.clayworks.kiln.library.scan.AndroidFormatFactBackfill
 import com.clayworks.kiln.library.scan.AndroidMediaStoreScanner
+import com.clayworks.kiln.library.scan.ChangeNotifyingLibraryScanner
+import com.clayworks.kiln.library.scan.LibraryChangeSignal
 import com.clayworks.kiln.library.scan.LibraryScanner
 import com.clayworks.kiln.library.settings.SettingsRepository
 import com.clayworks.kiln.library.settings.SettingsRepositoryImpl
@@ -46,6 +48,7 @@ abstract class AndroidAppGraph(
     abstract val musicSource: MusicSource
     abstract val libraryStats: LibraryStatsSource
     abstract val scanner: LibraryScanner
+    abstract val libraryChanges: LibraryChangeSignal
     abstract val player: PlatformPlayer
     abstract val settings: SettingsRepository
     abstract val kilnDatabase: KilnDatabase
@@ -159,15 +162,24 @@ abstract class AndroidAppGraph(
         driver: SqlDriver,
         backfill: AndroidFormatFactBackfill,
         writer: DatabaseWriter,
-    ): LibraryScanner = AndroidMediaStoreScanner(
-        context = context,
-        safTreeUrisFlow = settings.scanFolders,
-        db = db,
-        driver = driver,
-        ioDispatcher = Dispatchers.IO,
-        backfill = backfill,
-        writer = writer,
+    ): ChangeNotifyingLibraryScanner = ChangeNotifyingLibraryScanner(
+        AndroidMediaStoreScanner(
+            context = context,
+            safTreeUrisFlow = settings.scanFolders,
+            db = db,
+            driver = driver,
+            ioDispatcher = Dispatchers.IO,
+            backfill = backfill,
+            writer = writer,
+        ),
     )
+
+    /** Every scan path goes through the change-notifying wrapper so LibraryTab reloads after a scan (#38). */
+    @Provides
+    protected fun libraryScanner(scanner: ChangeNotifyingLibraryScanner): LibraryScanner = scanner
+
+    @Provides
+    protected fun libraryChangeSignal(scanner: ChangeNotifyingLibraryScanner): LibraryChangeSignal = scanner
 
     /**
      * ReplayGainProcessor is the single per-process audio processor wired into
