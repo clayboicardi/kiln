@@ -35,6 +35,20 @@ class PlaybackMessagesTest {
     }
 
     @Test
+    fun `a 22_05 kHz source keeps both decimals`() {
+        val r = OutputRoute(OutputEngine.WasapiShared, 48_000, "32-bit float mix", 22_050, 16)
+        assertEquals("Output · WASAPI shared · 48 kHz 32-bit float mix · resampled from 22.05 kHz", formatOutputRoute(r))
+    }
+
+    @Test
+    fun `an 11_025 kHz layout keeps all three decimals`() {
+        assertEquals(
+            "The output can't take 16-bit / 11.025 kHz mono",
+            playerErrorMessage(PlayerError.OutputFormatUnsupported(11_025, 16, 1, "x")),
+        )
+    }
+
+    @Test
     fun `output format rejection names the layout`() {
         assertEquals(
             "The output can't take 24-bit / 44.1 kHz stereo",

@@ -5,6 +5,10 @@
 // Track A's gear-icon -> SettingsScreen flow is preserved at the app-module
 // layer (MainActivity / Main.kt route `showSettings` boolean toggles
 // between KilnHomeScreen and SettingsRoute).
+//
+// Playback skip notices (#37, R20) show here as a Snackbar so they're visible on
+// every tab: playback starts from Library or Search without switching tabs, and
+// the player's notices flow has replay = 0.
 
 package com.clayworks.kiln.ui.components.home
 
@@ -21,9 +25,13 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import cafe.adriel.voyager.navigator.tab.CurrentTab
@@ -34,8 +42,11 @@ import com.clayworks.kiln.audio.playback.PlatformPlayer
 import com.clayworks.kiln.library.source.MusicSource
 import com.clayworks.kiln.ui.components.library.LibraryTab
 import com.clayworks.kiln.ui.components.nowplaying.NowPlayingTab
+import com.clayworks.kiln.ui.components.playback.noticeMessage
 import com.clayworks.kiln.ui.components.search.SearchTab
+import com.clayworks.kiln.ui.components.specsheet.LocalPlaybackDiagnostics
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.collectLatest
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -51,6 +62,16 @@ fun KilnHomeScreen(
     // LocalLibraryStats.kt for the Voyager Screen-serialization rationale.
     val nowPlayingTab = remember { NowPlayingTab() }
     val searchTab = remember(musicSource, player, libraryRevision) { SearchTab(musicSource, player, libraryRevision) }
+
+    // collectLatest: a newer notice replaces the one showing (cancelling showSnackbar dismisses it).
+    // On Android the default NoPlaybackDiagnostics never emits, so nothing shows.
+    val snackbarHostState = remember { SnackbarHostState() }
+    val diagnostics = LocalPlaybackDiagnostics.current
+    LaunchedEffect(diagnostics) {
+        diagnostics.notices.collectLatest {
+            snackbarHostState.showSnackbar(noticeMessage(it), duration = SnackbarDuration.Short)
+        }
+    }
 
     TabNavigator(libraryTab) {
         Scaffold(
@@ -71,6 +92,7 @@ fun KilnHomeScreen(
                     TabNavigationItem(searchTab)
                 }
             },
+            snackbarHost = { SnackbarHost(snackbarHostState) },
             modifier = Modifier.fillMaxSize(),
         ) { padding ->
             Box(

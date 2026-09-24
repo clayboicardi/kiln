@@ -1,4 +1,5 @@
-// Now Playing shows the error line, skip notices, and the output readout (#37).
+// Now Playing shows the error line and the output readout (#37). Skip notices are an app-shell
+// Snackbar (R20), covered by KilnHomeScreenNoticeTest.
 
 package com.clayworks.kiln.ui.components.nowplaying
 
@@ -34,8 +35,7 @@ class NowPlayingDiagnosticsTest {
 
     private class FakeDiagnostics(route: OutputRoute?) : PlaybackDiagnostics {
         override val outputRoute = MutableStateFlow(route)
-        // replay = 1 so the notice test can't race the LaunchedEffect collector's subscription.
-        override val notices = MutableSharedFlow<PlaybackNotice>(replay = 1)
+        override val notices = MutableSharedFlow<PlaybackNotice>()
     }
 
     private fun show(state: PlayerState, diagnostics: FakeDiagnostics) {
@@ -60,15 +60,5 @@ class NowPlayingDiagnosticsTest {
         val route = OutputRoute(OutputEngine.WasapiShared, 48_000, "32-bit float mix", 44_100, 24)
         show(PlayerState.Ready(isPlaying = true), FakeDiagnostics(route))
         composeRule.onNodeWithText("Output · WASAPI shared · 48 kHz 32-bit float mix · resampled from 44.1 kHz").assertIsDisplayed()
-    }
-
-    @Test
-    fun `a skip notice appears`() {
-        val diagnostics = FakeDiagnostics(null)
-        show(PlayerState.Ready(isPlaying = true), diagnostics)
-        composeRule.mainClock.autoAdvance = false
-        diagnostics.notices.tryEmit(PlaybackNotice.Skipped("Hidden Track", PlayerError.FormatUnsupported("AAC")))
-        composeRule.mainClock.advanceTimeByFrame()
-        composeRule.onNodeWithText("Skipped Hidden Track: Can't play this file: AAC isn't supported yet").assertIsDisplayed()
     }
 }

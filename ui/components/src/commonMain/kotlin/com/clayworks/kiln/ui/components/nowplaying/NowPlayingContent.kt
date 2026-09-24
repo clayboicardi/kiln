@@ -41,7 +41,6 @@ data class NowPlayingState(
     val positionMs: Long,
     val durationMs: Long,
     val errorMessage: String? = null,
-    val notice: String? = null,
     val outputLine: String? = null,
 )
 
@@ -98,10 +97,6 @@ fun NowPlayingContent(
             state.errorMessage?.let {
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(text = it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
-            }
-            state.notice?.let {
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(text = it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             state.outputLine?.let {
                 Spacer(modifier = Modifier.height(4.dp))

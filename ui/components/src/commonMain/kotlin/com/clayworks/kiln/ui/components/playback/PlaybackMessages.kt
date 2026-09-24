@@ -37,8 +37,15 @@ fun formatOutputRoute(route: OutputRoute): String = buildString {
     if (route.resampled) append(" · resampled from ${khz(route.sourceRateHz)} kHz")
 }
 
-/** 44100 → "44.1", 48000 → "48", 176400 → "176.4". Pure Kotlin (no String.format). */
-private fun khz(hz: Int): String = if (hz % 1000 == 0) "${hz / 1000}" else "${hz / 1000}.${(hz % 1000) / 100}"
+/**
+ * Exact kHz with no trailing zeros: 44100 → "44.1", 48000 → "48", 176400 → "176.4",
+ * 22050 → "22.05", 11025 → "11.025". Pure Kotlin (no String.format).
+ */
+private fun khz(hz: Int): String {
+    val whole = hz / 1000
+    val frac = hz % 1000
+    return if (frac == 0) "$whole" else "$whole." + frac.toString().padStart(3, '0').trimEnd('0')
+}
 
 private fun channelsWord(channels: Int): String = when (channels) {
     1 -> "mono"
