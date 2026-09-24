@@ -80,6 +80,7 @@ internal class JavaSoundOutputLine(
                 // "No line matching interface SourceDataLine supporting format …": this layout is unsupported.
                 throw OutputLineException.FormatRejected(format, e.message ?: "Java Sound has no line for this format", e)
             } catch (e: Exception) {
+                // Intentionally deviates from spec §5.2 (FormatRejected): on DirectSound, LineUnavailableException means busy/exhausted, not a bad format.
                 throw OutputLineException.DeviceProblem(e.message ?: "Java Sound line unavailable", e)
             }
             return JavaSoundOutputLine(line, format)

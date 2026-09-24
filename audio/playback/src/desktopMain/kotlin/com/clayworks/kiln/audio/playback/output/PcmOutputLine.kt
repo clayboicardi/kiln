@@ -32,14 +32,19 @@ internal interface PcmOutputLine : AutoCloseable {
     /** Stop playback, KEEPING buffered audio (gapless pause/resume). Actor thread only. */
     fun stop()
 
-    /** Discard buffered audio. Keeps the running/stopped state. Actor thread only. */
+    /**
+     * Discard buffered audio. On success the line keeps its running/stopped state. A FAILED flush
+     * may leave the line stopped (WASAPI stops the stream to reset it). Actor thread only.
+     */
     fun flush()
 
     /**
-     * Write whole frames of [sourceFormat] PCM. Blocks until written or interrupted; returns bytes written.
+     * Write whole frames of [sourceFormat] PCM; returns the bytes written. It MAY block while the
+     * device buffer is full (engine-dependent), and it returns early, with the bytes written so
+     * far, once interrupt() is called.
      *
-     * On a stopped line whose buffer is full, write() blocks until interrupt(); callers must only
-     * write while running.
+     * On a STOPPED line with a full buffer, WASAPI blocks until interrupt() while Java Sound
+     * returns at once, so callers must only write while running.
      */
     fun write(bytes: ByteArray, off: Int, len: Int): Int
 
