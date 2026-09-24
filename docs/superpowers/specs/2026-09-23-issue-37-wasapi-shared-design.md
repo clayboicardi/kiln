@@ -72,6 +72,7 @@ internal interface PcmOutputLine : AutoCloseable {
     fun queuedNanos(): Long                    // duration still buffered, not yet played
     fun setVolume(linear: Float)               // 0.0..1.0; implementations clamp
     fun route(): OutputRoute                   // the negotiated output, for PlaybackDiagnostics
+    fun interrupt(discard: Boolean)            // the ONLY cross-thread member: unblock a pending write()
     override fun close()                       // idempotent
 }
 internal fun interface PcmOutputLineFactory { fun open(format: DecodedAudioFormat): PcmOutputLine }
@@ -79,7 +80,7 @@ internal fun interface PcmOutputLineFactory { fun open(format: DecodedAudioForma
 
 **The line owns all output byte-rate math (Codex review #2).** The actor always writes bytes in the decoded **source** format. Whatever layout the line negotiates with the device, and any repack it does, stays private to the line. The line's buffer sizing, its queued-audio accounting, and its route report are all computed from the **negotiated** device format. The actor only ever sees durations (`bufferNanos`, `queuedNanos()`) and never derives bytes/sec for output timing from the source format. This removes today's `bytesPerSec` computation in `advanceOnEof`, which would under-estimate the tail and clip track endings as soon as device and source frame sizes differ (e.g. the 24-in-32 repack: 8-byte vs 6-byte stereo frames).
 
-**The thread contract is the #28 invariant, made explicit.** Every method may be called from the actor thread. **`stop()` and `flush()` must ALSO be safe from any thread**, because they form the write-interrupt seam. A call from another thread must make a blocked `write()` return promptly and must not corrupt line state. The actor stays the authority: after an interrupt, it issues its own on-actor calls.
+**The thread contract is the #28 invariant, made explicit.** Every member is called only from the actor thread, **except `interrupt(discard: Boolean)`**, the write-interrupt seam and the one cross-thread member. It must make a blocked `write()` return promptly and must not corrupt line state (`discard = true` for track change/teardown, `false` for pause). The actor stays the authority: after an interrupt, it issues its own on-actor calls. *(Refined during planning, 2026-09-23. An earlier draft made `stop()`/`flush()` themselves cross-thread-safe, which forced the line to guess its caller by thread identity, and that misfires under `Unconfined` test dispatchers.)*
 
 **The factory `open` throws a typed `OutputLineException`:**
 
@@ -156,11 +157,9 @@ write(bytes, off, len):
 - A 200 ms buffer absorbs any realistic G1 pause, so no real-time thread is needed.
 - The position display can lead audible output by up to one buffer. That was already true with Java Sound's 100 ms buffer, and it's below the 250 ms position tick.
 
-**Interrupt seam (cross-thread `stop()`/`flush()`).** An off-actor call makes **no COM calls**. It sets `@Volatile interrupted = true` (plus `flushRequested` for `flush`) and `LockSupport.unpark(writerThread)`, so a blocked `write()` returns at once.
+**Interrupt seam (`interrupt(discard)`).** It makes **no COM calls**. It sets `@Volatile interrupted = true` and `LockSupport.unpark(writerThread)`, so a blocked `write()` returns at once. `discard` is ignored, because the actor always follows up with `flush()` or `close()`.
 
-The actor then issues its own on-actor calls. `stop()` on the actor is `IAudioClient.Stop`. `flush()` on the actor is `Stop` → `Reset` → `Start` if the line was running, because `Reset` requires a stopped stream. On-actor `start()`/`flush()` clear `interrupted`.
-
-Which thread is "the actor" is recorded at `open()` (the owning thread).
+The actor then issues its own calls. `stop()` is `IAudioClient.Stop` and is idempotent. `flush()` is `Stop` → `Reset` → `Start` if the line was running, because `Reset` requires a stopped stream. `start()` is idempotent while running. `start()` and `flush()` clear `interrupted`.
 
 While `interrupted` is set, `write()` returns immediately with the bytes written so far, and the rest of that in-flight frame is dropped. This matches Java Sound's existing write-to-a-stopped-line behavior, so a pause loses at most the remainder of one decoded block (≤ ~100 ms). This isn't a regression, and gapless pause/resume refers to the device buffer, which `stop()` keeps.
 
@@ -188,7 +187,7 @@ Endpoint availability is **not** part of that decision. "No device right now" is
 - **Honest errors:** line-open `FormatRejected` becomes the new `OutputFormatUnsupported` (§5.1), and `DeviceProblem` becomes `DeviceUnavailable`. A decoder `UnsupportedCodec` still becomes `FormatUnsupported(codec)`.
 - **`openAndStart` returns an `OpenResult`:** `Opened` | `TrackFailed(PlayerError)` (per-track: format, decode, IO, resolve) | `DeviceFailed(PlayerError)`. Setting the `Error` state stays inside it, as today.
 - **Capped skip-ahead.** A new `openWithSkip(startIndex, direction)` is used by `advanceOnEof` (forward), `SkipToNext` (forward), and `SkipToPrevious` (backward):
-  - It loops: resolve and open. On `TrackFailed`, it emits `PlaybackNotice.Skipped(title, reason)` and moves one step in `direction`, following the queue order and `RepeatMode.All` wrap, but **ignoring `RepeatMode.One`** so a failing track isn't retried.
+  - It loops: resolve and open. On `TrackFailed`, it emits `PlaybackNotice.Skipped(title, cause)` and moves one step in `direction`, following the queue order and `RepeatMode.All` wrap, but **ignoring `RepeatMode.One`** so a failing track isn't retried.
   - It stops after **`MAX_CONSECUTIVE_SKIPS = 3`** failures: the last `Error` stays and `PlaybackNotice.GaveUp(count)` is emitted.
   - It also stops with that track's `Error` if there's no next index.
   - `DeviceFailed` stops immediately with no skip.
@@ -208,7 +207,7 @@ data class OutputRoute(
 ) { val resampled: Boolean get() = deviceRateHz != null && deviceRateHz != sourceRateHz }
 
 sealed interface PlaybackNotice {
-    data class Skipped(val title: String, val reason: String) : PlaybackNotice
+    data class Skipped(val title: String, val cause: PlayerError) : PlaybackNotice   // wording lives in :ui:components
     data class GaveUp(val consecutiveFailures: Int) : PlaybackNotice
 }
 
@@ -275,7 +274,7 @@ object NoPlaybackDiagnostics : PlaybackDiagnostics { /* null route, empty notice
   - Previous skips backward
   - `RepeatMode.One` + a failing track → no retry loop
   - the route is published on open and cleared on stop
-  - a cross-thread `stop()`/`flush()` unblocks a blocked fake `write()`
+  - a cross-thread `interrupt()` unblocks a blocked `write()`, tested on `WasapiOutputLine` with a fake `RenderPort` (device-free) and again on the real device
 - **`:ui:components` commonTest:** `playerErrorMessage` and `formatOutputRoute` cases.
 
 **Device-backed (Cortex; skipped on CI):**
