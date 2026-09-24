@@ -2,7 +2,8 @@
 // vtable slots by index (COMInvoker._invokeNativeInt is protected, hence the subclass; the
 // `this` pointer is passed explicitly as the first argument, as jna-platform's own wrappers do).
 // Slot indices follow each interface's declaration order after IUnknown's 0-2 (QueryInterface,
-// AddRef, Release). Verified against the Windows SDK headers and on Cortex (Task 5 probe).
+// AddRef, Release). Slot indices, GUIDs, HRESULTs and flags verified against Windows SDK 10.0.22621
+// headers; the enumerator/Activate/Initialize path exercised on Cortex by WasapiFormatProbeTest (2026-09-24).
 
 package com.clayworks.kiln.audio.playback.nativeio.wasapi
 
