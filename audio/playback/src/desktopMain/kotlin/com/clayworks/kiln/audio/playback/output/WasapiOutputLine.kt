@@ -43,8 +43,11 @@ internal class WasapiOutputLine(
 
     override fun stop() {
         if (running) {
-            port.stop()
+            // Cleared BEFORE the device call (final review M1). A Stop that throws means the device
+            // is dead either way. Left true, the next start() would skip port.start() and play silence
+            // instead of surfacing the device error.
             running = false
+            port.stop()
         }
     }
 

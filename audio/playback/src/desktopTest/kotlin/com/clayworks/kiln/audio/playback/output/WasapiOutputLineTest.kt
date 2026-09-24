@@ -27,13 +27,14 @@ class WasapiOutputLineTest {
         @Volatile var padding = 0
         @Volatile var closed = false
         @Volatile var failReset = false
+        @Volatile var failStop = false
         val calls = CopyOnWriteArrayList<String>()
         val framesWritten = AtomicInteger()
         private fun live() = check(!closed) { "port closed" }
         override fun paddingFrames(): Int { live(); return padding }
         override fun writeFrames(src: ByteArray, off: Int, frames: Int) { live(); framesWritten.addAndGet(frames); padding += frames }
         override fun start() { live(); calls += "start" }
-        override fun stop() { live(); calls += "stop" }
+        override fun stop() { live(); if (failStop) error("stop failed"); calls += "stop" }
         override fun reset() { live(); if (failReset) error("reset failed"); calls += "reset"; padding = 0 }
         override fun setVolume(level: Float) { live(); calls += "volume:$level" }
         override fun close() { calls += "close"; closed = true }
@@ -150,6 +151,21 @@ class WasapiOutputLineTest {
         line.start(); line.stop(); line.stop()
         assertEquals(listOf("start", "stop"), port.calls)
         assertFalse(line.isRunning)
+    }
+
+    @Test
+    fun `a stop whose port stop fails propagates and leaves the line reporting stopped`() {
+        // Final review M1: with running left true, the next start() skipped the device call, so a
+        // dead device played silence instead of surfacing its error.
+        val port = FakePort()
+        val line = WasapiOutputLine(port, fmt)
+        line.start()
+        port.failStop = true
+        assertFailsWith<IllegalStateException> { line.stop() } // the failure propagates
+        assertFalse(line.isRunning, "a failed stop must not leave the line reporting running")
+        port.failStop = false
+        line.start() // so a later start() really goes back to the device
+        assertEquals(listOf("start", "start"), port.calls)
     }
 
     @Test
