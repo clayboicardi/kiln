@@ -1,5 +1,5 @@
 // Behavioural tests for the JavaSoundPlayerImpl command/actor model (#28). Each proves a
-// defect fix or a falsify safeguard, using the FakeDecodedStream/FakeDecoder/FakeLine doubles.
+// defect fix or a falsify safeguard, using the FakeDecodedStream/FakeDecoder/FakeOutputLine doubles.
 // Both dispatchers are Unconfined so command + frame processing runs inline when driven from the
 // test thread; awaitDrained() barriers the actor before each assertion. Stream events (EOF / decode
 // error) are NOT commands, so those tests wait on the observable outcome via awaitStreamEvent first.
@@ -82,7 +82,7 @@ class JavaSoundPlayerActorTest {
     private fun newPlayer(
         ids: List<String>,
         streams: Map<String, FakeDecodedStream>,
-        line: FakeLine = FakeLine(),
+        line: FakeOutputLine = FakeOutputLine(),
     ): JavaSoundPlayerImpl = JavaSoundPlayerImpl(
         audioDispatcher = Dispatchers.Unconfined,
         decodeDispatcher = Dispatchers.Unconfined,
@@ -192,6 +192,34 @@ class JavaSoundPlayerActorTest {
         player.awaitDrained()
         player.release()  // no awaitDrained — the actor exits on Release
         assertTrue(sA.closed, "release must tear down the active stream")
+    }
+
+    @Test
+    fun `EOF tail waits for the line's queued audio before advancing`() = runBlocking {
+        val sA = FakeDecodedStream(fmt)
+        val line = FakeOutputLine(bufferNanos = 100_000_000L, queued = 80_000_000L) // 80 ms queued
+        val player = newPlayer(listOf("a", "b"), mapOf("a" to sA, "b" to FakeDecodedStream(fmt)), line)
+        player.loadQueue(listOf(item("a"), item("b")), startIndex = 0, autoPlay = true)
+        player.awaitDrained()
+        val t0 = System.nanoTime()
+        sA.signalEof()
+        awaitStreamEvent { player.queue.first { it.currentIndex == 1 } }
+        val elapsedMs = (System.nanoTime() - t0) / 1_000_000
+        assertTrue(elapsedMs >= 70, "EOF must play out the ~80 ms still queued; advanced after $elapsedMs ms")
+    }
+
+    @Test
+    fun `EOF tail is capped at twice the line buffer`() = runBlocking {
+        val sA = FakeDecodedStream(fmt)
+        val line = FakeOutputLine(bufferNanos = 50_000_000L, queued = 5_000_000_000L) // claims 5 s queued
+        val player = newPlayer(listOf("a", "b"), mapOf("a" to sA, "b" to FakeDecodedStream(fmt)), line)
+        player.loadQueue(listOf(item("a"), item("b")), startIndex = 0, autoPlay = true)
+        player.awaitDrained()
+        val t0 = System.nanoTime()
+        sA.signalEof()
+        awaitStreamEvent { player.queue.first { it.currentIndex == 1 } }
+        val elapsedMs = (System.nanoTime() - t0) / 1_000_000
+        assertTrue(elapsedMs < 1_000, "tail must cap at 2 × 50 ms, not wait 5 s; took $elapsedMs ms")
     }
 
     /**

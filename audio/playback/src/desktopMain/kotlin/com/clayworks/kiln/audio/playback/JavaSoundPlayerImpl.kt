@@ -2,12 +2,12 @@
 // the JNA libFLAC Decoder pipeline.
 //
 // Concurrency model (#28 — command/actor): ONE long-lived actor coroutine on
-// [audioDispatcher] is the SOLE owner/mutator of the SourceDataLine + DecodedStream +
+// [audioDispatcher] is the SOLE owner/mutator of the output line (PcmOutputLine) + DecodedStream +
 // queue index + the five StateFlows. Every control op is a non-suspending
 // `commands.trySend(PlayerCommand.X)` to an UNLIMITED channel — so control ops can never
 // be starved by, or race, the playback loop. Decode runs on its own [decodeDispatcher]
 // (frames arrive via produceIn), so the actor thread is never blocked by libFLAC decode —
-// only by the bounded SourceDataLine.write. The actor `select`s frame-vs-command,
+// only by the bounded output line (PcmOutputLine).write. The actor `select`s frame-vs-command,
 // command-biased (it drains queued commands before consuming a frame), so a skip/track-
 // change is serviced within ~one write even mid-playback.
 //
@@ -15,9 +15,9 @@
 // withContext(audioDispatcher) and queued behind the blocking decode+write loop (they only
 // ran once the track hit EOF). See docs/superpowers/specs/2026-06-25-issue-28-*.
 //
-// The ONLY cross-thread touch of the line is a best-effort thread-safe `line.stop()` in
-// pause/stop/skip/release (the "write-interrupt seam") — it unblocks a stuck write() so the
-// actor can make progress; the actor remains the authority on all subsequent line state.
+// The ONLY cross-thread touch of the line is `PcmOutputLine.interrupt()` in pause/stop/skip/
+// release (the write-interrupt seam). It unblocks a stuck write() so the actor can make
+// progress; the actor remains the authority on all subsequent line state.
 
 package com.clayworks.kiln.audio.playback
 
@@ -28,16 +28,14 @@ import com.clayworks.kiln.audio.dsp.AudioProcessor
 import com.clayworks.kiln.audio.dsp.replaygain.ReplayGainPipelineMode
 import com.clayworks.kiln.audio.dsp.replaygain.ReplayGainProcessor
 import com.clayworks.kiln.audio.dsp.replaygain.resolveGainLinear
+import com.clayworks.kiln.audio.playback.output.JavaSoundOutputLine
+import com.clayworks.kiln.audio.playback.output.PcmOutputLine
+import com.clayworks.kiln.audio.playback.output.PcmOutputLineFactory
 import com.clayworks.kiln.library.settings.ReplayGainMode
 import com.clayworks.kiln.library.settings.SettingsRepository
 import com.clayworks.kiln.library.source.MediaItem
 import com.clayworks.kiln.library.source.MusicSource
 import com.clayworks.kiln.library.source.Playable
-import javax.sound.sampled.AudioFormat
-import javax.sound.sampled.AudioSystem
-import javax.sound.sampled.DataLine
-import javax.sound.sampled.FloatControl
-import javax.sound.sampled.SourceDataLine
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -62,11 +60,6 @@ import kotlinx.coroutines.withContext
 private val log = Logger.withTag("JavaSoundPlayer")
 
 private const val POSITION_TICK_MS = 250L
-private const val BUFFER_MS = 100  // SourceDataLine internal buffer size (latency budget)
-
-private val realLineFactory: (AudioFormat) -> SourceDataLine = { format ->
-    AudioSystem.getLine(DataLine.Info(SourceDataLine::class.java, format)) as SourceDataLine
-}
 
 /**
  * Construct the Desktop [PlatformPlayer]. Keeps [JavaSoundPlayerImpl] internal — consumers
@@ -91,7 +84,7 @@ internal class JavaSoundPlayerImpl(
     private val source: MusicSource,
     private val settings: SettingsRepository,
     private val rgProcessor: ReplayGainProcessor,
-    private val lineFactory: (AudioFormat) -> SourceDataLine = realLineFactory,
+    private val lineFactory: PcmOutputLineFactory = PcmOutputLineFactory { JavaSoundOutputLine.open(it) },
 ) : PlatformPlayer {
 
     private enum class Mode { IDLE, PLAYING, PAUSED }
@@ -119,7 +112,7 @@ internal class JavaSoundPlayerImpl(
     // ----- actor-owned state — mutated ONLY on the actor (audioDispatcher). -----
     // `line` + `released` are @Volatile because the write-interrupt seam (pause/stop/skip/
     // release) and awaitDrained() read them from other threads.
-    @Volatile private var line: SourceDataLine? = null
+    @Volatile private var line: PcmOutputLine? = null
     @Volatile private var released: Boolean = false
     private var currentStream: DecodedStream? = null
     private var currentPlayable: Playable? = null
@@ -149,14 +142,11 @@ internal class JavaSoundPlayerImpl(
         }
     }
 
-    // Write-interrupt seam for track-changing / teardown ops: stop AND flush the line from the
-    // caller thread. stop() alone unblocks a write but leaves buffered audio, so an in-flight
-    // drain() (advanceOnEof) could still block — flush() discards the buffer and unblocks it too
-    // (gemini round 4). Discarding the buffer is correct here (we're switching tracks / tearing
-    // down). pause() deliberately does NOT flush (it must keep the buffer to resume gaplessly).
+    // Write-interrupt seam for track-changing / teardown ops: `interrupt(discard = true)` makes a
+    // blocked write return and lets the line drop buffered audio. `pause()` uses `discard = false`
+    // to keep the buffer for a gapless resume.
     private fun interruptAndFlushLine() {
-        runCatching { line?.stop() }
-        runCatching { line?.flush() }
+        runCatching { line?.interrupt(discard = true) }
     }
 
     // ---------- PlatformPlayer: every op posts a command (non-blocking) ----------
@@ -165,7 +155,7 @@ internal class JavaSoundPlayerImpl(
         commands.trySend(PlayerCommand.LoadQueue(items, startIndex, autoPlay))
     }
     override suspend fun play() { commands.trySend(PlayerCommand.Play) }
-    override suspend fun pause() { runCatching { line?.stop() }; commands.trySend(PlayerCommand.Pause) }
+    override suspend fun pause() { runCatching { line?.interrupt(discard = false) }; commands.trySend(PlayerCommand.Pause) }
     override suspend fun stop() { interruptAndFlushLine(); commands.trySend(PlayerCommand.Stop) }
     override suspend fun seekTo(positionMs: Long) { commands.trySend(PlayerCommand.SeekTo(positionMs)) }
     override suspend fun skipToNext() { interruptAndFlushLine(); commands.trySend(PlayerCommand.SkipToNext) }
@@ -179,8 +169,8 @@ internal class JavaSoundPlayerImpl(
     override fun removeAudioProcessor(processor: AudioProcessor) { commands.trySend(PlayerCommand.RemoveProcessor(processor)) }
     override suspend fun release() {
         if (releaseRequested.compareAndSet(false, true)) {
-            // stop AND flush (not just stop): unblock an in-flight drain()/write() so the actor can
-            // reach the Release command and tear down instead of hanging (gemini round 4).
+            // Interrupt WITH discard (not the pause variant): unblock an in-flight write() so the actor
+            // can reach the Release command and tear down instead of hanging (gemini round 4).
             interruptAndFlushLine()
             commands.trySend(PlayerCommand.Release)
         }
@@ -303,7 +293,7 @@ internal class JavaSoundPlayerImpl(
     private suspend fun handleSkip(targetIndex: Int?) {
         if (targetIndex == null) {
             // No target (Next on last track / Prev on first / invalid skipTo): the public skip method
-            // already fired the write-interrupt line.stop() seam, so resume the current track instead
+            // already fired the write-interrupt seam (line.interrupt), so resume the current track instead
             // of leaving it stopped-but-Ready(playing) with frames written silently (codex round 3).
             if (mode == Mode.PLAYING) runCatching { line?.start() }
             return
@@ -371,15 +361,14 @@ internal class JavaSoundPlayerImpl(
         // launch racing a newer transition — retires the bug_003 class).
         applyRgGain(playable, settings.replayGainMode.first(), settings.replayGainPreAmpDb.first())
 
-        val format = audioFormatOf(stream)
         val sourceLine = try {
-            lineFactory(format).also { it.open(format, bufferBytesOf(stream)) }
+            lineFactory.open(stream.format)
         } catch (e: Exception) {
             withContext(decodeDispatcher) { runCatching { stream.close() } }
             currentStream = null
             currentPlayable = null
             mode = Mode.IDLE
-            log.e(e) { "Could not open SourceDataLine for $format" }
+            log.e(e) { "Could not open output line for ${stream.format}" }
             _state.value = PlayerState.Error(PlayerError.DeviceUnavailable(e.message ?: "audio line open failed"))
             return
         }
@@ -398,7 +387,7 @@ internal class JavaSoundPlayerImpl(
             } catch (e: Exception) {
                 teardownActivePlayback()
                 mode = Mode.IDLE
-                log.e(e) { "SourceDataLine.start() failed for $format" }
+                log.e(e) { "Output line start() failed for ${stream.format}" }
                 _state.value = PlayerState.Error(PlayerError.DeviceUnavailable(e.message ?: "audio line start failed"))
                 return
             }
@@ -455,20 +444,18 @@ internal class JavaSoundPlayerImpl(
 
     private suspend fun advanceOnEof() {
         val next = nextIndexOrNull(_queue.value)
-        // Play out the line's buffered tail (<=BUFFER_MS) so the track end isn't clipped — but via a
-        // BOUNDED park, NEVER line.drain(). drain() blocks until the buffer empties, which never happens
-        // if a concurrent pause() stop()s the line in the gap between an isRunning check and the drain
-        // (pause stops without flushing); since control ops now only enqueue commands, the actor would
-        // wedge with no way to recover (codex round 6 — the round-3 isRunning guard wasn't enough, the
-        // stop can land after the check). A bounded park can't wedge; a concurrent pause just ends the
-        // tail early, which is fine at EOF.
+        // Play out the line's buffered tail (the line's queued audio) so the track end isn't clipped
+        // — but via a BOUNDED park, NEVER line.drain(). drain() blocks until the buffer empties, which
+        // never happens if a concurrent pause() stop()s the line in the gap between an isRunning check
+        // and the drain (pause stops without flushing); since control ops now only enqueue commands, the
+        // actor would wedge with no way to recover (codex round 6 — the round-3 isRunning guard wasn't
+        // enough, the stop can land after the check). A bounded park can't wedge; a concurrent pause
+        // just ends the tail early, which is fine at EOF.
         val l = line
-        val fmt = currentStream?.format
-        if (l != null && fmt != null && l.isRunning) {
-            val queuedBytes = (l.bufferSize - l.available()).coerceAtLeast(0)
-            val bytesPerSec = (fmt.sampleRateHz * fmt.channels * (fmt.bitDepth / 8)).coerceAtLeast(1)
-            val tailNanos = (queuedBytes.toLong() * 1_000_000_000L / bytesPerSec)
-                .coerceAtMost(BUFFER_MS.toLong() * 2 * 1_000_000L)
+        if (l != null && l.isRunning) {
+            // Durations come from the line (it owns output byte-rate math, #37). Capped at twice
+            // the line buffer, so a pause landing mid-tail can only end the tail early.
+            val tailNanos = l.queuedNanos().coerceAtMost(2 * l.bufferNanos)
             if (tailNanos > 0L) java.util.concurrent.locks.LockSupport.parkNanos(tailNanos)
         }
         teardownActivePlayback()
@@ -504,7 +491,7 @@ internal class JavaSoundPlayerImpl(
                 // + surface Error rather than writing subsequent frames to a non-running line.
                 teardownActivePlayback()
                 mode = Mode.IDLE
-                log.e(e) { "SourceDataLine.start() failed on resume" }
+                log.e(e) { "Output line start() failed on resume" }
                 _state.value = PlayerState.Error(PlayerError.DeviceUnavailable(e.message ?: "audio line resume failed"))
                 return
             }
@@ -539,7 +526,7 @@ internal class JavaSoundPlayerImpl(
         }
         currentStream = null
         currentPlayable = null
-        line?.let { l -> runCatching { l.stop() }; runCatching { l.close() } }
+        line?.let { l -> runCatching { l.close() } }
         line = null
     }
 
@@ -547,14 +534,8 @@ internal class JavaSoundPlayerImpl(
 
     private fun applyGain() {
         val l = line ?: return
-        if (!l.isControlSupported(FloatControl.Type.MASTER_GAIN)) return
-        val ctl = l.getControl(FloatControl.Type.MASTER_GAIN) as FloatControl
         val v = _volume.value
-        val effectiveLinear = if (v.muted) 0f else v.linear
-        // Convert linear 0..1 to dB attenuation. 0 → most-negative (silence); 1 → 0 dB (unity).
-        // Clamp to the control's reported range.
-        val targetDb = if (effectiveLinear <= 0f) ctl.minimum else 20.0f * kotlin.math.log10(effectiveLinear)
-        ctl.value = targetDb.coerceIn(ctl.minimum, ctl.maximum)
+        l.setVolume(if (v.muted) 0f else v.linear)
     }
 
     private fun applyRgGain(playable: Playable, mode: ReplayGainMode, preAmpDb: Double) {
@@ -596,18 +577,5 @@ internal class JavaSoundPlayerImpl(
         is DecoderError.IoError -> PlayerError.IoError(decoderError.cause)
         is DecoderError.NativeBindingFailed -> PlayerError.DecodeFailed(IllegalStateException(decoderError.message))
         is DecoderError.Internal -> PlayerError.Internal(decoderError.message)
-    }
-
-    private fun audioFormatOf(stream: DecodedStream): AudioFormat = AudioFormat(
-        stream.format.sampleRateHz.toFloat(),
-        stream.format.bitDepth,
-        stream.format.channels,
-        /* signed = */ true,
-        /* bigEndian = */ false,
-    )
-
-    private fun bufferBytesOf(stream: DecodedStream): Int {
-        val bytesPerSecond = stream.format.sampleRateHz * stream.format.channels * (stream.format.bitDepth / 8)
-        return (bytesPerSecond * BUFFER_MS / 1000).coerceAtLeast(4096)
     }
 }
