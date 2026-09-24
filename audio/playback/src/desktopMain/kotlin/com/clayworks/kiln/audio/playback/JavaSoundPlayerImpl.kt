@@ -417,7 +417,12 @@ internal class JavaSoundPlayerImpl(
         val ps = CoroutineScope(decodeDispatcher + SupervisorJob())
         producerScope = ps
         frameChan = stream.frames.produceIn(ps)
-        applyGain()
+        // Re-apply the player volume only when it's non-default (final review I1). Under WASAPI the
+        // line volume is Kiln's per-app session volume (its Volume Mixer slider, which Windows keeps),
+        // so applying the default on every open would undo the user's mixer level. A fresh Java Sound
+        // line already starts at unity, so skipping the default changes nothing there.
+        val v = _volume.value
+        if (v.linear != 1.0f || v.muted) applyGain()
         if (autoPlay) {
             // A failed start() (output device vanished, line refuses to start) must NOT be swallowed
             // into Ready(isPlaying=true) on a dead line (codex round 4) — tear down + surface Error.

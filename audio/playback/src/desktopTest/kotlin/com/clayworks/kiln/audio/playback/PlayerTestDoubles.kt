@@ -82,6 +82,8 @@ internal class FakeOutputLine(
         private set
     @Volatile var lastVolume: Float? = null
         private set
+    /** Every successful setVolume() call, in order (I1: pins when the actor touches the volume). */
+    val volumeCalls = java.util.concurrent.CopyOnWriteArrayList<Float>()
     @Volatile var writeFailure: Exception? = null
     @Volatile var startFailure: Exception? = null
     @Volatile var queuedFailure: Exception? = null
@@ -110,6 +112,7 @@ internal class FakeOutputLine(
     override fun setVolume(linear: Float) {
         volumeFailure?.let { throw it }
         lastVolume = linear
+        volumeCalls += linear
     }
     override fun route(): OutputRoute = OutputRoute(
         engine = OutputEngine.WasapiShared,

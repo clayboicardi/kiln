@@ -348,6 +348,50 @@ class JavaSoundPlayerActorTest {
         assertEquals(0.5f, player.volume.value.linear)
     }
 
+    // ----- final review I1: an open must not reset the Windows session volume -----
+    // (Under WASAPI setVolume is the per-app session volume, the "Kiln" slider in the Volume Mixer.
+    // Applying the default 1.0 on every open undid the user's mixer level.)
+
+    @Test
+    fun `an open at default volume never touches the line volume`() = runBlocking {
+        val line = FakeOutputLine()
+        val player = newPlayer(listOf("a"), mapOf("a" to FakeDecodedStream(fmt)), line)
+        player.loadQueue(listOf(item("a")), startIndex = 0, autoPlay = true)
+        withTimeout(5_000) { player.awaitDrained() }
+        assertEquals(PlayerState.Ready(isPlaying = true), player.state.value)
+        assertEquals(emptyList(), line.volumeCalls, "a default-volume open must leave the session volume alone")
+    }
+
+    @Test
+    fun `a non-default volume is re-applied when the next track opens`() = runBlocking {
+        val line = FakeOutputLine()
+        val player = newPlayer(listOf("a", "b"), mapOf("a" to FakeDecodedStream(fmt), "b" to FakeDecodedStream(fmt)), line)
+        player.loadQueue(listOf(item("a"), item("b")), startIndex = 0, autoPlay = true)
+        withTimeout(5_000) { player.awaitDrained() }
+        player.setVolume(0.5f)
+        withTimeout(5_000) { player.awaitDrained() }
+        assertEquals(listOf(0.5f), line.volumeCalls, "SetVolume applies at once")
+        player.skipToNext()
+        withTimeout(5_000) { player.awaitDrained() }
+        assertEquals(1, player.queue.value.currentIndex)
+        assertEquals(listOf(0.5f, 0.5f), line.volumeCalls, "the next track's open re-applies 0.5")
+    }
+
+    @Test
+    fun `muted state is re-applied when the next track opens`() = runBlocking {
+        val line = FakeOutputLine()
+        val player = newPlayer(listOf("a", "b"), mapOf("a" to FakeDecodedStream(fmt), "b" to FakeDecodedStream(fmt)), line)
+        player.loadQueue(listOf(item("a"), item("b")), startIndex = 0, autoPlay = true)
+        withTimeout(5_000) { player.awaitDrained() }
+        player.setMuted(true) // volume stays 1.0, so only the mute flag makes the state non-default
+        withTimeout(5_000) { player.awaitDrained() }
+        assertEquals(listOf(0f), line.volumeCalls, "SetMuted applies at once")
+        player.skipToNext()
+        withTimeout(5_000) { player.awaitDrained() }
+        assertEquals(1, player.queue.value.currentIndex)
+        assertEquals(listOf(0f, 0f), line.volumeCalls, "the next track's open re-applies the mute")
+    }
+
     // ----- controller ruling R19: a failed seek-time flush surfaces instead of being swallowed -----
     // (On WASAPI a failed flush can leave the line stopped with a full buffer, so the next write
     // would block until an interrupt and playback would silently halt.)
