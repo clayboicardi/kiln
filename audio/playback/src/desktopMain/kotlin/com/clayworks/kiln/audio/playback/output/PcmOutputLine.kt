@@ -21,6 +21,10 @@ internal interface PcmOutputLine : AutoCloseable {
     /** Device-side buffer duration. The actor caps the EOF tail at twice this. */
     val bufferNanos: Long
 
+    /**
+     * Must not throw: pure data computed at open (no device calls). The actor reads it outside
+     * its error guards.
+     */
     val isRunning: Boolean
 
     fun start()
@@ -40,7 +44,12 @@ internal interface PcmOutputLine : AutoCloseable {
     /** 0.0..1.0; implementations clamp. */
     fun setVolume(linear: Float)
 
-    /** The negotiated output, for PlaybackDiagnostics. */
+    /**
+     * The negotiated output, for PlaybackDiagnostics.
+     *
+     * Must not throw: pure data computed at open (no device calls). The actor reads it outside
+     * its error guards.
+     */
     fun route(): OutputRoute
 
     /**

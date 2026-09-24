@@ -1,7 +1,10 @@
 // On-device probe (#37): which PCM layouts shared-mode IAudioClient.Initialize accepts with
-// AUTOCONVERTPCM. Skips when there's no Windows audio endpoint (CI). The matrix is printed to the
-// test's stdout (build/test-results/.../TEST-*WasapiFormatProbeTest.xml, <system-out>). It also
-// verifies the vtable slots and GUIDs: a wrong slot crashes or returns garbage here, not in prod.
+// AUTOCONVERTPCM. WasapiTestGate skips it when there's no usable Windows render endpoint (CI) and
+// fails it on a binding regression; an endpoint held exclusively by another app also skips. The
+// matrix is printed to the test's stdout (build/test-results/.../TEST-*WasapiFormatProbeTest.xml,
+// <system-out>). Binding coverage: only the enumerator, GetDefaultAudioEndpoint, Activate,
+// Initialize and GetMixFormat (their GUIDs and vtable slots). The negative control proves
+// Initialize's HRESULT distinguishes accept from reject. WasapiDeviceTest covers the rest.
 
 package com.clayworks.kiln.audio.playback.nativeio.wasapi
 
@@ -17,18 +20,27 @@ import kotlin.test.assertTrue
 
 class WasapiFormatProbeTest {
 
-    private fun defaultDevice(): ComPtr? = runCatching {
+    /** The default render endpoint. Call after WasapiTestGate, so a failure here is a real one. */
+    private fun defaultDevice(): ComPtr {
         ComInit.ensure()
         val ppv = PointerByReference()
-        val hr = Ole32.INSTANCE.CoCreateInstance(
-            WasapiIds.CLSID_MMDeviceEnumerator, null, WTypes.CLSCTX_ALL, WasapiIds.IID_IMMDeviceEnumerator, ppv,
-        ).toInt()
-        if (hr < 0) return@runCatching null
+        HResults.check(
+            Ole32.INSTANCE.CoCreateInstance(
+                WasapiIds.CLSID_MMDeviceEnumerator, null, WTypes.CLSCTX_ALL, WasapiIds.IID_IMMDeviceEnumerator, ppv,
+            ).toInt(),
+            "CoCreateInstance(MMDeviceEnumerator)",
+        )
         val enumerator = ComPtr(ppv.value)
-        val hr2 = enumerator.call(Vt.ENUM_GET_DEFAULT_AUDIO_ENDPOINT, WasapiConst.E_RENDER, WasapiConst.E_MULTIMEDIA, ppv)
-        enumerator.Release()
-        if (hr2 < 0) null else ComPtr(ppv.value)
-    }.getOrNull()
+        try {
+            HResults.check(
+                enumerator.call(Vt.ENUM_GET_DEFAULT_AUDIO_ENDPOINT, WasapiConst.E_RENDER, WasapiConst.E_MULTIMEDIA, ppv),
+                "GetDefaultAudioEndpoint",
+            )
+        } finally {
+            enumerator.Release()
+        }
+        return ComPtr(ppv.value)
+    }
 
     private fun activateClient(device: ComPtr): ComPtr {
         val ppv = PointerByReference()
@@ -74,10 +86,8 @@ class WasapiFormatProbeTest {
 
     @Test
     fun `report which layouts shared-mode AUTOCONVERTPCM accepts`() {
-        Assume.assumeTrue("Windows only", System.getProperty("os.name").startsWith("Windows"))
+        WasapiTestGate.requireRenderEndpoint()
         val device = defaultDevice()
-        Assume.assumeTrue("no default audio endpoint", device != null)
-        device!!
         val layouts = listOf(16 to 16, 24 to 24, 32 to 24, 32 to 32) // container to valid bits
         val accepted = mutableMapOf<Pair<Int, Int>, Boolean>()
         var controlHr = HResults.S_OK
@@ -87,6 +97,10 @@ class WasapiFormatProbeTest {
                     for ((container, valid) in layouts) {
                         val hr = tryInitialize(device, WaveFormatExtensible.encode(rate, ch, container, valid))
                         println("PROBE ${rate}Hz ${ch}ch ${container}c/${valid}v -> ${HResults.hex(hr)}")
+                        Assume.assumeFalse(
+                            "endpoint held exclusively by another app (${HResults.hex(hr)})",
+                            hr == HResults.AUDCLNT_E_DEVICE_IN_USE,
+                        )
                         accepted[container to valid] = (accepted[container to valid] ?: true) && hr >= 0
                     }
                 }
