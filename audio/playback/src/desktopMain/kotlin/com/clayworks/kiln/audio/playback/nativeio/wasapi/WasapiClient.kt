@@ -8,6 +8,7 @@ package com.clayworks.kiln.audio.playback.nativeio.wasapi
 
 import com.clayworks.kiln.audio.dsp.DecodedAudioFormat
 import com.clayworks.kiln.audio.playback.output.MixFormat
+import com.clayworks.kiln.audio.playback.output.OutputLineException
 import com.clayworks.kiln.audio.playback.output.RenderPort
 import com.sun.jna.Memory
 import com.sun.jna.platform.win32.Ole32
@@ -30,23 +31,44 @@ internal class WasapiClient private constructor(
     private val data = PointerByReference()
     private var closed = false
 
+    // close() releases the interface pointers, so a call after it would be a native use-after-free
+    // (a JVM crash). Every COM-calling member checks first and throws a catchable exception instead.
+    private fun ensureOpen() {
+        if (closed) throw OutputLineException.DeviceProblem("audio client already closed")
+    }
+
     override fun paddingFrames(): Int {
+        ensureOpen()
         HResults.check(audioClient.call(Vt.AC_GET_CURRENT_PADDING, padding), "GetCurrentPadding")
         return padding.value
     }
 
     override fun writeFrames(src: ByteArray, off: Int, frames: Int) {
+        ensureOpen()
         HResults.check(renderClient.call(Vt.RC_GET_BUFFER, frames, data), "GetBuffer")
         data.value.write(0, src, off, frames * blockAlign)
         HResults.check(renderClient.call(Vt.RC_RELEASE_BUFFER, frames, 0), "ReleaseBuffer")
     }
 
-    override fun start() = HResults.check(audioClient.call(Vt.AC_START), "Start")
-    override fun stop() = HResults.check(audioClient.call(Vt.AC_STOP), "Stop")
-    override fun reset() = HResults.check(audioClient.call(Vt.AC_RESET), "Reset")
+    override fun start() {
+        ensureOpen()
+        HResults.check(audioClient.call(Vt.AC_START), "Start")
+    }
 
-    override fun setVolume(level: Float) =
+    override fun stop() {
+        ensureOpen()
+        HResults.check(audioClient.call(Vt.AC_STOP), "Stop")
+    }
+
+    override fun reset() {
+        ensureOpen()
+        HResults.check(audioClient.call(Vt.AC_RESET), "Reset")
+    }
+
+    override fun setVolume(level: Float) {
+        ensureOpen()
         HResults.check(volume.call(Vt.SAV_SET_MASTER_VOLUME, level, null), "SetMasterVolume")
+    }
 
     override fun close() {
         if (closed) return

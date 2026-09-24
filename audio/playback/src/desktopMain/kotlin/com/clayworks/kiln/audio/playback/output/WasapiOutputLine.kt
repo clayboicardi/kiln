@@ -5,12 +5,14 @@
 // Threading: everything except interrupt() runs on the thread that opened the line (the actor).
 // interrupt() only sets a flag and unparks the writer. It makes no COM calls; the actor follows
 // up with stop()/flush()/close() itself. While interrupted, write() returns at once with the
-// bytes written so far. That matches Java Sound's write-to-a-stopped-line behavior, and
-// start()/flush() re-arm it.
+// bytes written so far, and start()/flush() re-arm it. Unlike Java Sound, which returns at once
+// on ANY stopped line, a stopped-but-not-interrupted line with a full buffer blocks until
+// interrupt() (see PcmOutputLine.write).
 
 package com.clayworks.kiln.audio.playback.output
 
 import com.clayworks.kiln.audio.dsp.DecodedAudioFormat
+import com.clayworks.kiln.audio.dsp.SampleFormat
 import com.clayworks.kiln.audio.playback.OutputEngine
 import com.clayworks.kiln.audio.playback.OutputRoute
 import com.clayworks.kiln.audio.playback.nativeio.wasapi.WasapiClient
@@ -48,9 +50,14 @@ internal class WasapiOutputLine(
 
     override fun flush() {
         interrupted = false
-        // IAudioClient.Reset requires a stopped stream.
+        // IAudioClient.Reset requires a stopped stream. `running` tracks each step, so a failed
+        // reset()/start() leaves the line honestly reporting stopped.
         if (running) {
-            port.stop(); port.reset(); port.start()
+            port.stop()
+            running = false
+            port.reset()
+            port.start()
+            running = true
         } else {
             port.reset()
         }
@@ -102,6 +109,11 @@ internal class WasapiOutputLine(
         private const val FULL_BUFFER_PARK_NANOS = 5_000_000L
 
         fun open(format: DecodedAudioFormat): WasapiOutputLine {
+            // The format below declares integer PCM, so float samples would play as noise. Checked
+            // before any COM call.
+            if (format.sampleFormat == SampleFormat.PCM_F32_LE) {
+                throw OutputLineException.FormatRejected(format, "float PCM sources are not supported by this line")
+            }
             val wfx = WaveFormatExtensible.encode(
                 sampleRateHz = format.sampleRateHz,
                 channels = format.channels,

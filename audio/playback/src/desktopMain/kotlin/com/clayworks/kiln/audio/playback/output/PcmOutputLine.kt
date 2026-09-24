@@ -35,7 +35,12 @@ internal interface PcmOutputLine : AutoCloseable {
     /** Discard buffered audio. Keeps the running/stopped state. Actor thread only. */
     fun flush()
 
-    /** Write whole frames of [sourceFormat] PCM. Blocks until written or interrupted; returns bytes written. */
+    /**
+     * Write whole frames of [sourceFormat] PCM. Blocks until written or interrupted; returns bytes written.
+     *
+     * On a stopped line whose buffer is full, write() blocks until interrupt(); callers must only
+     * write while running.
+     */
     fun write(bytes: ByteArray, off: Int, len: Int): Int
 
     /** Duration of audio written but not yet played. */

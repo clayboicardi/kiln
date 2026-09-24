@@ -166,15 +166,10 @@ class WasapiDeviceTest {
             HResults.check(client.call(Vt.AC_GET_SERVICE, WasapiIds.IID_ISimpleAudioVolume, ppv), "GetService(volume)")
             val volume = ComPtr(ppv.value).also(acquired::add)
             val level = FloatByReference()
-            HResults.check(volume.call(SAV_GET_MASTER_VOLUME, level), "GetMasterVolume")
+            HResults.check(volume.call(Vt.SAV_GET_MASTER_VOLUME, level), "GetMasterVolume")
             return level.value
         } finally {
             acquired.asReversed().forEach { it.Release() }
         }
-    }
-
-    private companion object {
-        /** ISimpleAudioVolume (audioclient.h): SetMasterVolume=3, GetMasterVolume=4. Test-only, so not in Vt. */
-        const val SAV_GET_MASTER_VOLUME = 4
     }
 }

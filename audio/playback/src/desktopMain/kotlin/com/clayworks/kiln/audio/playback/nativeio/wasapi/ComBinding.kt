@@ -48,8 +48,9 @@ internal object Vt {
     // IAudioRenderClient (audioclient.h): GetBuffer=3, ReleaseBuffer=4
     const val RC_GET_BUFFER = 3
     const val RC_RELEASE_BUFFER = 4
-    // ISimpleAudioVolume (audioclient.h): SetMasterVolume=3
+    // ISimpleAudioVolume (audioclient.h): SetMasterVolume=3, GetMasterVolume=4
     const val SAV_SET_MASTER_VOLUME = 3
+    const val SAV_GET_MASTER_VOLUME = 4
 }
 
 internal object WasapiConst {

@@ -26,6 +26,7 @@ class WasapiOutputLineTest {
     ) : RenderPort {
         @Volatile var padding = 0
         @Volatile var closed = false
+        @Volatile var failReset = false
         val calls = CopyOnWriteArrayList<String>()
         val framesWritten = AtomicInteger()
         private fun live() = check(!closed) { "port closed" }
@@ -33,7 +34,7 @@ class WasapiOutputLineTest {
         override fun writeFrames(src: ByteArray, off: Int, frames: Int) { live(); framesWritten.addAndGet(frames); padding += frames }
         override fun start() { live(); calls += "start" }
         override fun stop() { live(); calls += "stop" }
-        override fun reset() { live(); calls += "reset"; padding = 0 }
+        override fun reset() { live(); if (failReset) error("reset failed"); calls += "reset"; padding = 0 }
         override fun setVolume(level: Float) { live(); calls += "volume:$level" }
         override fun close() { calls += "close"; closed = true }
     }
@@ -88,6 +89,16 @@ class WasapiOutputLineTest {
     }
 
     @Test
+    fun `flush after an interrupt re-arms writes`() {
+        val port = FakePort()
+        val line = WasapiOutputLine(port, fmt)
+        line.interrupt(discard = true)
+        assertEquals(0, line.write(ByteArray(40), 0, 40))
+        line.flush()
+        assertEquals(40, line.write(ByteArray(40), 0, 40))
+    }
+
+    @Test
     fun `start is idempotent while running`() {
         val port = FakePort()
         val line = WasapiOutputLine(port, fmt)
@@ -104,6 +115,25 @@ class WasapiOutputLineTest {
         line.flush()
         assertEquals(listOf("start", "stop", "reset", "start"), port.calls)
         assertTrue(line.isRunning)
+    }
+
+    @Test
+    fun `a running flush whose reset fails leaves the line reporting stopped`() {
+        val port = FakePort().apply { failReset = true }
+        val line = WasapiOutputLine(port, fmt)
+        line.start()
+        assertFailsWith<IllegalStateException> { line.flush() } // the failure propagates
+        assertEquals(listOf("start", "stop"), port.calls)
+        assertFalse(line.isRunning, "the stream was stopped before reset failed")
+        line.start() // so a later start() really restarts the stream
+        assertEquals(listOf("start", "stop", "start"), port.calls)
+    }
+
+    @Test
+    fun `open rejects a float source before any device call`() {
+        val f32 = DecodedAudioFormat(48_000, 32, 2, SampleFormat.PCM_F32_LE)
+        val e = assertFailsWith<OutputLineException.FormatRejected> { WasapiOutputLine.open(f32) }
+        assertEquals(f32, e.format)
     }
 
     @Test
