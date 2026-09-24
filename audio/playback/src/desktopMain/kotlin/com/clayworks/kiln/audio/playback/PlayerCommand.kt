@@ -1,8 +1,9 @@
 // PlayerCommand — the messages the JavaSoundPlayerImpl actor processes. The actor
-// is the SOLE mutator of the SourceDataLine + DecodedStream + queue + state flows,
-// so every control op is posted as one of these (non-suspending trySend) rather than
-// touching that state cross-thread. Retires the withContext(audioDispatcher) control
-// path that the blocking playback loop starved (#28 items 1 + 2).
+// is the SOLE mutator of the output line (PcmOutputLine: WASAPI shared mode, Java Sound
+// fallback) + DecodedStream + queue + state flows, so every control op is posted as one
+// of these (non-suspending trySend) rather than touching that state cross-thread.
+// Retires the withContext(audioDispatcher) control path that the blocking playback loop
+// starved (#28 items 1 + 2).
 
 package com.clayworks.kiln.audio.playback
 

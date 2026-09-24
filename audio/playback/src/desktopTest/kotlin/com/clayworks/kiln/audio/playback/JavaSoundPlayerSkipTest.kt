@@ -95,19 +95,26 @@ class JavaSoundPlayerSkipTest {
         }
     }
 
+    private data class Rig(
+        val player: JavaSoundPlayerImpl,
+        val streams: Map<String, FakeDecodedStream>,
+        val decoder: FakeDecoder,
+    )
+
     /** ids ending in "24" get a 24-bit stream; everything else is 16-bit. */
-    private fun setup(ids: List<String>, deviceFailureOn24: Boolean = false): Pair<JavaSoundPlayerImpl, Map<String, FakeDecodedStream>> {
+    private fun setup(ids: List<String>, deviceFailureOn24: Boolean = false): Rig {
         val streams = ids.associateWith { FakeDecodedStream(if (it.endsWith("24")) f24 else f16) }
+        val decoder = FakeDecoder(streams)
         val player = JavaSoundPlayerImpl(
             audioDispatcher = Dispatchers.Unconfined,
             decodeDispatcher = Dispatchers.Unconfined,
-            decoder = FakeDecoder(streams),
+            decoder = decoder,
             source = ResolvingSource(ids.toSet()),
             settings = StubSettings(),
             rgProcessor = ReplayGainProcessor(),
             lineFactory = factory(FakeOutputLine(), deviceFailureOn24),
         )
-        return player to streams
+        return Rig(player, streams, decoder)
     }
 
     private fun CoroutineScope.collectNotices(player: JavaSoundPlayerImpl): MutableList<PlaybackNotice> {
@@ -245,6 +252,36 @@ class JavaSoundPlayerSkipTest {
         within { player.state.first { it is PlayerState.Error } }
         player.awaitDrained()
         assertTrue(notices.isEmpty(), "no skip when stepping lands on the same track")
+        coroutineContext.cancelChildren()
+    }
+
+    // ----- controller ruling R13: skip-ahead stops when stepping returns to its start index -----
+
+    @Test
+    fun `a two-track RepeatAll queue of failures never retries the first failure`() = runBlocking {
+        // Both tracks are rejected. Picking y24 shows its error (open 1). Next wraps to x24 and
+        // starts skip-ahead there: x24 fails (open 2, Skipped), y24 fails (open 3), and the next
+        // step would return to x24, the start index, so it stops on y24's error. Before R13 it
+        // reopened x24 (open 4) and only stopped at the attempts cap.
+        val ids = listOf("x24", "y24")
+        val (player, _, decoder) = setup(ids)
+        val notices = collectNotices(player)
+        player.setRepeatMode(RepeatMode.All)
+        player.loadQueue(ids.map(::item), startIndex = 1, autoPlay = true)
+        player.awaitDrained()
+        assertIs<PlayerError.OutputFormatUnsupported>((player.state.value as PlayerState.Error).cause)
+        assertEquals(1, decoder.openCount)
+        player.skipToNext()
+        player.awaitDrained()
+        assertEquals(3, decoder.openCount, "skip-ahead opens x24 then y24 once each; x24 is not retried")
+        assertEquals(1, player.queue.value.currentIndex, "stops ON y24")
+        // y24's second open fails as a consumed stream in FakeDecoder (IoError), not as a format
+        // rejection; either way it's a per-track failure, and playback stops on it.
+        assertIs<PlayerState.Error>(player.state.value)
+        // openCount above is the deterministic check; notices can reach the collector late.
+        notices.awaitCount(1)
+        val rejected = PlayerError.OutputFormatUnsupported(44_100, 24, 2, "24-bit rejected")
+        assertEquals(listOf<PlaybackNotice>(PlaybackNotice.Skipped("Track x24", rejected)), notices.toList())
         coroutineContext.cancelChildren()
     }
 

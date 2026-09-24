@@ -19,6 +19,7 @@ package com.clayworks.kiln.desktop.di
 import org.junit.Test
 import java.nio.file.Files
 import kotlin.test.assertNotNull
+import kotlin.test.assertSame
 
 class DesktopAppGraphTest {
 
@@ -32,6 +33,8 @@ class DesktopAppGraphTest {
             assertNotNull(graph.musicSource)
             assertNotNull(graph.scanner)
             assertNotNull(graph.player)
+            // #37: one DesktopPlayer bound to both types, never two players (two actors).
+            assertSame<Any>(graph.player, graph.playbackDiagnostics)
         } finally {
             tempDir.toFile().deleteRecursively()
         }

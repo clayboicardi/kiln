@@ -348,6 +348,31 @@ class JavaSoundPlayerActorTest {
         assertEquals(0.5f, player.volume.value.linear)
     }
 
+    // ----- controller ruling R19: a failed seek-time flush surfaces instead of being swallowed -----
+    // (On WASAPI a failed flush can leave the line stopped with a full buffer, so the next write
+    // would block until an interrupt and playback would silently halt.)
+
+    @Test
+    fun `a flush failure on seek surfaces as DeviceUnavailable without skipping`() = runBlocking {
+        val line = FakeOutputLine()
+        val player = newPlayer(listOf("a", "b"), mapOf("a" to FakeDecodedStream(fmt), "b" to FakeDecodedStream(fmt)), line)
+        player.loadQueue(listOf(item("a"), item("b")), startIndex = 0, autoPlay = true)
+        withTimeout(5_000) { player.awaitDrained() }
+        assertEquals(PlayerState.Ready(isPlaying = true), player.state.value)
+        line.flushFailure = OutputLineException.DeviceProblem("device invalidated")
+        player.seekTo(10_000)
+        withTimeout(5_000) { player.awaitDrained() }
+        assertEquals(PlayerState.Error(PlayerError.DeviceUnavailable("device invalidated")), player.state.value)
+        assertEquals(0, player.queue.value.currentIndex, "a seek-time device failure must not skip")
+        assertEquals(1, line.closedCount, "the dead line is torn down")
+        // The actor is still alive: a later command is serviced.
+        line.flushFailure = null
+        player.skipToNext()
+        withTimeout(5_000) { player.awaitDrained() }
+        assertEquals(1, player.queue.value.currentIndex)
+        assertEquals(PlayerState.Ready(isPlaying = true), player.state.value)
+    }
+
     /**
      * Wait for the observable outcome of a STREAM event (EOF / decode error). awaitDrained() is a
      * command Barrier and only orders against other commands. The actor is command-biased, so a

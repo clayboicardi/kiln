@@ -1,23 +1,24 @@
-// JavaSoundPlayerImpl — Desktop PlatformPlayer backed by javax.sound.sampled +
-// the JNA libFLAC Decoder pipeline.
+// JavaSoundPlayerImpl — Desktop PlatformPlayer: WASAPI shared-mode output (Java Sound fallback)
+// + the JNA libFLAC Decoder pipeline. (The class name predates #37; the output engine is chosen
+// by DesktopOutputLineFactory behind the PcmOutputLine seam.)
 //
 // Concurrency model (#28 — command/actor): ONE long-lived actor coroutine on
 // [audioDispatcher] is the SOLE owner/mutator of the output line (PcmOutputLine) + DecodedStream +
-// queue index + the five StateFlows. Every control op is a non-suspending
-// `commands.trySend(PlayerCommand.X)` to an UNLIMITED channel — so control ops can never
-// be starved by, or race, the playback loop. Decode runs on its own [decodeDispatcher]
-// (frames arrive via produceIn), so the actor thread is never blocked by libFLAC decode —
-// only by the bounded output line (PcmOutputLine).write. The actor `select`s frame-vs-command,
-// command-biased (it drains queued commands before consuming a frame), so a skip/track-
-// change is serviced within ~one write even mid-playback.
+// queue index + the five PlatformPlayer StateFlows plus `outputRoute`, and the `notices`
+// SharedFlow. Every control op is a non-suspending `commands.trySend(PlayerCommand.X)` to an
+// UNLIMITED channel — so control ops can never be starved by, or race, the playback loop.
+// Decode runs on its own [decodeDispatcher] (frames arrive via produceIn), so the actor thread
+// is never blocked by libFLAC decode — only by the bounded PcmOutputLine.write. The actor
+// `select`s frame-vs-command, command-biased (it drains queued commands before consuming a
+// frame), so a skip/track-change is serviced within ~one write even mid-playback.
 //
 // This retired the prior design where loadQueue/skip*/stop/seekTo used
 // withContext(audioDispatcher) and queued behind the blocking decode+write loop (they only
 // ran once the track hit EOF). See docs/superpowers/specs/2026-06-25-issue-28-*.
 //
-// The ONLY cross-thread touch of the line is `PcmOutputLine.interrupt()` in pause/stop/skip/
-// release (the write-interrupt seam). It unblocks a stuck write() so the actor can make
-// progress; the actor remains the authority on all subsequent line state.
+// The ONLY cross-thread touch of the line is `PcmOutputLine.interrupt()` in loadQueue/pause/
+// stop/skip/release (the write-interrupt seam). It unblocks a stuck write() so the actor can
+// make progress; the actor remains the authority on all subsequent line state.
 
 package com.clayworks.kiln.audio.playback
 
@@ -28,7 +29,7 @@ import com.clayworks.kiln.audio.dsp.AudioProcessor
 import com.clayworks.kiln.audio.dsp.replaygain.ReplayGainPipelineMode
 import com.clayworks.kiln.audio.dsp.replaygain.ReplayGainProcessor
 import com.clayworks.kiln.audio.dsp.replaygain.resolveGainLinear
-import com.clayworks.kiln.audio.playback.output.JavaSoundOutputLine
+import com.clayworks.kiln.audio.playback.output.DesktopOutputLineFactory
 import com.clayworks.kiln.audio.playback.output.OutputLineException
 import com.clayworks.kiln.audio.playback.output.PcmOutputLine
 import com.clayworks.kiln.audio.playback.output.PcmOutputLineFactory
@@ -69,9 +70,10 @@ private const val POSITION_TICK_MS = 250L
 internal const val MAX_CONSECUTIVE_FAILURES = 3
 
 /**
- * Construct the Desktop [PlatformPlayer]. Keeps [JavaSoundPlayerImpl] internal — consumers
- * receive only the [PlatformPlayer] interface. Caller supplies the single-thread
- * [audioDispatcher] (MAX_PRIORITY recommended) for the actor + line writes, a single-thread
+ * Construct the desktop player. Keeps [JavaSoundPlayerImpl] internal — consumers receive only
+ * the [DesktopPlayer] interface ([PlatformPlayer] + [PlaybackDiagnostics]). Caller supplies the
+ * single-thread [audioDispatcher] (MAX_PRIORITY recommended) for the actor + every output-line
+ * call (WASAPI's COM objects stay on the thread that opened them), a single-thread
  * [decodeDispatcher] for libFLAC decode, the [decoder], the [source] for resolving
  * [MediaItem]s, [settings], and the shared [rgProcessor].
  */
@@ -82,7 +84,7 @@ fun createJavaSoundPlayer(
     source: MusicSource,
     settings: SettingsRepository,
     rgProcessor: ReplayGainProcessor,
-): PlatformPlayer = JavaSoundPlayerImpl(audioDispatcher, decodeDispatcher, decoder, source, settings, rgProcessor)
+): DesktopPlayer = JavaSoundPlayerImpl(audioDispatcher, decodeDispatcher, decoder, source, settings, rgProcessor)
 
 internal class JavaSoundPlayerImpl(
     private val audioDispatcher: CoroutineDispatcher,
@@ -91,8 +93,8 @@ internal class JavaSoundPlayerImpl(
     private val source: MusicSource,
     private val settings: SettingsRepository,
     private val rgProcessor: ReplayGainProcessor,
-    private val lineFactory: PcmOutputLineFactory = PcmOutputLineFactory { JavaSoundOutputLine.open(it) },
-) : PlatformPlayer, PlaybackDiagnostics {
+    private val lineFactory: PcmOutputLineFactory = DesktopOutputLineFactory(),
+) : DesktopPlayer {
 
     private enum class Mode { IDLE, PLAYING, PAUSED }
 
@@ -317,8 +319,9 @@ internal class JavaSoundPlayerImpl(
     private suspend fun handleSkip(targetIndex: Int?, direction: Direction?) {
         if (targetIndex == null) {
             // No target (Next on last track / Prev on first / invalid skipTo): the public skip method
-            // already fired the write-interrupt seam (line.interrupt), so resume the current track instead
-            // of leaving it stopped-but-Ready(playing) with frames written silently (codex round 3).
+            // already fired the write-interrupt seam (line.interrupt), so re-arm the current track with
+            // start() instead of leaving the line interrupted while Ready(playing), silently dropping
+            // every frame (codex round 3).
             if (mode == Mode.PLAYING) runCatching { line?.start() }
             return
         }
@@ -349,7 +352,19 @@ internal class JavaSoundPlayerImpl(
             _state.value = PlayerState.Error(PlayerError.DecodeFailed(e))
             return
         }
-        runCatching { line?.flush() }
+        // A failed flush must surface, not be swallowed (R19): on WASAPI it can leave the line
+        // stopped with a full buffer, so the next write would block until an interrupt and playback
+        // would silently halt. Treat it like a failed start(): a device failure, never a skip.
+        try {
+            line?.flush()
+        } catch (e: Exception) {
+            val format = stream.format // captured before teardown nulls currentStream
+            teardownActivePlayback()
+            mode = Mode.IDLE
+            log.e(e) { "Output line flush() failed on seek" }
+            _state.value = PlayerState.Error(outputError(e, format))
+            return
+        }
         val ps = CoroutineScope(decodeDispatcher + SupervisorJob())
         producerScope = ps
         frameChan = stream.frames.produceIn(ps)
@@ -444,10 +459,11 @@ internal class JavaSoundPlayerImpl(
      * Open the item at [startIndex]. On a per-track failure (unsupported format, decode/IO error,
      * unresolvable item), step one item in [direction] and try again, up to
      * MAX_CONSECUTIVE_FAILURES opens in total. Stepping follows queue order and RepeatMode.All
-     * wrap-around but ignores RepeatMode.One, so a broken track is never retried. A device
-     * failure stops at once, since it would fail every track. Only auto-advance and
-     * Next/Previous use this. An explicit pick (LoadQueue / SkipTo) opens exactly that item and
-     * shows its error.
+     * wrap-around but ignores RepeatMode.One, and it stops (on the last failure's error) when the
+     * next step would land on the current or the start index, so a broken track is never retried
+     * (e.g. a two-item RepeatAll queue of failures). A device failure stops at once, since it
+     * would fail every track. Only auto-advance and Next/Previous use this. An explicit pick
+     * (LoadQueue / SkipTo) opens exactly that item and shows its error.
      */
     private suspend fun openWithSkip(startIndex: Int, direction: Direction) {
         var index = startIndex
@@ -463,7 +479,7 @@ internal class JavaSoundPlayerImpl(
                 return
             }
             val next = stepIndex(index, direction)
-            if (next == null || next == index) return
+            if (next == null || next == index || next == startIndex) return
             _notices.tryEmit(PlaybackNotice.Skipped(item.title, result.error))
             index = next
         }
@@ -534,13 +550,14 @@ internal class JavaSoundPlayerImpl(
 
     private suspend fun advanceOnEof() {
         val next = nextIndexOrNull(_queue.value)
-        // Play out the line's buffered tail (the line's queued audio) so the track end isn't clipped
-        // — but via a BOUNDED park, NEVER line.drain(). drain() blocks until the buffer empties, which
-        // never happens if a concurrent pause() stop()s the line in the gap between an isRunning check
-        // and the drain (pause stops without flushing); since control ops now only enqueue commands, the
-        // actor would wedge with no way to recover (codex round 6 — the round-3 isRunning guard wasn't
-        // enough, the stop can land after the check). A bounded park can't wedge; a concurrent pause
-        // just ends the tail early, which is fine at EOF.
+        // Play out the line's buffered tail (its queued audio) so the track end isn't clipped — via a
+        // BOUNDED park, NEVER a drain-until-empty. A drain never returns if a concurrent pause()
+        // interrupts the line with audio still queued (pause keeps the buffer); since control ops only
+        // enqueue commands, the actor would wedge with no way to recover (codex round 6 — an isRunning
+        // guard isn't enough, the pause can land after the check). A bounded park can't wedge, but it
+        // isn't cut short either: a Pause arriving mid-tail is serviced only after the deadline
+        // (≤ 2 × the line buffer). Whether the tail stays audible until then is up to the line's
+        // interrupt(discard = false), which need not touch the device.
         val l = line
         // A line call here can throw (WASAPI GetCurrentPadding on an invalidated device). runActor
         // has no catch, so an escape would kill the actor. Skip the tail instead: a dead device then
@@ -548,7 +565,7 @@ internal class JavaSoundPlayerImpl(
         try {
             if (l != null && l.isRunning) {
                 // Durations come from the line (it owns output byte-rate math, #37). Capped at twice
-                // the line buffer, so a pause landing mid-tail can only end the tail early.
+                // the line buffer, which also bounds how long a Pause landing mid-tail waits.
                 val tailNanos = l.queuedNanos().coerceAtMost(2 * l.bufferNanos)
                 // A loop to a deadline: parkNanos can return early (spurious wakeup, a pending permit,
                 // or Windows timer granularity), and a short park clips the end of the track.

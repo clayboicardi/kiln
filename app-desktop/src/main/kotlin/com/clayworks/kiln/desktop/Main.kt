@@ -87,9 +87,9 @@ fun main() {
     // not Composable-bound. application { } is a Composable-scoped coroutine
     // environment; remember{} inside it ties the graph to the Compose runtime
     // and is not guaranteed identity across recomposition (especially future
-    // multi-window scenarios). The graph holds native resources (JavaSound +
-    // libFLAC); making its lifecycle explicit matches the Android side's
-    // KilnApplication ownership pattern.
+    // multi-window scenarios). The graph holds native resources (the WASAPI /
+    // Java Sound output line + libFLAC); making its lifecycle explicit matches
+    // the Android side's KilnApplication ownership pattern.
     val graph = DesktopAppGraph::class.create(
         userDataDir = UserDataDir(Path.of(System.getProperty("user.home"), ".kiln")),
     )

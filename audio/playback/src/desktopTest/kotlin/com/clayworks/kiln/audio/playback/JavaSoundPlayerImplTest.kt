@@ -1,7 +1,7 @@
 // Smoke test for JavaSoundPlayerImpl. Verifies construction, state-flow defaults,
 // loadQueue start-index mapping, and the non-playback control ops. Does NOT exercise
-// the SourceDataLine output path (that needs the fake-line harness in
-// JavaSoundPlayerActorTest). #28: the player is now a command/actor, so control ops are
+// the output-line path (PcmOutputLine: WASAPI, or the Java Sound fallback; that needs the
+// fake-line harness in JavaSoundPlayerActorTest). #28: the player is now a command/actor, so control ops are
 // async (trySend); tests construct the impl directly (to call the internal awaitDrained
 // test seam) and await the actor before asserting post-mutation state.
 
@@ -77,7 +77,7 @@ class JavaSoundPlayerImplTest {
             }
     }
 
-    // Stub Decoder — open always fails (Left), so no SourceDataLine is opened by these tests.
+    // Stub Decoder — open always fails (Left), so no output line is opened by these tests.
     private class StubDecoder : Decoder {
         override fun supports(codec: AudioCodec): Boolean = false
         override suspend fun open(playable: Playable): Either<DecoderError, DecodedStream> =

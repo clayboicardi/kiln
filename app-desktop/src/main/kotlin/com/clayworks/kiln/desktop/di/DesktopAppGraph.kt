@@ -7,12 +7,14 @@
 // that returns a concrete implementation. Main.kt instantiates the graph
 // once and holds it for the process lifetime.
 //
-// PlatformPlayer is JavaSoundPlayerImpl: javax.sound.sampled SourceDataLine
-// fed by Decoder→DecodedStream→AudioFrame Flow. Decoder is JvmFlacDecoderImpl
-// (JNA bridge to vendored Xiph libFLAC 1.5.0 BSD-3). audioDispatcher is a
-// single-thread MAX_PRIORITY executor — JavaSound's SourceDataLine isn't
-// documented as thread-safe; constraining all line ops to one thread is the
-// safe choice. Per spec §3.4 Concentric Modules.
+// The player is JavaSoundPlayerImpl, a DesktopPlayer bound to both PlatformPlayer
+// and PlaybackDiagnostics: an output line (PcmOutputLine — WASAPI shared mode,
+// with Java Sound as the fallback, #37) fed by Decoder→DecodedStream→AudioFrame
+// Flow. Decoder is JvmFlacDecoderImpl (JNA bridge to vendored Xiph libFLAC 1.5.0
+// BSD-3). audioDispatcher is a single-thread MAX_PRIORITY executor: WASAPI's COM
+// objects must stay on the thread that opened them (and the Java Sound fallback
+// isn't documented as thread-safe), so every line op runs on that one thread.
+// Per spec §3.4 Concentric Modules.
 //
 // Track A change: scan folders are no longer a static value-class constructor
 // param. They flow from SettingsRepository.scanFolders, which the scanner
@@ -25,7 +27,9 @@ import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import com.clayworks.kiln.audio.dsp.replaygain.ReplayGainProcessor
 import com.clayworks.kiln.audio.playback.Decoder
+import com.clayworks.kiln.audio.playback.DesktopPlayer
 import com.clayworks.kiln.audio.playback.PlatformPlayer
+import com.clayworks.kiln.audio.playback.PlaybackDiagnostics
 import com.clayworks.kiln.audio.playback.createJavaSoundPlayer
 import com.clayworks.kiln.audio.playback.createJvmFlacDecoder
 import com.clayworks.kiln.audio.playback.createJvmFlacTrackAnalyzer
@@ -72,6 +76,7 @@ abstract class DesktopAppGraph(
     abstract val scanner: LibraryScanner
     abstract val libraryChanges: LibraryChangeSignal
     abstract val player: PlatformPlayer
+    abstract val playbackDiagnostics: PlaybackDiagnostics
     abstract val settings: SettingsRepository
     abstract val kilnDatabase: KilnDatabase
     abstract val analysisRunner: TrackAnalysisRunner
@@ -191,8 +196,10 @@ abstract class DesktopAppGraph(
 
     /**
      * Single-thread MAX_PRIORITY executor backing the audio output pipeline.
-     * JavaSoundPlayerImpl marshals all SourceDataLine + DecodedStream calls
-     * through this dispatcher. Daemon thread so JVM exit isn't blocked by
+     * The player's actor runs here and makes every output-line call on this
+     * thread (WASAPI's COM objects must stay on the thread that opened them),
+     * except the cross-thread interrupt() seam; libFLAC decode runs on its own
+     * thread (see desktopPlayer). Daemon thread so JVM exit isn't blocked by
      * audio cleanup; MAX_PRIORITY because audio underruns are user-visible
      * (clicks/pops) whereas the OS scheduler is otherwise free to deprioritize
      * us.
@@ -223,13 +230,13 @@ abstract class DesktopAppGraph(
 
     @Singleton
     @Provides
-    protected fun player(
+    protected fun desktopPlayer(
         audioDispatcher: CoroutineDispatcher,
         decoder: Decoder,
         source: MusicSource,
         settings: SettingsRepository,
         rgProcessor: ReplayGainProcessor,
-    ): PlatformPlayer = createJavaSoundPlayer(
+    ): DesktopPlayer = createJavaSoundPlayer(
         audioDispatcher = audioDispatcher,
         // libFLAC decode runs on its own single-thread dispatcher (NOT MAX_PRIORITY — only the
         // audio output thread needs that) so blocking decode never starves the player actor or
@@ -243,6 +250,12 @@ abstract class DesktopAppGraph(
         settings = settings,
         rgProcessor = rgProcessor,
     )
+
+    @Provides
+    protected fun platformPlayer(player: DesktopPlayer): PlatformPlayer = player
+
+    @Provides
+    protected fun playbackDiagnostics(player: DesktopPlayer): PlaybackDiagnostics = player
 
     @Singleton
     @Provides
