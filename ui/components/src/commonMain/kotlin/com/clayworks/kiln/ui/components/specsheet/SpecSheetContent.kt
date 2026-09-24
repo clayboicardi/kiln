@@ -43,6 +43,9 @@ fun SpecSheetContent(
     state: SpecSheetUiState,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
+    // The negotiated output path (#37), shown as Playback > Output only when this sheet is for
+    // the track that's playing. Null hides the section.
+    outputLine: String? = null,
 ) {
     Column(modifier = modifier.fillMaxSize().padding(16.dp)) {
         IconButton(onClick = onBack) {
@@ -55,7 +58,7 @@ fun SpecSheetContent(
         when (state) {
             SpecSheetUiState.Loading -> CenteredMessage("Loading…")
             SpecSheetUiState.NotFound -> CenteredMessage("Track not found")
-            is SpecSheetUiState.Loaded -> LoadedBody(state.entry, state.aggregate)
+            is SpecSheetUiState.Loaded -> LoadedBody(state.entry, state.aggregate, outputLine)
         }
     }
 }
@@ -71,7 +74,7 @@ private fun CenteredMessage(text: String) {
 }
 
 @Composable
-private fun LoadedBody(entry: SpecSheetEntry, aggregate: LibraryAggregate?) {
+private fun LoadedBody(entry: SpecSheetEntry, aggregate: LibraryAggregate?, outputLine: String?) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -98,6 +101,12 @@ private fun LoadedBody(entry: SpecSheetEntry, aggregate: LibraryAggregate?) {
             LabeledRow("Size", formatBytes(entry.fileSizeBytes))
             LabeledRow("Modified", formatMtime(entry.fileMtimeMs, entry.hasKnownMtime))
             LabeledRow("Embedded art", if (entry.hasEmbeddedArt) "yes" else "no")
+        }
+
+        outputLine?.let { line ->
+            SpecSection(title = "Playback") {
+                LabeledRow("Output", line)
+            }
         }
 
         aggregate?.let { AggregateFooter(it) }

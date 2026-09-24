@@ -53,6 +53,7 @@ import com.clayworks.kiln.ui.components.home.KilnHomeScreen
 import com.clayworks.kiln.ui.components.settings.BackfillUiState
 import com.clayworks.kiln.ui.components.settings.ScanUiState
 import com.clayworks.kiln.ui.components.specsheet.LocalLibraryStats
+import com.clayworks.kiln.ui.components.specsheet.LocalPlaybackDiagnostics
 import com.clayworks.kiln.ui.components.specsheet.LocalPlayer
 import com.clayworks.kiln.ui.components.settings.SettingsScreen
 import com.clayworks.kiln.ui.components.settings.SettingsState
@@ -148,6 +149,7 @@ fun main() {
                         CompositionLocalProvider(
                             LocalLibraryStats provides graph.libraryStats,
                             LocalPlayer provides graph.player,
+                            LocalPlaybackDiagnostics provides graph.playbackDiagnostics,
                         ) {
                             KilnHomeScreen(
                                 musicSource = graph.musicSource,

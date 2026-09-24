@@ -15,7 +15,9 @@
 package com.clayworks.kiln.ui.components.specsheet
 
 import androidx.compose.runtime.staticCompositionLocalOf
+import com.clayworks.kiln.audio.playback.NoPlaybackDiagnostics
 import com.clayworks.kiln.audio.playback.PlatformPlayer
+import com.clayworks.kiln.audio.playback.PlaybackDiagnostics
 import com.clayworks.kiln.library.source.LibraryStatsSource
 
 /**
@@ -35,3 +37,9 @@ val LocalLibraryStats = staticCompositionLocalOf<LibraryStatsSource> {
 val LocalPlayer = staticCompositionLocalOf<PlatformPlayer> {
     error("LocalPlayer not provided")
 }
+
+/**
+ * Supplies the output-path side-channel (#37). Defaults to [NoPlaybackDiagnostics] so platforms
+ * with nothing to report (Android today) needn't provide it.
+ */
+val LocalPlaybackDiagnostics = staticCompositionLocalOf<PlaybackDiagnostics> { NoPlaybackDiagnostics }

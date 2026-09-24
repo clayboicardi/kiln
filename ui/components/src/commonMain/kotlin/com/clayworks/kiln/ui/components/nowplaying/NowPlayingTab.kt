@@ -13,9 +13,13 @@ package com.clayworks.kiln.ui.components.nowplaying
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import cafe.adriel.voyager.core.screen.Screen
 import cafe.adriel.voyager.navigator.LocalNavigator
@@ -23,10 +27,20 @@ import cafe.adriel.voyager.navigator.Navigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import cafe.adriel.voyager.navigator.tab.Tab
 import cafe.adriel.voyager.navigator.tab.TabOptions
+import com.clayworks.kiln.audio.playback.PlaybackNotice
 import com.clayworks.kiln.audio.playback.PlayerState
+import com.clayworks.kiln.ui.components.playback.formatOutputRoute
+import com.clayworks.kiln.ui.components.playback.noticeMessage
+import com.clayworks.kiln.ui.components.playback.playerErrorMessage
+import com.clayworks.kiln.ui.components.specsheet.LocalPlaybackDiagnostics
 import com.clayworks.kiln.ui.components.specsheet.LocalPlayer
 import com.clayworks.kiln.ui.components.specsheet.SpecSheetScreen
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+
+/** How long a skip notice stays on Now Playing before it clears itself (#37). */
+private const val NOTICE_VISIBLE_MS = 4_000L
 
 class NowPlayingTab : Tab {
 
@@ -62,6 +76,16 @@ class NowPlayingHomeScreen : Screen {
         val playerState by player.state.collectAsState()
         val queue by player.queue.collectAsState()
         val positionMs by player.positionMs.collectAsState()
+        val diagnostics = LocalPlaybackDiagnostics.current
+        val route by diagnostics.outputRoute.collectAsState()
+        var notice by remember { mutableStateOf<PlaybackNotice?>(null) }
+        LaunchedEffect(diagnostics) {
+            diagnostics.notices.collectLatest { n ->
+                notice = n
+                delay(NOTICE_VISIBLE_MS)
+                notice = null
+            }
+        }
         val coroutineScope = rememberCoroutineScope()
 
         val state = NowPlayingState(
@@ -69,6 +93,9 @@ class NowPlayingHomeScreen : Screen {
             currentItem = queue.currentItem,
             positionMs = positionMs,
             durationMs = queue.currentItem?.durationMs ?: 0L,
+            errorMessage = (playerState as? PlayerState.Error)?.let { playerErrorMessage(it.cause) },
+            notice = notice?.let(::noticeMessage),
+            outputLine = route?.let(::formatOutputRoute),
         )
 
         NowPlayingContent(

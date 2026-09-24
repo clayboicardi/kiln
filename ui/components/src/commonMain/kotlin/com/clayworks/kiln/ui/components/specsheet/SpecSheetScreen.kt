@@ -2,7 +2,8 @@
 // Tab's inner Voyager Navigator when the user taps the now-playing title. Holds
 // ONLY the trackId (serializable — see below); pulls its LibraryStatsSource
 // from the LocalLibraryStats CompositionLocal, collects the per-track entry +
-// library aggregate flows, and renders the stateless SpecSheetContent.
+// library aggregate flows, and renders the stateless SpecSheetContent. Also reads
+// LocalPlayer + LocalPlaybackDiagnostics for the Playback > Output row (#37).
 //
 // Voyager `Screen : Serializable` constraint: the Navigator serializes its
 // back-stack across process death / config change. A Screen holding a
@@ -20,6 +21,7 @@ import cafe.adriel.voyager.core.screen.Screen
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import com.clayworks.kiln.library.source.LibraryAggregate
+import com.clayworks.kiln.ui.components.playback.formatOutputRoute
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.onStart
@@ -64,6 +66,13 @@ class SpecSheetScreen(
         }
         val state by stateFlow.collectAsState(initial = SpecSheetUiState.Loading)
 
-        SpecSheetContent(state = state, onBack = { navigator.pop() })
+        val player = LocalPlayer.current
+        val diagnostics = LocalPlaybackDiagnostics.current
+        val queue by player.queue.collectAsState()
+        val route by diagnostics.outputRoute.collectAsState()
+        // Only when this sheet is for the track actually playing: the route describes playback, not the file.
+        val outputLine = route?.takeIf { queue.currentItem?.itemId?.value == trackId }?.let(::formatOutputRoute)
+
+        SpecSheetContent(state = state, onBack = { navigator.pop() }, outputLine = outputLine)
     }
 }

@@ -78,6 +78,30 @@ class SpecSheetContentTest {
         // Exact NotFound empty-state copy from SpecSheetContent.kt (CenteredMessage).
         composeRule.onNodeWithText("Track not found").assertExists()
     }
+
+    @Test
+    fun loaded_with_output_line_shows_playback_section() {
+        composeRule.setContent {
+            SpecSheetContent(
+                state = SpecSheetUiState.Loaded(entry = hiresFlacEntry(), aggregate = sampleAggregate()),
+                onBack = {},
+                outputLine = "Output · WASAPI shared · 48 kHz 32-bit float mix",
+            )
+        }
+        composeRule.onNodeWithText("Playback").assertExists()
+        composeRule.onNodeWithText("Output · WASAPI shared · 48 kHz 32-bit float mix").assertExists()
+    }
+
+    @Test
+    fun loaded_without_output_line_has_no_playback_section() {
+        composeRule.setContent {
+            SpecSheetContent(
+                state = SpecSheetUiState.Loaded(entry = hiresFlacEntry(), aggregate = sampleAggregate()),
+                onBack = {},
+            )
+        }
+        composeRule.onNodeWithText("Playback").assertDoesNotExist()
+    }
 }
 
 /**

@@ -30,6 +30,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import com.clayworks.kiln.audio.playback.PlayerState
 import com.clayworks.kiln.library.source.MediaItem
@@ -39,6 +40,9 @@ data class NowPlayingState(
     val currentItem: MediaItem?,
     val positionMs: Long,
     val durationMs: Long,
+    val errorMessage: String? = null,
+    val notice: String? = null,
+    val outputLine: String? = null,
 )
 
 @Composable
@@ -88,6 +92,23 @@ fun NowPlayingContent(
                 Text(
                     text = subtitle,
                     style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            state.errorMessage?.let {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(text = it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
+            }
+            state.notice?.let {
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(text = it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            state.outputLine?.let {
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = it,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontFamily = FontFamily.Monospace,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
