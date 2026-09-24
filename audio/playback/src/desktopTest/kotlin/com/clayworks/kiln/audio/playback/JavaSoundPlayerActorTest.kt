@@ -311,6 +311,42 @@ class JavaSoundPlayerActorTest {
         assertEquals(0, player.queue.value.currentIndex, "a dead device must not trigger any advance")
     }
 
+    // ----- controller ruling R9: line calls outside write() that throw must not kill the actor -----
+    // (WASAPI's GetCurrentPadding / SetMasterVolume can throw DeviceProblem. runActor only has
+    // try/finally, so an escape there would silently drop every later command.)
+
+    @Test
+    fun `a queuedNanos failure at EOF skips the tail and still advances`() = runBlocking {
+        val ids = listOf("a", "b", "c")
+        val streams = ids.associateWith { FakeDecodedStream(fmt) }
+        val line = FakeOutputLine()
+        val player = newPlayer(ids, streams, line)
+        player.loadQueue(ids.map { item(it) }, startIndex = 0, autoPlay = true)
+        player.awaitDrained()
+        line.queuedFailure = OutputLineException.DeviceProblem("device invalidated")
+        streams.getValue("a").signalEof()
+        awaitStreamEvent { player.queue.first { it.currentIndex == 1 } }
+        withTimeout(5_000) { player.awaitDrained() }
+        assertEquals(PlayerState.Ready(isPlaying = true), player.state.value)
+        // The actor is still alive: a later command is serviced.
+        player.skipToNext()
+        withTimeout(5_000) { player.awaitDrained() }
+        assertEquals(2, player.queue.value.currentIndex)
+    }
+
+    @Test
+    fun `a setVolume failure neither blocks playback nor wedges the actor`() = runBlocking {
+        val line = FakeOutputLine()
+        line.volumeFailure = OutputLineException.DeviceProblem("device invalidated")
+        val player = newPlayer(listOf("a"), mapOf("a" to FakeDecodedStream(fmt)), line)
+        player.loadQueue(listOf(item("a")), startIndex = 0, autoPlay = true)
+        withTimeout(5_000) { player.awaitDrained() }
+        assertEquals(PlayerState.Ready(isPlaying = true), player.state.value)
+        player.setVolume(0.5f)
+        withTimeout(5_000) { player.awaitDrained() }
+        assertEquals(0.5f, player.volume.value.linear)
+    }
+
     /**
      * Wait for the observable outcome of a STREAM event (EOF / decode error). awaitDrained() is a
      * command Barrier and only orders against other commands. The actor is command-biased, so a

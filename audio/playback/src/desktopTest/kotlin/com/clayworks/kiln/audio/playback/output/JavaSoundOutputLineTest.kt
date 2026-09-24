@@ -5,6 +5,7 @@ package com.clayworks.kiln.audio.playback.output
 
 import com.clayworks.kiln.audio.dsp.DecodedAudioFormat
 import com.clayworks.kiln.audio.dsp.SampleFormat
+import com.clayworks.kiln.audio.playback.OutputEngine
 import javax.sound.sampled.AudioFormat
 import javax.sound.sampled.Control
 import javax.sound.sampled.Line
@@ -45,6 +46,16 @@ class JavaSoundOutputLineTest {
     @Test
     fun `setVolume without a gain control is a no-op`() {
         JavaSoundOutputLine(FakeSourceDataLine(), fmt).setVolume(0.5f) // must not throw
+    }
+
+    @Test
+    fun `the fallback route reports an unknown device rate`() {
+        // Java Sound can't observe the Windows mix rate, so it must not claim one (or "not resampled").
+        val route = JavaSoundOutputLine(FakeSourceDataLine(), fmt).route()
+        assertEquals(OutputEngine.JavaSoundFallback, route.engine)
+        assertEquals(null, route.deviceRateHz)
+        assertEquals(false, route.resampled)
+        assertEquals("16-bit PCM", route.deviceFormat)
     }
 
     @Test

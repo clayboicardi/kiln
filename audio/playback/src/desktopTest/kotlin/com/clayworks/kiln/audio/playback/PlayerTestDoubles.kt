@@ -52,6 +52,9 @@ internal class FakeDecoder(private val streams: Map<String, FakeDecodedStream>) 
         openCount++
         val s = streams[playable.itemId.value]
             ?: return Either.Left(DecoderError.Internal("no fake stream for ${playable.itemId.value}"))
+        // A torn-down stream can't be replayed (its frame channel is consumed). Model that as an
+        // unreadable file, so RepeatMode.One / RepeatMode.All replays exercise the skip path.
+        if (s.closed) return Either.Left(DecoderError.IoError(IllegalStateException("stream ${playable.itemId.value} already consumed")))
         return Either.Right(s)
     }
 }
@@ -59,7 +62,9 @@ internal class FakeDecoder(private val streams: Map<String, FakeDecodedStream>) 
 /**
  * No-hardware [PcmOutputLine]. Records writes, start/stop, interrupts, volume, and closes.
  * [queued] and [bufferNanos] drive the actor's EOF-tail park. [writeFailure], when set, is
- * thrown from write() (a device dying mid-stream).
+ * thrown from write() (a device dying mid-stream). [startFailure], [queuedFailure], and
+ * [volumeFailure] likewise make start(), queuedNanos(), and setVolume() throw (WASAPI's
+ * Start / GetCurrentPadding / SetMasterVolume on an invalidated device).
  */
 internal class FakeOutputLine(
     override val sourceFormat: DecodedAudioFormat = DecodedAudioFormat(44_100, 16, 2, SampleFormat.PCM_S16_LE),
@@ -75,10 +80,16 @@ internal class FakeOutputLine(
     @Volatile var lastVolume: Float? = null
         private set
     @Volatile var writeFailure: Exception? = null
+    @Volatile var startFailure: Exception? = null
+    @Volatile var queuedFailure: Exception? = null
+    @Volatile var volumeFailure: Exception? = null
     val written = ArrayList<Byte>()
 
     override val isRunning: Boolean get() = running
-    override fun start() { running = true }
+    override fun start() {
+        startFailure?.let { throw it }
+        running = true
+    }
     override fun stop() { running = false }
     override fun flush() = Unit
     override fun write(bytes: ByteArray, off: Int, len: Int): Int {
@@ -86,8 +97,14 @@ internal class FakeOutputLine(
         for (i in off until off + len) written.add(bytes[i])
         return len
     }
-    override fun queuedNanos(): Long = queued
-    override fun setVolume(linear: Float) { lastVolume = linear }
+    override fun queuedNanos(): Long {
+        queuedFailure?.let { throw it }
+        return queued
+    }
+    override fun setVolume(linear: Float) {
+        volumeFailure?.let { throw it }
+        lastVolume = linear
+    }
     override fun route(): OutputRoute = OutputRoute(
         engine = OutputEngine.WasapiShared,
         deviceRateHz = 48_000,

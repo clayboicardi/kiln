@@ -47,7 +47,8 @@ internal class JavaSoundOutputLine(
 
     override fun route(): OutputRoute = OutputRoute(
         engine = OutputEngine.JavaSoundFallback,
-        deviceRateHz = sourceFormat.sampleRateHz,
+        // Java Sound can't observe the Windows mix rate, so it's unknown (not "not resampled").
+        deviceRateHz = null,
         deviceFormat = "${sourceFormat.bitDepth}-bit PCM",
         sourceRateHz = sourceFormat.sampleRateHz,
         sourceBitDepth = sourceFormat.bitDepth,

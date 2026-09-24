@@ -44,11 +44,15 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ChannelResult
 import kotlinx.coroutines.channels.ReceiveChannel
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -61,6 +65,8 @@ import kotlinx.coroutines.withContext
 private val log = Logger.withTag("JavaSoundPlayer")
 
 private const val POSITION_TICK_MS = 250L
+
+internal const val MAX_CONSECUTIVE_FAILURES = 3
 
 /**
  * Construct the Desktop [PlatformPlayer]. Keeps [JavaSoundPlayerImpl] internal — consumers
@@ -86,7 +92,7 @@ internal class JavaSoundPlayerImpl(
     private val settings: SettingsRepository,
     private val rgProcessor: ReplayGainProcessor,
     private val lineFactory: PcmOutputLineFactory = PcmOutputLineFactory { JavaSoundOutputLine.open(it) },
-) : PlatformPlayer {
+) : PlatformPlayer, PlaybackDiagnostics {
 
     private enum class Mode { IDLE, PLAYING, PAUSED }
 
@@ -106,6 +112,23 @@ internal class JavaSoundPlayerImpl(
 
     private val _processors = MutableStateFlow<List<AudioProcessor>>(emptyList())
     override val processors: StateFlow<List<AudioProcessor>> = _processors.asStateFlow()
+
+    private val _outputRoute = MutableStateFlow<OutputRoute?>(null)
+    override val outputRoute: StateFlow<OutputRoute?> = _outputRoute.asStateFlow()
+
+    private val _notices = MutableSharedFlow<PlaybackNotice>(
+        extraBufferCapacity = 8,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+    override val notices: SharedFlow<PlaybackNotice> = _notices.asSharedFlow()
+
+    private sealed interface OpenResult {
+        data object Opened : OpenResult
+        data class TrackFailed(val error: PlayerError) : OpenResult
+        data class DeviceFailed(val error: PlayerError) : OpenResult
+    }
+
+    private enum class Direction { FORWARD, BACKWARD }
 
     private val scope = CoroutineScope(SupervisorJob())
     private val commands = Channel<PlayerCommand>(Channel.UNLIMITED)
@@ -233,9 +256,9 @@ internal class JavaSoundPlayerImpl(
     private suspend fun applyCommand(cmd: PlayerCommand) {
         when (cmd) {
             is PlayerCommand.LoadQueue -> handleLoadQueue(cmd)
-            is PlayerCommand.SkipToNext -> handleSkip(nextIndexOrNull(_queue.value))
-            is PlayerCommand.SkipToPrevious -> handleSkip(previousIndexOrNull(_queue.value))
-            is PlayerCommand.SkipTo -> handleSkip(cmd.index.takeIf { it in _queue.value.items.indices })
+            is PlayerCommand.SkipToNext -> handleSkip(nextIndexOrNull(_queue.value), Direction.FORWARD)
+            is PlayerCommand.SkipToPrevious -> handleSkip(previousIndexOrNull(_queue.value), Direction.BACKWARD)
+            is PlayerCommand.SkipTo -> handleSkip(cmd.index.takeIf { it in _queue.value.items.indices }, direction = null)
             is PlayerCommand.Stop -> { teardownActivePlayback(); mode = Mode.IDLE; _state.value = PlayerState.Idle }
             is PlayerCommand.SeekTo -> handleSeek(cmd.positionMs)
             is PlayerCommand.Play -> resumePlayback()
@@ -291,7 +314,7 @@ internal class JavaSoundPlayerImpl(
         openAndStart(resolved[coercedStart].third, autoPlay = cmd.autoPlay)
     }
 
-    private suspend fun handleSkip(targetIndex: Int?) {
+    private suspend fun handleSkip(targetIndex: Int?, direction: Direction?) {
         if (targetIndex == null) {
             // No target (Next on last track / Prev on first / invalid skipTo): the public skip method
             // already fired the write-interrupt seam (line.interrupt), so resume the current track instead
@@ -299,15 +322,14 @@ internal class JavaSoundPlayerImpl(
             if (mode == Mode.PLAYING) runCatching { line?.start() }
             return
         }
+        if (direction != null) {
+            openWithSkip(targetIndex, direction)
+            return
+        }
+        // Explicit SkipTo: open exactly this item and surface its error, never skipping.
         _queue.value = _queue.value.copy(currentIndex = targetIndex)
         val item = _queue.value.currentItem ?: return
-        when (val r = source.getPlayable(item.itemId)) {
-            is Either.Left -> {
-                teardownActivePlayback(); mode = Mode.IDLE
-                _state.value = PlayerState.Error(PlayerError.Internal("resolve ${item.itemId.value}: ${r.value}"))
-            }
-            is Either.Right -> openAndStart(r.value, autoPlay = true)
-        }
+        resolveAndOpen(item)
     }
 
     private suspend fun handleSeek(positionMs: Long) {
@@ -340,7 +362,7 @@ internal class JavaSoundPlayerImpl(
      * generation + frame channel, apply RG gain for THIS generation before the first frame,
      * open the line, and set the mode. Sole stream-start path.
      */
-    private suspend fun openAndStart(playable: Playable, autoPlay: Boolean) {
+    private suspend fun openAndStart(playable: Playable, autoPlay: Boolean): OpenResult {
         teardownActivePlayback()
         generation++
         // ACCEPTED (codex): a slow/hung decoder.open (bad or network-backed file) suspends the actor
@@ -350,8 +372,9 @@ internal class JavaSoundPlayerImpl(
             is Either.Left -> {
                 log.w { "openAndStart: decoder.open failed for ${playable.itemId.value}: ${r.value}" }
                 mode = Mode.IDLE
-                _state.value = PlayerState.Error(toPlayerError(r.value))
-                return
+                val error = toPlayerError(r.value)
+                _state.value = PlayerState.Error(error)
+                return OpenResult.TrackFailed(error)
             }
             is Either.Right -> r.value
         }
@@ -370,10 +393,12 @@ internal class JavaSoundPlayerImpl(
             currentPlayable = null
             mode = Mode.IDLE
             log.e(e) { "Could not open output line for ${stream.format}" }
-            _state.value = PlayerState.Error(outputError(e, stream.format))
-            return
+            val error = outputError(e, stream.format)
+            _state.value = PlayerState.Error(error)
+            return if (e is OutputLineException.FormatRejected) OpenResult.TrackFailed(error) else OpenResult.DeviceFailed(error)
         }
         line = sourceLine
+        _outputRoute.value = sourceLine.route()
         val ps = CoroutineScope(decodeDispatcher + SupervisorJob())
         producerScope = ps
         frameChan = stream.frames.produceIn(ps)
@@ -387,14 +412,78 @@ internal class JavaSoundPlayerImpl(
                 teardownActivePlayback()
                 mode = Mode.IDLE
                 log.e(e) { "Output line start() failed for ${stream.format}" }
-                _state.value = PlayerState.Error(PlayerError.DeviceUnavailable(e.message ?: "audio line start failed"))
-                return
+                // Mapped like an open failure (so DeviceProblem shows its bare detail), but a failed
+                // start is always a device failure, never a per-track skip.
+                val error = outputError(e, stream.format)
+                _state.value = PlayerState.Error(error)
+                return OpenResult.DeviceFailed(error)
             }
             mode = Mode.PLAYING
             _state.value = PlayerState.Ready(isPlaying = true)
         } else {
             mode = Mode.PAUSED
             _state.value = PlayerState.Ready(isPlaying = false)
+        }
+        return OpenResult.Opened
+    }
+
+    /** Resolve [item] and open it. A resolve failure is a per-track failure. */
+    private suspend fun resolveAndOpen(item: MediaItem): OpenResult =
+        when (val r = source.getPlayable(item.itemId)) {
+            is Either.Left -> {
+                teardownActivePlayback()
+                mode = Mode.IDLE
+                val error = PlayerError.Internal("resolve ${item.itemId.value}: ${r.value}")
+                _state.value = PlayerState.Error(error)
+                OpenResult.TrackFailed(error)
+            }
+            is Either.Right -> openAndStart(r.value, autoPlay = true)
+        }
+
+    /**
+     * Open the item at [startIndex]. On a per-track failure (unsupported format, decode/IO error,
+     * unresolvable item), step one item in [direction] and try again, up to
+     * MAX_CONSECUTIVE_FAILURES opens in total. Stepping follows queue order and RepeatMode.All
+     * wrap-around but ignores RepeatMode.One, so a broken track is never retried. A device
+     * failure stops at once, since it would fail every track. Only auto-advance and
+     * Next/Previous use this. An explicit pick (LoadQueue / SkipTo) opens exactly that item and
+     * shows its error.
+     */
+    private suspend fun openWithSkip(startIndex: Int, direction: Direction) {
+        var index = startIndex
+        var attempts = 0
+        while (true) {
+            _queue.value = _queue.value.copy(currentIndex = index)
+            val item = _queue.value.currentItem ?: return
+            attempts++
+            val result = resolveAndOpen(item)
+            if (result !is OpenResult.TrackFailed) return
+            if (attempts >= MAX_CONSECUTIVE_FAILURES) {
+                _notices.tryEmit(PlaybackNotice.GaveUp(attempts))
+                return
+            }
+            val next = stepIndex(index, direction)
+            if (next == null || next == index) return
+            _notices.tryEmit(PlaybackNotice.Skipped(item.title, result.error))
+            index = next
+        }
+    }
+
+    /** One step through the queue for skip-ahead: RepeatMode.All wraps; RepeatMode.One is ignored. */
+    private fun stepIndex(index: Int, direction: Direction): Int? {
+        val q = _queue.value
+        if (q.items.isEmpty()) return null
+        return when (direction) {
+            Direction.FORWARD -> when {
+                index < q.items.lastIndex -> index + 1
+                q.repeatMode == RepeatMode.All -> 0
+                else -> null
+            }
+            Direction.BACKWARD -> when {
+                index > 0 -> index - 1
+                q.repeatMode == RepeatMode.All -> q.items.lastIndex
+                else -> null
+            }
         }
     }
 
@@ -453,11 +542,18 @@ internal class JavaSoundPlayerImpl(
         // enough, the stop can land after the check). A bounded park can't wedge; a concurrent pause
         // just ends the tail early, which is fine at EOF.
         val l = line
-        if (l != null && l.isRunning) {
-            // Durations come from the line (it owns output byte-rate math, #37). Capped at twice
-            // the line buffer, so a pause landing mid-tail can only end the tail early.
-            val tailNanos = l.queuedNanos().coerceAtMost(2 * l.bufferNanos)
-            if (tailNanos > 0L) java.util.concurrent.locks.LockSupport.parkNanos(tailNanos)
+        // A line call here can throw (WASAPI GetCurrentPadding on an invalidated device). runActor
+        // has no catch, so an escape would kill the actor. Skip the tail instead: a dead device then
+        // surfaces at the next open as DeviceFailed.
+        try {
+            if (l != null && l.isRunning) {
+                // Durations come from the line (it owns output byte-rate math, #37). Capped at twice
+                // the line buffer, so a pause landing mid-tail can only end the tail early.
+                val tailNanos = l.queuedNanos().coerceAtMost(2 * l.bufferNanos)
+                if (tailNanos > 0L) java.util.concurrent.locks.LockSupport.parkNanos(tailNanos)
+            }
+        } catch (e: Exception) {
+            log.w(e) { "EOF tail skipped: output line query failed" }
         }
         teardownActivePlayback()
         if (next == null) {
@@ -465,23 +561,11 @@ internal class JavaSoundPlayerImpl(
             _state.value = PlayerState.Idle
             return
         }
-        _queue.value = _queue.value.copy(currentIndex = next)
-        val item = _queue.value.currentItem ?: run {
-            mode = Mode.IDLE
-            _state.value = PlayerState.Idle
-            return
-        }
-        when (val r = source.getPlayable(item.itemId)) {
-            is Either.Left -> {
-                mode = Mode.IDLE
-                _state.value = PlayerState.Error(PlayerError.Internal("resolve ${item.itemId.value}: ${r.value}"))
-            }
-            is Either.Right -> openAndStart(r.value, autoPlay = true)
-        }
+        openWithSkip(next, Direction.FORWARD)
     }
 
     private suspend fun resumePlayback() {
-        if (currentStream == null) return
+        val stream = currentStream ?: return
         val l = line ?: return
         if (!l.isRunning) {
             try {
@@ -490,10 +574,11 @@ internal class JavaSoundPlayerImpl(
                 // Mirror openAndStart: a failed resume (output device gone) must NOT report
                 // Ready(isPlaying=true) on a line that never restarted (codex round 5 C2). Tear down
                 // + surface Error rather than writing subsequent frames to a non-running line.
+                val format = stream.format // captured before teardown nulls currentStream
                 teardownActivePlayback()
                 mode = Mode.IDLE
                 log.e(e) { "Output line start() failed on resume" }
-                _state.value = PlayerState.Error(PlayerError.DeviceUnavailable(e.message ?: "audio line resume failed"))
+                _state.value = PlayerState.Error(outputError(e, format))
                 return
             }
         }
@@ -529,6 +614,7 @@ internal class JavaSoundPlayerImpl(
         currentPlayable = null
         line?.let { l -> runCatching { l.close() } }
         line = null
+        _outputRoute.value = null
         // No active track → position 0. openAndStart tears down first, so every failed open
         // (decoder, line open, line start) shows 0:00 instead of the previous track's position.
         lastTickedMs = 0L
@@ -540,7 +626,13 @@ internal class JavaSoundPlayerImpl(
     private fun applyGain() {
         val l = line ?: return
         val v = _volume.value
-        l.setVolume(if (v.muted) 0f else v.linear)
+        // WASAPI SetMasterVolume can throw on an invalidated device. Don't let that kill the actor;
+        // a dead device surfaces on the next write or open.
+        try {
+            l.setVolume(if (v.muted) 0f else v.linear)
+        } catch (e: Exception) {
+            log.w(e) { "setVolume failed on the output line" }
+        }
     }
 
     private fun applyRgGain(playable: Playable, mode: ReplayGainMode, preAmpDb: Double) {
