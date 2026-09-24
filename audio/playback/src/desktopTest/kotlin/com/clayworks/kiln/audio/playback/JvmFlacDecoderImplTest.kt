@@ -106,6 +106,27 @@ class JvmFlacDecoderImplTest {
         }
     }
 
+    /**
+     * Final review I2(a): a bit depth the PCM packer can't represent is rejected at open, not by a
+     * later throw from the stream's format getter. The fixture is 20-bit (FLAC allows 4-32 bits;
+     * DVD-A/HDCD rips use 20). It was encoded with flac 1.5.0 from a WAVE_FORMAT_EXTENSIBLE file
+     * (24-bit container, wValidBitsPerSample = 20). `ffprobe -select_streams a:0` reports
+     * bits_per_raw_sample=20.
+     */
+    @Test
+    fun `open of a 20-bit FLAC returns CorruptStream`() = runBlocking {
+        val decoder = JvmFlacDecoderImpl(LibFlacLoader.load())
+        val playable = fixturePlayable("sine_440_stereo_20_44.flac", 44100, 20, 2, 500)
+        val result = decoder.open(playable)
+        if (result is Either.Right) {
+            result.value.close()
+            fail("a 20-bit FLAC must be rejected at open, got a stream")
+        }
+        val error = (result as Either.Left).value
+        val corrupt = error as? DecoderError.CorruptStream ?: fail("expected CorruptStream; got $error")
+        assertTrue("20" in corrupt.message, "the message names the bit depth: ${corrupt.message}")
+    }
+
     @Test
     fun `open of non-FLAC codec returns UnsupportedCodec error`() = runBlocking {
         val decoder = JvmFlacDecoderImpl(LibFlacLoader.load())

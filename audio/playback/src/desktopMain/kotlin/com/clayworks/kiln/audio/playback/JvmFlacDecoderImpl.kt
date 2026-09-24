@@ -90,6 +90,18 @@ internal class JvmFlacDecoderImpl(
             )
         }
 
+        // Read the format once here so a layout the PCM packer can't represent fails this open,
+        // not the consumer's first format read (final review I2). FLAC allows 4-32 bits, but the
+        // format getter maps only 16/24/32 (e.g. a 20-bit DVD-A/HDCD rip throws).
+        val formatError = runCatching { stream.format }.exceptionOrNull()
+        if (formatError != null) {
+            libFlac.FLAC__stream_decoder_finish(handle)
+            libFlac.FLAC__stream_decoder_delete(handle)
+            return@withContext Either.Left(
+                DecoderError.CorruptStream("unsupported FLAC stream (${formatError.message}): $filename"),
+            )
+        }
+
         Either.Right(stream)
     }
 }
