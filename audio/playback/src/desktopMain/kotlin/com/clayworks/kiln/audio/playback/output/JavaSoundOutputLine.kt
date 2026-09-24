@@ -73,8 +73,14 @@ internal class JavaSoundOutputLine(
         ): JavaSoundOutputLine {
             val af = AudioFormat(format.sampleRateHz.toFloat(), format.bitDepth, format.channels, true, false)
             val bytesPerSecond = format.sampleRateHz * format.channels * (format.bitDepth / 8)
-            val line = provider(af)
-            line.open(af, (bytesPerSecond * BUFFER_MS / 1000).coerceAtLeast(4096))
+            val line = try {
+                provider(af).also { it.open(af, (bytesPerSecond * BUFFER_MS / 1000).coerceAtLeast(4096)) }
+            } catch (e: IllegalArgumentException) {
+                // "No line matching interface SourceDataLine supporting format …": this layout is unsupported.
+                throw OutputLineException.FormatRejected(format, e.message ?: "Java Sound has no line for this format", e)
+            } catch (e: Exception) {
+                throw OutputLineException.DeviceProblem(e.message ?: "Java Sound line unavailable", e)
+            }
             return JavaSoundOutputLine(line, format)
         }
 

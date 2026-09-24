@@ -7,9 +7,12 @@
 package com.clayworks.kiln.audio.playback
 
 import arrow.core.Either
+import com.clayworks.kiln.audio.dsp.AudioFrame
 import com.clayworks.kiln.audio.dsp.DecodedAudioFormat
 import com.clayworks.kiln.audio.dsp.SampleFormat
 import com.clayworks.kiln.audio.dsp.replaygain.ReplayGainProcessor
+import com.clayworks.kiln.audio.playback.output.OutputLineException
+import com.clayworks.kiln.audio.playback.output.PcmOutputLineFactory
 import com.clayworks.kiln.library.settings.ReplayGainMode
 import com.clayworks.kiln.library.settings.SettingsRepository
 import com.clayworks.kiln.library.settings.ThemeMode
@@ -220,6 +223,92 @@ class JavaSoundPlayerActorTest {
         awaitStreamEvent { player.queue.first { it.currentIndex == 1 } }
         val elapsedMs = (System.nanoTime() - t0) / 1_000_000
         assertTrue(elapsedMs < 1_000, "tail must cap at 2 × 50 ms, not wait 5 s; took $elapsedMs ms")
+    }
+
+    private val fmt24 = DecodedAudioFormat(44_100, 24, 2, SampleFormat.PCM_S24_LE)
+
+    private fun frameAt(ms: Long) = AudioFrame(bytes = ByteArray(4), byteCount = 4, sampleCount = 1, timestampMs = ms)
+
+    private fun playerWith(
+        ids: List<String>,
+        streams: Map<String, FakeDecodedStream>,
+        factory: PcmOutputLineFactory,
+    ) = JavaSoundPlayerImpl(
+        audioDispatcher = Dispatchers.Unconfined,
+        decodeDispatcher = Dispatchers.Unconfined,
+        decoder = FakeDecoder(streams),
+        source = ResolvingSource(ids.toSet()),
+        settings = StubSettings(),
+        rgProcessor = ReplayGainProcessor(),
+        lineFactory = factory,
+    )
+
+    /** Accepts 16-bit (returns [line]); rejects 24-bit the way WASAPI/Java Sound do. */
+    private fun rejecting24(line: FakeOutputLine) = PcmOutputLineFactory { f ->
+        if (f.bitDepth == 24) throw OutputLineException.FormatRejected(f, "24-bit rejected") else line
+    }
+
+    @Test
+    fun `failed decoder open resets the position to zero`() = runBlocking {
+        val sA = FakeDecodedStream(fmt)
+        val player = newPlayer(listOf("a", "b"), mapOf("a" to sA)) // no stream for b → decoder fails
+        player.loadQueue(listOf(item("a"), item("b")), startIndex = 0, autoPlay = true)
+        player.awaitDrained()
+        sA.emit(frameAt(5_000))
+        awaitStreamEvent { player.positionMs.first { it == 5_000L } }
+        player.loadQueue(listOf(item("a"), item("b")), startIndex = 1, autoPlay = true)
+        player.awaitDrained()
+        assertTrue(player.state.value is PlayerState.Error)
+        assertEquals(0L, player.positionMs.value, "a failed open must not keep the previous track's position")
+    }
+
+    @Test
+    fun `failed line open resets the position and reports OutputFormatUnsupported`() = runBlocking {
+        val sA = FakeDecodedStream(fmt)
+        val player = playerWith(
+            listOf("a", "b"),
+            mapOf("a" to sA, "b" to FakeDecodedStream(fmt24)),
+            rejecting24(FakeOutputLine()),
+        )
+        player.loadQueue(listOf(item("a"), item("b")), startIndex = 0, autoPlay = true)
+        player.awaitDrained()
+        sA.emit(frameAt(5_000))
+        awaitStreamEvent { player.positionMs.first { it == 5_000L } }
+        player.loadQueue(listOf(item("a"), item("b")), startIndex = 1, autoPlay = true)
+        player.awaitDrained()
+        val error = (player.state.value as PlayerState.Error).cause
+        assertEquals(PlayerError.OutputFormatUnsupported(44_100, 24, 2, "24-bit rejected"), error)
+        assertEquals(0L, player.positionMs.value)
+    }
+
+    @Test
+    fun `device problem at open reports DeviceUnavailable`() = runBlocking {
+        val player = playerWith(
+            listOf("a"),
+            mapOf("a" to FakeDecodedStream(fmt)),
+            PcmOutputLineFactory { throw OutputLineException.DeviceProblem("no audio output device") },
+        )
+        player.loadQueue(listOf(item("a")), startIndex = 0, autoPlay = true)
+        player.awaitDrained()
+        assertEquals(
+            PlayerError.DeviceUnavailable("no audio output device"),
+            (player.state.value as PlayerState.Error).cause,
+        )
+    }
+
+    @Test
+    fun `device problem mid-stream reports DeviceUnavailable and does not advance`() = runBlocking {
+        val sA = FakeDecodedStream(fmt)
+        val line = FakeOutputLine()
+        val player = newPlayer(listOf("a", "b"), mapOf("a" to sA, "b" to FakeDecodedStream(fmt)), line)
+        player.loadQueue(listOf(item("a"), item("b")), startIndex = 0, autoPlay = true)
+        player.awaitDrained()
+        line.writeFailure = OutputLineException.DeviceProblem("device invalidated")
+        sA.emit(frameAt(1_000))
+        awaitStreamEvent { player.state.first { it is PlayerState.Error } }
+        player.awaitDrained()
+        assertEquals(PlayerError.DeviceUnavailable("device invalidated"), (player.state.value as PlayerState.Error).cause)
+        assertEquals(0, player.queue.value.currentIndex, "a dead device must not trigger any advance")
     }
 
     /**

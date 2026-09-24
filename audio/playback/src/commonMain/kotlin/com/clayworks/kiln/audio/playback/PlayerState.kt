@@ -14,6 +14,15 @@ sealed interface PlayerState {
 sealed interface PlayerError {
     data class DeviceUnavailable(val reason: String) : PlayerError  // USB DAC unplugged
     data class FormatUnsupported(val codec: String) : PlayerError
+
+    /** The output engine rejected this PCM layout (vs [FormatUnsupported]: the decoder rejected a codec). */
+    data class OutputFormatUnsupported(
+        val sampleRateHz: Int,
+        val bitDepth: Int,
+        val channels: Int,
+        val reason: String,
+    ) : PlayerError
+
     data class DecodeFailed(val cause: Throwable) : PlayerError      // libFLAC error, etc.
     data class IoError(val cause: Throwable) : PlayerError
     data class Internal(val message: String) : PlayerError

@@ -29,6 +29,7 @@ import com.clayworks.kiln.audio.dsp.replaygain.ReplayGainPipelineMode
 import com.clayworks.kiln.audio.dsp.replaygain.ReplayGainProcessor
 import com.clayworks.kiln.audio.dsp.replaygain.resolveGainLinear
 import com.clayworks.kiln.audio.playback.output.JavaSoundOutputLine
+import com.clayworks.kiln.audio.playback.output.OutputLineException
 import com.clayworks.kiln.audio.playback.output.PcmOutputLine
 import com.clayworks.kiln.audio.playback.output.PcmOutputLineFactory
 import com.clayworks.kiln.library.settings.ReplayGainMode
@@ -369,12 +370,10 @@ internal class JavaSoundPlayerImpl(
             currentPlayable = null
             mode = Mode.IDLE
             log.e(e) { "Could not open output line for ${stream.format}" }
-            _state.value = PlayerState.Error(PlayerError.DeviceUnavailable(e.message ?: "audio line open failed"))
+            _state.value = PlayerState.Error(outputError(e, stream.format))
             return
         }
         line = sourceLine
-        lastTickedMs = 0L
-        _positionMs.value = 0L
         val ps = CoroutineScope(decodeDispatcher + SupervisorJob())
         producerScope = ps
         frameChan = stream.frames.produceIn(ps)
@@ -438,7 +437,9 @@ internal class JavaSoundPlayerImpl(
             log.e(e) { "playback write/process error" }
             teardownActivePlayback()
             mode = Mode.IDLE
-            _state.value = PlayerState.Error(PlayerError.DecodeFailed(e))
+            _state.value = PlayerState.Error(
+                if (e is OutputLineException.DeviceProblem) PlayerError.DeviceUnavailable(e.detail) else PlayerError.DecodeFailed(e),
+            )
         }
     }
 
@@ -528,6 +529,10 @@ internal class JavaSoundPlayerImpl(
         currentPlayable = null
         line?.let { l -> runCatching { l.close() } }
         line = null
+        // No active track → position 0. openAndStart tears down first, so every failed open
+        // (decoder, line open, line start) shows 0:00 instead of the previous track's position.
+        lastTickedMs = 0L
+        _positionMs.value = 0L
     }
 
     // ----- helpers carried over from the pre-actor impl (unchanged behaviour) -----
@@ -570,6 +575,14 @@ internal class JavaSoundPlayerImpl(
         q.repeatMode == RepeatMode.All -> q.items.lastIndex
         else -> null
     }
+
+    private fun outputError(e: Exception, format: com.clayworks.kiln.audio.dsp.DecodedAudioFormat): PlayerError =
+        when (e) {
+            is OutputLineException.FormatRejected ->
+                PlayerError.OutputFormatUnsupported(format.sampleRateHz, format.bitDepth, format.channels, e.detail)
+            is OutputLineException.DeviceProblem -> PlayerError.DeviceUnavailable(e.detail)
+            else -> PlayerError.DeviceUnavailable(e.message ?: "audio line open failed")
+        }
 
     private fun toPlayerError(decoderError: DecoderError): PlayerError = when (decoderError) {
         is DecoderError.UnsupportedCodec -> PlayerError.FormatUnsupported(decoderError.codec.name)

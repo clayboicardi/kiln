@@ -47,6 +47,24 @@ class JavaSoundOutputLineTest {
         JavaSoundOutputLine(FakeSourceDataLine(), fmt).setVolume(0.5f) // must not throw
     }
 
+    @Test
+    fun `a format Java Sound can't open becomes FormatRejected`() {
+        val e = kotlin.runCatching {
+            JavaSoundOutputLine.open(DecodedAudioFormat(44_100, 24, 2, SampleFormat.PCM_S24_LE)) {
+                throw IllegalArgumentException("No line matching interface SourceDataLine supporting format PCM_SIGNED 44100.0 Hz, 24 bit")
+            }
+        }.exceptionOrNull()
+        kotlin.test.assertIs<OutputLineException.FormatRejected>(e)
+    }
+
+    @Test
+    fun `an unavailable line becomes DeviceProblem`() {
+        val e = kotlin.runCatching {
+            JavaSoundOutputLine.open(fmt) { throw javax.sound.sampled.LineUnavailableException("in use") }
+        }.exceptionOrNull()
+        kotlin.test.assertIs<OutputLineException.DeviceProblem>(e)
+    }
+
     /** No-hardware SourceDataLine. Records calls; no gain control, so setVolume short-circuits. */
     private class FakeSourceDataLine(
         private val bufferSize: Int = 4096,
