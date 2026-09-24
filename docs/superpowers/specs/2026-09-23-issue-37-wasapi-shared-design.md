@@ -1,7 +1,7 @@
 # Desktop WASAPI Shared-Mode Output (#37, WASAPI slice 1) Design
 
 **Date:** 2026-09-23 · **Issue:** #37 · **Modules:** `:audio:playback` (desktopMain + commonMain), `:ui:components` (commonMain), `:app-desktop`
-**Status:** design. Pending Clay's review, then the implementation plan.
+**Status:** design, revised after the 2026-09-23 Codex review (§11). Pending Clay's approval, then the implementation plan.
 **Decision record:** [`../../decisions/2026-09-23-wasapi-shared-pull-forward.md`](../../decisions/2026-09-23-wasapi-shared-pull-forward.md) (why WASAPI is pulled ahead of the plan §11 Phase 2c gate, why shared mode first, why pure Kotlin/JNA).
 
 ---
@@ -62,19 +62,22 @@ The actor and its command model, the decode dispatcher, RG processing, and the w
 
 ```kotlin
 internal interface PcmOutputLine : AutoCloseable {
-    val format: DecodedAudioFormat
-    val bufferBytes: Int                       // total device-side buffer, for the EOF tail cap
+    val sourceFormat: DecodedAudioFormat       // what the actor writes (decoded PCM, after DSP)
+    val bufferNanos: Long                      // device-side buffer duration, for the EOF tail cap
     val isRunning: Boolean
     fun start()
     fun stop()                                 // keeps buffered audio (gapless pause/resume)
     fun flush()                                // discards buffered audio
-    fun write(bytes: ByteArray, off: Int, len: Int): Int   // blocks until written or stopped/flushed
-    fun queuedBytes(): Int                     // audio still buffered, not yet played
+    fun write(bytes: ByteArray, off: Int, len: Int): Int   // source-format bytes; blocks until written or stopped/flushed
+    fun queuedNanos(): Long                    // duration still buffered, not yet played
     fun setVolume(linear: Float)               // 0.0..1.0; implementations clamp
+    fun route(): OutputRoute                   // the negotiated output, for PlaybackDiagnostics
     override fun close()                       // idempotent
 }
 internal fun interface PcmOutputLineFactory { fun open(format: DecodedAudioFormat): PcmOutputLine }
 ```
+
+**The line owns all output byte-rate math (Codex review #2).** The actor always writes bytes in the decoded **source** format. Whatever layout the line negotiates with the device, and any repack it does, stays private to the line. The line's buffer sizing, its queued-audio accounting, and its route report are all computed from the **negotiated** device format. The actor only ever sees durations (`bufferNanos`, `queuedNanos()`) and never derives bytes/sec for output timing from the source format. This removes today's `bytesPerSec` computation in `advanceOnEof`, which would under-estimate the tail and clip track endings as soon as device and source frame sizes differ (e.g. the 24-in-32 repack: 8-byte vs 6-byte stereo frames).
 
 **The thread contract is the #28 invariant, made explicit.** Every method may be called from the actor thread. **`stop()` and `flush()` must ALSO be safe from any thread**, because they form the write-interrupt seam. A call from another thread must make a blocked `write()` return promptly and must not corrupt line state. The actor stays the authority: after an interrupt, it issues its own on-actor calls.
 
@@ -82,8 +85,18 @@ internal fun interface PcmOutputLineFactory { fun open(format: DecodedAudioForma
 
 | Subtype | Meaning | Maps to |
 |---|---|---|
-| `FormatRejected(format, detail)` | The engine is up but won't take this PCM layout | `PlayerError.FormatUnsupported(describe(format))` |
+| `FormatRejected(format, detail)` | The engine is up but won't take this PCM layout | `PlayerError.OutputFormatUnsupported(rate, bits, channels, detail)` (new; see below) |
 | `DeviceProblem(detail)` | No endpoint, device invalidated, device in use | `PlayerError.DeviceUnavailable(detail)` |
+
+**New `PlayerError` variant (Codex review #4).** `FormatUnsupported(codec: String)` describes a *decoder* rejecting a codec (e.g. AAC on desktop), and it stays exactly that. An output engine rejecting a concrete PCM layout is a different fact, so it gets its own variant in `PlayerState.kt` (commonMain):
+
+```kotlin
+data class OutputFormatUnsupported(
+    val sampleRateHz: Int, val bitDepth: Int, val channels: Int, val reason: String,
+) : PlayerError
+```
+
+This adds a sealed subtype, not a `PlatformPlayer` method, so plan §12's STOP signal isn't tripped. There are no exhaustive `when`s over `PlayerError` today (the only construction site is `JavaSoundPlayerImpl.toPlayerError`), and Android never produces it. Line `start()` failures stay `DeviceUnavailable`, as today.
 
 The same types are thrown from `write`/`start` when the device dies mid-stream.
 
@@ -92,7 +105,7 @@ The same types are thrown from `write`/`start` when the device dies mid-stream.
 A behavior-preserving move of today's code:
 - **Open:** `AudioSystem.getLine(DataLine.Info(SourceDataLine, AudioFormat(...)))` + `open(format, bufferBytes)`.
 - **Volume:** the `MASTER_GAIN` control from `applyGain()`.
-- **`queuedBytes`:** `bufferSize - available()`.
+- **`queuedNanos`:** `(bufferSize - available())` converted with the **line's** `AudioFormat` frame size and rate. **`bufferNanos`:** the opened `bufferSize` converted the same way.
 - **Exceptions:** `IllegalArgumentException`/`LineUnavailableException` for an unsupported format become `FormatRejected`, and the rest become `DeviceProblem`.
 
 It inherits the known Java Sound gotchas unchanged: `isRunning` is false until the first write, `drain()` is never used, and `write()` to a stopped line returns immediately.
@@ -153,11 +166,13 @@ While `interrupted` is set, `write()` returns immediately with the bytes written
 
 **Other semantics:**
 - `start()` = `IAudioClient.Start`. It's valid with an empty buffer; the engine renders silence until the first write.
-- `queuedBytes()` = `GetCurrentPadding() × blockAlign`. This feeds the existing bounded EOF-tail park; the cap becomes `2 × line buffer duration` instead of the `BUFFER_MS` constant.
+- `queuedNanos()` = `GetCurrentPadding()` (frames in the negotiated client format) ÷ `nSamplesPerSec`. `bufferNanos` = `GetBufferSize()` frames ÷ `nSamplesPerSec`. The actor's bounded EOF-tail park becomes `min(queuedNanos(), 2 × bufferNanos)`, and the `BUFFER_MS` constant leaves the actor.
 - `setVolume` = `ISimpleAudioVolume.SetMasterVolume`, the session volume.
 - `close()`: `Stop`, then `Release` of the render client, volume, audio client, device, and enumerator, in reverse order. Idempotent.
 
-**24-bit packed risk.** It's unverified whether `AUTOCONVERTPCM` accepts a 24-bit sample in a 24-bit container (`nBlockAlign = 3 × ch`). **Plan task 1 probes it on Cortex** for 16/24/32 at 44.1/96/192. If the 24-in-24 layout is rejected, `WasapiOutputLine` repacks S24 into a 32-bit container (`wBitsPerSample = 32`, `wValidBitsPerSample = 24`, sample left-justified). That's lossless, and a pure `repack24in32(src, dst)` function gets unit tests. The chosen layout is recorded in `CLAUDE.md`.
+**24-bit packed risk.** It's unverified whether `AUTOCONVERTPCM` accepts a 24-bit sample in a 24-bit container (`nBlockAlign = 3 × ch`). **Plan task 1 probes it on Cortex** for 16/24/32 at 44.1/96/192. If the 24-in-24 layout is rejected, `WasapiOutputLine` repacks S24 into a 32-bit container (`wBitsPerSample = 32`, `wValidBitsPerSample = 24`, sample left-justified). That's lossless, and a pure `repack24in32(src, srcOff, len, dst): Int` function gets unit tests (§8). The chosen layout is recorded in `CLAUDE.md`.
+
+**The repack is a mandatory terminal step, not an `AudioProcessor` (Codex review #1).** It runs inside `WasapiOutputLine.write()`, after the actor's whole processor chain (RG and anything added later), so no processor can be ordered after it or remove it. It writes straight into the `GetBuffer` pointer, or into one line-owned scratch array sized at `open()`. There's no per-frame allocation on the actor thread, and no work at all on the native-layout path.
 
 ### 5.5 Line factory selection (desktopMain)
 
@@ -168,8 +183,9 @@ Endpoint availability is **not** part of that decision. "No device right now" is
 ### 5.6 Actor changes (`JavaSoundPlayerImpl`)
 
 - `lineFactory: PcmOutputLineFactory` replaces `(AudioFormat) -> SourceDataLine`. `audioFormatOf`, `bufferBytesOf`, and `applyGain`'s `FloatControl` code move into `JavaSoundOutputLine`.
-- **Position reset:** `openAndStart` sets `_positionMs = 0` and `lastTickedMs = 0` right after `teardownActivePlayback()`, **before** decoder open, so every failure path shows 0:00.
-- **Honest errors:** line-open `OutputLineException` maps per §5.1. A decoder `UnsupportedCodec` already maps to `FormatUnsupported`.
+- **EOF tail uses line durations only:** `advanceOnEof` parks for `min(line.queuedNanos(), 2 × line.bufferNanos)`. The source-format `bytesPerSec` computation is deleted (§5.1).
+- **Position reset:** `openAndStart` sets `_positionMs = 0` and `lastTickedMs = 0` right after `teardownActivePlayback()`, **before** decoder open, so every failure path (decoder open, line open, line start) shows 0:00.
+- **Honest errors:** line-open `FormatRejected` becomes the new `OutputFormatUnsupported` (§5.1), and `DeviceProblem` becomes `DeviceUnavailable`. A decoder `UnsupportedCodec` still becomes `FormatUnsupported(codec)`.
 - **`openAndStart` returns an `OpenResult`:** `Opened` | `TrackFailed(PlayerError)` (per-track: format, decode, IO, resolve) | `DeviceFailed(PlayerError)`. Setting the `Error` state stays inside it, as today.
 - **Capped skip-ahead.** A new `openWithSkip(startIndex, direction)` is used by `advanceOnEof` (forward), `SkipToNext` (forward), and `SkipToPrevious` (backward):
   - It loops: resolve and open. On `TrackFailed`, it emits `PlaybackNotice.Skipped(title, reason)` and moves one step in `direction`, following the queue order and `RepeatMode.All` wrap, but **ignoring `RepeatMode.One`** so a failing track isn't retried.
@@ -178,6 +194,7 @@ Endpoint availability is **not** part of that decision. "No device right now" is
   - `DeviceFailed` stops immediately with no skip.
   - **`LoadQueue` (an explicit click) and `SkipTo(index)` never skip.** They open exactly the requested track and show its error.
   - Every skip still goes through `teardownActivePlayback()` + `openAndStart`, so the #28 stale-frame guarantee is unchanged.
+- **Skip accounting (Codex's auto-advance concern, §11):** the consecutive-failure counter counts open *attempts*, not distinct tracks. So a `RepeatMode.All` queue in which every track fails stops after 3 attempts instead of cycling. The counter resets on any successful open and on every explicit command (`LoadQueue`, `SkipTo`, Next/Previous start a fresh count).
 - **Route reporting:** after a successful open, `_outputRoute.value = line.route()`. On teardown to Idle/Error it's set to `null`.
 
 ### 5.7 `PlaybackDiagnostics` side-channel (commonMain, `:audio:playback`)
@@ -208,7 +225,7 @@ object NoPlaybackDiagnostics : PlaybackDiagnostics { /* null route, empty notice
 
 ### 5.8 UI (`:ui:components`, commonMain)
 
-- **`playerErrorMessage(PlayerError): String`** is a pure, unit-tested function. Examples: `FormatUnsupported` → "Can't play this file: 24-bit PCM at 44.1 kHz isn't supported by the output" (or the codec name for AAC); `DeviceUnavailable` → "Output device unavailable: …".
+- **`playerErrorMessage(PlayerError): String`** is a pure, unit-tested function. Examples: `FormatUnsupported("AAC")` → "Can't play this file: AAC isn't supported on desktop yet"; `OutputFormatUnsupported(44100, 24, 2, …)` → "The output can't take 24-bit / 44.1 kHz stereo"; `DeviceUnavailable` → "Output device unavailable: …".
 - **Now Playing:**
   - When `state is Error`, one line under the title in the error color.
   - The newest notice, shown for ~4 s ("Skipped *2morrow*: AAC isn't supported on desktop").
@@ -229,7 +246,7 @@ object NoPlaybackDiagnostics : PlaybackDiagnostics { /* null route, empty notice
 |---|---|---|
 | Factory decision | COM/enumerator unusable | Java Sound for the session; `warn` once |
 | `open` | No default endpoint / device in use | `DeviceFailed` → `Error(DeviceUnavailable)`, no skip |
-| `open` | `AUDCLNT_E_UNSUPPORTED_FORMAT` (or Java Sound no-line) | `TrackFailed` → `Error(FormatUnsupported)`; skip if auto/Next/Prev |
+| `open` | `AUDCLNT_E_UNSUPPORTED_FORMAT` (or Java Sound no-line) | `TrackFailed` → `Error(OutputFormatUnsupported)`; skip if auto/Next/Prev |
 | Decoder open | Unsupported codec (AAC) / corrupt / IO | `TrackFailed` (as above) |
 | `write`/`start` mid-stream | `AUDCLNT_E_DEVICE_INVALIDATED` | teardown → `Error(DeviceUnavailable)`, no skip; next play re-resolves the endpoint |
 | Skip loop | 3 consecutive `TrackFailed` | Stop on the last error + `GaveUp` notice |
@@ -237,11 +254,20 @@ object NoPlaybackDiagnostics : PlaybackDiagnostics { /* null route, empty notice
 ## 8. Testing
 
 **Device-free (runs on CI):**
-- `WaveFormatExtensibleTest`: exact bytes for 16/24/32 × mono/stereo × 44.1/96/192, checking `nBlockAlign`, `nAvgBytesPerSec`, `cbSize = 22`, the channel mask, and the SubFormat GUID bytes. It also covers `repack24in32` if that's needed (sign preserved, left-justified).
+- `WaveFormatExtensibleTest`: exact bytes for 16/24/32 × mono/stereo × 44.1/96/192, checking `nBlockAlign`, `nAvgBytesPerSec`, `cbSize = 22`, the channel mask, and the SubFormat GUID bytes.
+- `Repack24in32Test` (only if the probe says the repack is needed; Codex review #6). It covers:
+  - positive and negative full scale, zero, ±1 LSB around zero (sign extension)
+  - left-justification (low byte 0)
+  - exact output length = `len / 3 × 4`
+  - a `len` that isn't a multiple of the frame size is rejected, not silently truncated
+  - an `srcOff` offset honored
+  - golden vectors from a hand-computed table
+  - a no-allocation check (the scratch buffer is reused across calls)
 - `HResultsTest`: each named HRESULT maps to the right `OutputLineException`, and unknown codes carry their hex.
 - **Actor tests** (existing `JavaSoundPlayerActorTest`/`JavaSoundPlayerImplTest` migrated to a `FakePcmOutputLine`, which is simpler than today's `SourceDataLine` fakes). New cases:
-  - a failed open zeroes the position
-  - a format rejection gives `FormatUnsupported`, and a device problem gives `DeviceUnavailable`
+  - a failed **decoder** open zeroes the position, and so does a failed **line** open (Codex review #3; both paths)
+  - a line format rejection gives `OutputFormatUnsupported`, a decoder codec rejection gives `FormatUnsupported`, and a device problem gives `DeviceUnavailable`
+  - the EOF tail parks for the line's `queuedNanos()`, capped at `2 × bufferNanos`, using a fake line whose device frame size differs from the source's (the 24-in-32 case), so a regression back to source-format byte math fails (Codex review #2)
   - EOF into two failing tracks then a good one → plays the good one with 2 `Skipped` notices
   - 3 consecutive failures → `Error` + `GaveUp`
   - a device failure never skips
@@ -253,7 +279,7 @@ object NoPlaybackDiagnostics : PlaybackDiagnostics { /* null route, empty notice
 - **`:ui:components` commonTest:** `playerErrorMessage` and `formatOutputRoute` cases.
 
 **Device-backed (Cortex; skipped on CI):**
-- `WasapiOutputLineTest`, via `Assume.assumeTrue(defaultEndpointAvailable())`. It opens 16/24/32 at 44.1/96/192, writes 250 ms of silence, and exercises start/stop/flush/close and queued-bytes monotonicity. It also runs a cross-thread `stop()` while `write()` is blocked on a full buffer and asserts return in < 50 ms.
+- `WasapiOutputLineTest`, via `Assume.assumeTrue(defaultEndpointAvailable())`. It opens 16/24/32 at 44.1/96/192, writes 250 ms of silence, and exercises start/stop/flush/close. It checks that `queuedNanos()` stays ≤ `bufferNanos` and drains toward 0 while running. It also runs a cross-thread `stop()` while `write()` is blocked on a full buffer and asserts return in < 50 ms.
 
 **Manual smoke (Cortex, real library):**
 - *The 27 Club* (16/44.1), *2morrow* (id 7593, 24/44.1), a 24/96, a 24/192, and the one 32-bit track
@@ -287,3 +313,19 @@ Each step builds and passes the canonical build on its own.
 | Shared mode resamples when track rate ≠ device mix rate (e.g. 44.1 → 48) | Certain for mismatched rates | Disclosed in the UI; slice 2 (exclusive) removes it |
 | `COINIT` conflict if something else initialized the actor thread as STA | Low | `RPC_E_CHANGED_MODE` is tolerated (the calls still work from that apartment); logged |
 | JNA per-write overhead | Low | ~3 calls per block at ~40–50 Hz, measured in the smoke (CPU unchanged vs Java Sound) |
+
+## 11. Review log
+
+### Codex, 2026-09-23, on issue #37 ([comment](https://github.com/clayboicardi/kiln/issues/37#issuecomment-5807944203))
+
+Codex reviewed the issue's original **16-bit TPDF-dither fallback** proposal. The spec wasn't pushed, so it couldn't see this design. Its verdict was "changes requested" on that proposal. Dispositions for this design:
+
+| # | Finding | Disposition |
+|---|---|---|
+| 1 | Conversion must be a mandatory terminal stage, not a removable `AudioProcessor` | Already satisfied: WASAPI converts. The only Kiln-side conversion (24-in-32 repack) is inside `WasapiOutputLine.write()`; made explicit in §5.4. |
+| 2 | All output byte-rate math must use the negotiated output format | **Adopted:** the line owns it and the actor sees only durations (`queuedNanos`, `bufferNanos`) (§5.1, §5.4, §5.6). The regression test is in §8. |
+| 3 | Reset position at transition start; test decoder- and line-open failures | Reset was already before decoder open. **Adopted:** both failure-path tests (§8). |
+| 4 | `FormatUnsupported(codec)` can't describe an output-PCM rejection | **Adopted:** new `PlayerError.OutputFormatUnsupported` (§5.1). |
+| 5 | A dedicated output-format `StateFlow`, cleared on teardown/error | Already satisfied by `PlaybackDiagnostics.outputRoute` (§5.7). |
+| 6 | Conversion test matrix (sign, full scale, misalignment, byteCount, no allocation) | **Adopted** for `repack24in32` (§8). The dither/RNG items don't apply. |
+| — | Auto-advance: stop on failure in this patch, and ship skip-ahead separately | **Not adopted (Clay, 2026-09-23).** Skip-ahead stays: its own commit, capped at 3 attempts, with `RepeatMode.All` cycles counting toward the cap, `RepeatMode.One` ignored, and device errors and explicit clicks never skipping (§5.6). Those rules bound the queue-cycle and surprise-traversal concerns Codex raised. |
