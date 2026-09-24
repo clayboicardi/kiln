@@ -392,6 +392,44 @@ class JavaSoundPlayerActorTest {
         assertEquals(listOf(0f, 0f), line.volumeCalls, "the next track's open re-applies the mute")
     }
 
+    // ----- final review I2: an unreadable stream format must not kill the actor -----
+    // (JvmFlacDecodedStream.format throws for a bit depth other than 16/24/32. Unguarded, the
+    // first read on the actor escaped runActor and left the player dead at Loading.)
+
+    private fun unreadableFormatStream() =
+        FakeDecodedStream(fmt, formatFailure = IllegalStateException("Unexpected FLAC bit depth: 20"))
+
+    @Test
+    fun `a stream whose format can't be read fails the track and the actor survives`() = runBlocking {
+        val bad = unreadableFormatStream()
+        val player = newPlayer(listOf("a", "b"), mapOf("a" to bad, "b" to FakeDecodedStream(fmt)))
+        player.loadQueue(listOf(item("a"), item("b")), startIndex = 0, autoPlay = true)
+        withTimeout(5_000) { player.awaitDrained() }
+        val error = (player.state.value as PlayerState.Error).cause
+        assertTrue(error is PlayerError.DecodeFailed, "expected the decode-failure error, got $error")
+        assertEquals(0, player.queue.value.currentIndex, "an explicit pick shows the error; it doesn't skip")
+        assertEquals(0L, player.positionMs.value)
+        assertTrue(bad.closed, "the unreadable stream is closed")
+        // The actor is still alive: Next opens the good track and plays it.
+        player.skipToNext()
+        withTimeout(5_000) { player.awaitDrained() }
+        assertEquals(1, player.queue.value.currentIndex)
+        assertEquals(PlayerState.Ready(isPlaying = true), player.state.value)
+    }
+
+    @Test
+    fun `Next skips over a stream whose format can't be read`() = runBlocking {
+        val ids = listOf("a", "b", "c")
+        val streams = mapOf("a" to FakeDecodedStream(fmt), "b" to unreadableFormatStream(), "c" to FakeDecodedStream(fmt))
+        val player = newPlayer(ids, streams)
+        player.loadQueue(ids.map { item(it) }, startIndex = 0, autoPlay = true)
+        withTimeout(5_000) { player.awaitDrained() }
+        player.skipToNext()
+        withTimeout(5_000) { player.awaitDrained() }
+        assertEquals(2, player.queue.value.currentIndex, "a per-track failure is skipped on Next")
+        assertEquals(PlayerState.Ready(isPlaying = true), player.state.value)
+    }
+
     // ----- controller ruling R19: a failed seek-time flush surfaces instead of being swallowed -----
     // (On WASAPI a failed flush can leave the line stopped with a full buffer, so the next write
     // would block until an interrupt and playback would silently halt.)

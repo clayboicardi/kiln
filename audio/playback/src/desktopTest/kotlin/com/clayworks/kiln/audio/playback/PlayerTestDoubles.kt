@@ -22,11 +22,19 @@ import kotlinx.coroutines.flow.receiveAsFlow
  * actor tore the stream down (so tests can assert old-stream teardown on switch/skip).
  * [frames] is re-collectable, like the real cold decode flow: the actor re-collects it after
  * a seek (a one-shot consumeAsFlow would throw there and kill the actor).
+ * [formatFailure], when set, is thrown by the [format] getter, the way JvmFlacDecodedStream's
+ * getter throws for a bit depth it can't pack (e.g. 20-bit FLAC).
  */
 internal class FakeDecodedStream(
-    override val format: DecodedAudioFormat = DecodedAudioFormat(44_100, 16, 2, SampleFormat.PCM_S16_LE),
+    private val streamFormat: DecodedAudioFormat = DecodedAudioFormat(44_100, 16, 2, SampleFormat.PCM_S16_LE),
     private val channel: Channel<AudioFrame> = Channel(Channel.UNLIMITED),
+    private val formatFailure: Exception? = null,
 ) : DecodedStream {
+    override val format: DecodedAudioFormat
+        get() {
+            formatFailure?.let { throw it }
+            return streamFormat
+        }
     @Volatile var closed: Boolean = false
         private set
     override val frames: Flow<AudioFrame> = channel.receiveAsFlow()

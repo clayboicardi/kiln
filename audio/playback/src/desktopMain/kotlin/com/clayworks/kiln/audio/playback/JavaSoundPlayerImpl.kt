@@ -393,22 +393,35 @@ internal class JavaSoundPlayerImpl(
             }
             is Either.Right -> r.value
         }
+        // Read the format ONCE, guarded, and use that value below (final review I2). The getter can
+        // throw (JvmFlacDecodedStream: a bit depth other than 16/24/32, e.g. 20-bit FLAC). Unguarded,
+        // that escaped runActor and killed the player for the session. It's a per-track failure.
+        val format = try {
+            stream.format
+        } catch (e: Exception) {
+            withContext(decodeDispatcher) { runCatching { stream.close() } }
+            mode = Mode.IDLE
+            log.e(e) { "openAndStart: unreadable stream format for ${playable.itemId.value}" }
+            val error = PlayerError.DecodeFailed(e)
+            _state.value = PlayerState.Error(error)
+            return OpenResult.TrackFailed(error)
+        }
         currentStream = stream
         currentPlayable = playable
-        rgProcessor.onFormatChange(stream.format)
+        rgProcessor.onFormatChange(format)
         // RG gain for THIS generation, applied BEFORE the first frame is written (no async
         // launch racing a newer transition — retires the bug_003 class).
         applyRgGain(playable, settings.replayGainMode.first(), settings.replayGainPreAmpDb.first())
 
         val sourceLine = try {
-            lineFactory.open(stream.format)
+            lineFactory.open(format)
         } catch (e: Exception) {
             withContext(decodeDispatcher) { runCatching { stream.close() } }
             currentStream = null
             currentPlayable = null
             mode = Mode.IDLE
-            log.e(e) { "Could not open output line for ${stream.format}" }
-            val error = outputError(e, stream.format)
+            log.e(e) { "Could not open output line for $format" }
+            val error = outputError(e, format)
             _state.value = PlayerState.Error(error)
             return if (e is OutputLineException.FormatRejected) OpenResult.TrackFailed(error) else OpenResult.DeviceFailed(error)
         }
@@ -431,10 +444,10 @@ internal class JavaSoundPlayerImpl(
             } catch (e: Exception) {
                 teardownActivePlayback()
                 mode = Mode.IDLE
-                log.e(e) { "Output line start() failed for ${stream.format}" }
+                log.e(e) { "Output line start() failed for $format" }
                 // Mapped like an open failure (so DeviceProblem shows its bare detail), but a failed
                 // start is always a device failure, never a per-track skip.
-                val error = outputError(e, stream.format)
+                val error = outputError(e, format)
                 _state.value = PlayerState.Error(error)
                 return OpenResult.DeviceFailed(error)
             }
