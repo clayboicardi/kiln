@@ -1,5 +1,7 @@
 // SearchTab — Voyager Tab wrapping SearchContent. Debounces query input
-// (300ms) before calling MusicSource.search; results bounded to 50.
+// (300ms) before calling MusicSource.search; results bounded to 50. search() is a
+// one-shot snapshot (#38), so an active query re-runs whenever [libraryRevision]
+// moves (a scan changed the library after the query ran).
 
 package com.clayworks.kiln.ui.components.search
 
@@ -7,6 +9,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -19,6 +22,7 @@ import com.clayworks.kiln.audio.playback.PlatformPlayer
 import com.clayworks.kiln.library.source.MusicSource
 import com.clayworks.kiln.library.source.SearchResult
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
@@ -26,6 +30,7 @@ import kotlinx.coroutines.launch
 class SearchTab(
     private val musicSource: MusicSource,
     private val player: PlatformPlayer,
+    private val libraryRevision: StateFlow<Long>,
 ) : Tab {
 
     override val options: TabOptions
@@ -41,8 +46,9 @@ class SearchTab(
         var query by remember { mutableStateOf("") }
         var results by remember { mutableStateOf<List<SearchResult>>(emptyList()) }
         val coroutineScope = rememberCoroutineScope()
+        val revision by libraryRevision.collectAsState()
 
-        LaunchedEffect(query) {
+        LaunchedEffect(query, revision) {
             if (query.isBlank()) {
                 results = emptyList()
                 return@LaunchedEffect

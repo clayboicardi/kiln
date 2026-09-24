@@ -7,30 +7,31 @@
 // closes the underlying driver. Unconfined dispatcher avoids real
 // threading — fine for hermetic in-memory queries.
 //
-// Collection idiom: `browse()` returns a hot flow backed by SQLDelight's
-// asFlow() (reactive to DB changes — never completes naturally). We collect
-// the first DB-query snapshot into a buffer on `backgroundScope`, then
-// `runCurrent()` to drain the test scheduler. backgroundScope is auto-cancelled
-// at test end, which avoids the UncompletedCoroutinesError that a plain
-// `.toList()` would produce. Works for both N rows AND zero rows.
+// Collection idiom: `search()` / `browse()` return one-shot snapshot flows
+// that COMPLETE (#38). Every test collects with a plain `.toList()` under a
+// timeout, so a regression back to a live (never-completing) query fails fast
+// on the test's virtual clock instead of hanging the suite.
 
 package com.clayworks.kiln.library.source
 
 import arrow.core.Either
+import com.clayworks.kiln.library.db.DatabaseWriter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeout
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import kotlin.test.fail
+import kotlin.time.Duration.Companion.seconds
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class LocalLibrarySourceTest {
@@ -40,19 +41,11 @@ class LocalLibrarySourceTest {
     @AfterTest fun tearDown() = testDb.close()
 
     /**
-     * Collect the first DB-query snapshot from a hot SQLDelight-backed flow.
-     * Uses backgroundScope so the never-completing collector is auto-cancelled
-     * at test end; runCurrent() drains the test scheduler so the snapshot is
-     * populated before assertions. Works for empty results too.
+     * Collect a search/browse flow to completion. A live query flattened to
+     * `Flow<T>` never completes, so it times out here rather than hanging.
      */
-    private fun <T> TestScope.snapshot(flow: Flow<T>): List<T> {
-        val buf = mutableListOf<T>()
-        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
-            flow.toList(buf)
-        }
-        runCurrent()
-        return buf.toList()
-    }
+    private suspend fun <T> snapshot(flow: Flow<T>): List<T> =
+        withTimeout(5.seconds) { flow.toList() }
 
     @Test
     fun browse_AllTracks_returnsInsertedTracks() = runTest {
@@ -288,6 +281,70 @@ class LocalLibrarySourceTest {
         // silently "pass" without actually exercising the sanitizer).
         val results = snapshot(source.search("let's"))
         assertEquals(1, results.size)
+    }
+
+    /** Inserts a track plus its FTS row (rowid = track.id), as the scanner's rebuild would. */
+    private fun insertSearchableTrack(artistId: Long, title: String): Long {
+        val trackId = testDb.insertTrack(artistId, null, title)
+        testDb.db.track_searchQueries.insertSearchIndex(
+            rowid = trackId,
+            title = title,
+            album_name = "",
+            artist_name = "Foo",
+            album_artist_name = "Foo",
+        )
+        return trackId
+    }
+
+    @Test
+    fun search_fewerMatchesThanLimit_completesViaTakeToList() = runTest {
+        // #38: SearchTab collects `search(q, 50).take(50).toList()`. With fewer
+        // than 50 matches, a flow that never completes never reaches its 50th
+        // item, so the results never appeared ("spotty search").
+        val artistId = testDb.insertArtist("Foo")
+        insertSearchableTrack(artistId, "Drive Slow")
+        insertSearchableTrack(artistId, "Drive Fast")
+
+        val results = withTimeout(5.seconds) { source.search("Drive", limit = 50).take(50).toList() }
+
+        assertEquals(setOf("Drive Slow", "Drive Fast"), results.map { it.item.title }.toSet())
+    }
+
+    @Test
+    fun search_trackWriteDuringCollection_doesNotReemitResults() = runTest {
+        // #38 crash: every `track` write (the RG backfill writes ~2/s) used to
+        // re-emit the whole result set into the same stream, so `take(50)` filled
+        // with duplicates and the LazyColumn threw on the duplicate key.
+        val artistId = testDb.insertArtist("Foo")
+        val trackId = insertSearchableTrack(artistId, "Drive Slow")
+        val writer = DatabaseWriter(testDb.db, Dispatchers.Unconfined)
+
+        val collected = mutableListOf<SearchResult>()
+        val job = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            source.search("Drive", limit = 50).toList(collected)
+        }
+        runCurrent()
+        writer.write { trackQueries.markPlayed(TestDb.NOW_MS, trackId) }
+        runCurrent()
+
+        assertEquals(listOf(trackId.toString()), collected.map { it.item.itemId.value })
+        assertTrue(job.isCompleted, "search() flow must complete after one snapshot")
+    }
+
+    @Test
+    fun browse_AllTracks_fewerRowsThanPageSize_completesViaTakeToList() = runTest {
+        // #38 (latent): LibraryTab collects `browse(AllTracks(500)).take(500).toList()`,
+        // so a library under 500 tracks never loaded.
+        val artistId = testDb.insertArtist("Foo")
+        testDb.insertTrack(artistId, title = "One")
+        testDb.insertTrack(artistId, title = "Two")
+        testDb.insertTrack(artistId, title = "Three")
+
+        val items = withTimeout(5.seconds) {
+            source.browse(BrowseScope.AllTracks(pageSize = 500, pageOffset = 0)).take(500).toList()
+        }
+
+        assertEquals(3, items.size)
     }
 
     @Test
