@@ -550,7 +550,14 @@ internal class JavaSoundPlayerImpl(
                 // Durations come from the line (it owns output byte-rate math, #37). Capped at twice
                 // the line buffer, so a pause landing mid-tail can only end the tail early.
                 val tailNanos = l.queuedNanos().coerceAtMost(2 * l.bufferNanos)
-                if (tailNanos > 0L) java.util.concurrent.locks.LockSupport.parkNanos(tailNanos)
+                // A loop to a deadline: parkNanos can return early (spurious wakeup, a pending permit,
+                // or Windows timer granularity), and a short park clips the end of the track.
+                val deadline = System.nanoTime() + tailNanos
+                while (true) {
+                    val remaining = deadline - System.nanoTime()
+                    if (remaining <= 0L) break
+                    java.util.concurrent.locks.LockSupport.parkNanos(remaining)
+                }
             }
         } catch (e: Exception) {
             log.w(e) { "EOF tail skipped: output line query failed" }

@@ -222,6 +222,7 @@ class JavaSoundPlayerActorTest {
         sA.signalEof()
         awaitStreamEvent { player.queue.first { it.currentIndex == 1 } }
         val elapsedMs = (System.nanoTime() - t0) / 1_000_000
+        assertTrue(elapsedMs >= 90, "tail must still play out the 2 × 50 ms cap; advanced after $elapsedMs ms")
         assertTrue(elapsedMs < 1_000, "tail must cap at 2 × 50 ms, not wait 5 s; took $elapsedMs ms")
     }
 
