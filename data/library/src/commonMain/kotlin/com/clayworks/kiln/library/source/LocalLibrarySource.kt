@@ -4,6 +4,7 @@
 
 package com.clayworks.kiln.library.source
 
+import app.cash.sqldelight.Query
 import app.cash.sqldelight.coroutines.asFlow
 import app.cash.sqldelight.coroutines.mapToList
 import app.cash.sqldelight.coroutines.mapToOne
@@ -14,9 +15,10 @@ import com.clayworks.kiln.library.source.internal.sanitizeFtsQuery
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.transform
 
 class LocalLibrarySource(
     private val db: KilnDatabase,
@@ -30,9 +32,7 @@ class LocalLibrarySource(
         val ftsQuery = sanitizeFtsQuery(query)
         return db.track_searchQueries
             .searchTracks(ftsQuery, limit.toLong())
-            .asFlow()
-            .mapToList(ioDispatcher)
-            .transform { rows -> rows.forEach { emit(it.toSearchResult()) } }
+            .asSnapshotFlow { it.toSearchResult() }
     }
 
     override suspend fun browse(scope: BrowseScope): Flow<MediaItem> = when (scope) {
@@ -40,70 +40,57 @@ class LocalLibrarySource(
         // the default ordering path is wired. Full sort matrix is follow-up work.
         is BrowseScope.AllTracks -> db.trackQueries
             .selectAll(scope.pageSize.toLong(), scope.pageOffset.toLong())
-            .asFlow()
-            .mapToList(ioDispatcher)
-            .transform { rows -> rows.forEach { emit(it.toMediaItem()) } }
+            .asSnapshotFlow { it.toMediaItem() }
 
         is BrowseScope.AllAlbums -> db.albumQueries
             .selectAllOrderedByArtistThenAlbum(scope.pageSize.toLong(), scope.pageOffset.toLong())
-            .asFlow()
-            .mapToList(ioDispatcher)
-            .transform { rows -> rows.forEach { emit(it.toMediaItem()) } }
+            .asSnapshotFlow { it.toMediaItem() }
 
         is BrowseScope.AllArtists -> db.artistQueries
             .selectAllPaged(scope.pageSize.toLong(), scope.pageOffset.toLong())
-            .asFlow()
-            .mapToList(ioDispatcher)
-            .transform { rows -> rows.forEach { emit(it.toMediaItem()) } }
+            .asSnapshotFlow { it.toMediaItem() }
 
         is BrowseScope.AllPlaylists -> db.playlistQueries
             .selectAll()
-            .asFlow()
-            .mapToList(ioDispatcher)
-            .transform { rows -> rows.forEach { emit(it.toMediaItem()) } }
+            .asSnapshotFlow { it.toMediaItem() }
 
         is BrowseScope.TracksOfAlbum -> db.trackQueries
             .selectByAlbum(scope.albumId.value)
-            .asFlow()
-            .mapToList(ioDispatcher)
-            .transform { rows -> rows.forEach { emit(it.toMediaItem()) } }
+            .asSnapshotFlow { it.toMediaItem() }
 
         is BrowseScope.TracksOfArtist -> db.trackQueries
             .selectByArtist(scope.artistId.value, scope.pageSize.toLong(), scope.pageOffset.toLong())
-            .asFlow()
-            .mapToList(ioDispatcher)
-            .transform { rows -> rows.forEach { emit(it.toMediaItem()) } }
+            .asSnapshotFlow { it.toMediaItem() }
 
         is BrowseScope.AlbumsOfArtist -> db.albumQueries
             .selectByArtist(scope.artistId.value)
-            .asFlow()
-            .mapToList(ioDispatcher)
-            .transform { rows -> rows.forEach { emit(it.toMediaItem()) } }
+            .asSnapshotFlow { it.toMediaItem() }
 
         is BrowseScope.TracksOfPlaylist -> db.playlist_trackQueries
             .selectTracksOfPlaylist(scope.playlistId.value)
-            .asFlow()
-            .mapToList(ioDispatcher)
-            .transform { rows -> rows.forEach { emit(it.toMediaItem()) } }
+            .asSnapshotFlow { it.toMediaItem() }
 
         is BrowseScope.RecentlyAdded -> db.trackQueries
             .selectRecentlyAdded(scope.pageSize.toLong())
-            .asFlow()
-            .mapToList(ioDispatcher)
-            .transform { rows -> rows.forEach { emit(it.toMediaItem()) } }
+            .asSnapshotFlow { it.toMediaItem() }
 
         is BrowseScope.RecentlyPlayed -> db.trackQueries
             .selectRecentlyPlayed(scope.pageSize.toLong())
-            .asFlow()
-            .mapToList(ioDispatcher)
-            .transform { rows -> rows.forEach { emit(it.toMediaItem()) } }
+            .asSnapshotFlow { it.toMediaItem() }
 
         is BrowseScope.MostPlayed -> db.trackQueries
             .selectMostPlayed(scope.pageSize.toLong())
-            .asFlow()
-            .mapToList(ioDispatcher)
-            .transform { rows -> rows.forEach { emit(it.toMediaItem()) } }
+            .asSnapshotFlow { it.toMediaItem() }
     }
+
+    /**
+     * Runs the query once on [ioDispatcher], emits each mapped row, then completes.
+     * Never flatten a LIVE `asFlow().mapToList()` into `Flow<T>` (#38): the stream
+     * loses its list boundaries, re-emits the whole result set on every table write,
+     * and never completes, so `take(N).toList()` hangs or fills with duplicates.
+     */
+    private fun <R : Any, T> Query<R>.asSnapshotFlow(map: (R) -> T): Flow<T> =
+        flow { executeAsList().forEach { emit(map(it)) } }.flowOn(ioDispatcher)
 
     override suspend fun getPlayable(itemId: ItemId): Either<SourceError, Playable> =
         Either.catch {

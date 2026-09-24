@@ -12,8 +12,13 @@ interface MusicSource {
     val displayName: String
     val capabilities: SourceCapabilities
 
+    /**
+     * A one-shot snapshot: emits each match once, then COMPLETES. Callers collect
+     * with `toList()`, so a stream that never completes hangs them (#38).
+     */
     suspend fun search(query: String, limit: Int = 50): Flow<SearchResult>
 
+    /** A one-shot snapshot of [scope] that completes, like [search]. */
     suspend fun browse(scope: BrowseScope): Flow<MediaItem>
 
     suspend fun getPlayable(itemId: ItemId): Either<SourceError, Playable>
