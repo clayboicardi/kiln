@@ -1,0 +1,8 @@
+Repository context (appended to every review):
+
+- Kiln: a from-scratch, Apache 2.0, public audiophile music player for Android (min SDK 23, compile SDK 36) and Windows Desktop (JVM 21), in 100% Kotlin Multiplatform with Compose Multiplatform. The design contract is `docs/superpowers/specs/2026-05-18-kiln-rebuild-design.md`; the plan is `docs/superpowers/plans/2026-05-18-kiln-execution-plan.md`.
+- Hard rules: no `androidx.*` imports in `commonMain` of `:audio:dsp` or `:audio:visualizer` (adapters live in `androidMain`); no `if (source is XxxSource)` branches (fix the Source interface instead); no GPL code carried over from Gramophone/JAMZ; desktop FLAC decode is JNA + vendored libFLAC 1.5.0, never jflac / JustFLAC / nayuki's library.
+- Nothing beyond the spec's anti-roadmap (§11): no Tidal, spatial audio, AI/LLM features, lyrics, tag editing, scrobbling, iOS/macOS/Linux and the like. Changes to the spec's hard locks (items 1, 3, 5, 6, 8, 9) or soft locks (2, 4, 7) need an explicit rationale.
+- Audio correctness matters most: bit-perfect output paths, sample-rate/bit-depth handling, threading on the playback path, and resource lifetimes (native handles, decoders, MediaSession). The database has a single writer; flag concurrent writes that bypass it.
+- Build: Gradle 9 with JDK 21 (Temurin) as the daemon JVM; AGP 9 has built-in Kotlin support, so the `org.jetbrains.kotlin.android` plugin must not come back. CI builds `:app-android:assembleDebug` on Ubuntu and `:app-desktop:assemble` on Windows.
+- One change per commit. Because the repo is public, flag local machine paths, personal identifiers or anything private that would ship.
